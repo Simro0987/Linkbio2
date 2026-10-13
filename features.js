@@ -187,7 +187,7 @@ module.exports = function install(ctx) {
     const x = String(ip).toLowerCase();
     if (x === '::' || x === '::1') return true;
     const m = x.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); if (m) return privateIp(m[1]);
-    return /^f[cd]/.test(x) || /^fe[89ab]/.test(x) || /^ff/.test(x) || /^64:ff9b:/.test(x) || /^2001:db8/.test(x) || /^::ffff:/.test(x);
+    return /^f[cd]/.test(x) || /^fe[89ab]/.test(x) || /^ff/.test(x) || /^64:ff9b:/.test(x) || /^2001:db8/.test(x) || /^::ffff:/.test(x) || /^::[0-9a-f]/.test(x) || /^2002:/.test(x) || /^100::/.test(x);
   }
   async function safeLookup(host) {
     host = host.replace(/^\[|\]$/g, '');

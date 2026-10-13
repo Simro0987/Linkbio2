@@ -241,7 +241,7 @@ const EN = { 'Domov': 'Home', 'Kanály': 'Channels', 'Platby': 'Payments', 'Kont
   'Aktuálny stav našich služieb. Stránka sa obnovuje automaticky.': 'Current status of our services. This page refreshes automatically.' };
 const T = (req, sk) => (req && req.lang === 'en' && EN[sk]) || sk;
 const loc = (req, s, k) => (req && req.lang === 'en' && s[k + '_en']) || s[k];
-const langHref = req => { const u = new URL(req.originalUrl, 'http://x'); u.searchParams.set('lang', req.lang === 'en' ? 'sk' : 'en'); return u.pathname + u.search; };
+const langHref = req => { const u = new URL(req.originalUrl, 'http://x'); u.searchParams.set('lang', req.lang === 'en' ? 'sk' : 'en'); return u.pathname.replace(/^[/\\]+/, '/') + u.search; };
 const langSw = req => `<a class="langsw" href="${esc(langHref(req))}" hreflang="${req.lang === 'en' ? 'sk' : 'en'}">🌐 ${req.lang === 'en' ? 'SK' : 'EN'}</a>`;
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
 app.get('/robots.txt', (req, res) => res.type('text').send('User-agent: *\nDisallow: /admin\n'));
