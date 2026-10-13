@@ -45,12 +45,13 @@ const SOCIALS = [
   ['telegram', 'Telegram', '✈️'], ['instagram', 'Instagram', '📷'], ['facebook', 'Facebook', '📘'],
   ['x', 'X', '✖️'], ['tiktok', 'TikTok', '🎵'], ['whatsapp', 'WhatsApp', '💬'], ['signal', 'Signal', '🔒'], ['youtube', 'YouTube', '▶️'], ['email', 'E-mail', '✉️'],
 ];
-const CHECKOUT_ORIGIN = 'https://chain2pay-checkout-gl.onrender.com';
-const SHORT_PAY = 'https://lnkbio.onrender.com/platby';
+const LNK_PUBLIC = String(process.env.LNKBIO_PUBLIC_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '');
+const CHECKOUT_ORIGIN = String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
+const SHORT_PAY = LNK_PUBLIC + '/platby';
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
   meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
-  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: 'https://lnkbio.onrender.com/platby', chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
+  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: SHORT_PAY, chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
 };
 
 async function init() {
@@ -293,7 +294,7 @@ app.get('/api/plans/:id(\\d{1,9})', wrap(async (req, res) => {
 }));
 // public site info for the support chatbot knowledge base (only data already shown on public pages)
 app.get('/api/site-info', wrap(async (req, res) => {
-  const s = await getSettings(), base = 'https://lnkbio.onrender.com/' + s.slug;
+  const s = await getSettings(), base = LNK_PUBLIC + '/' + s.slug;
   const t = await chTree();
   res.setHeader('Cache-Control', 'public, max-age=300');
   res.json({ title: s.title, bio: s.bio, chat_enabled: s.chat_enabled !== '0', pay_link: SHORT_PAY,
@@ -846,7 +847,7 @@ async function shell(req, res, s, active, title, content, sub = '') {
 <main class="w pub${s.layout === 'tv' ? ' tv' : ''}">${content}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}</main></body></html>`);
 }
 const crumbs = (s, parts) => `<nav class="crumbs" aria-label="Breadcrumbs">${parts.map(([n, h], i) => i < parts.length - 1 ? `<a href="${esc(h)}">${esc(n)}</a>${ARROW}` : `<span>${esc(n)}</span>`).join('')}</nav>`;
-const DEF_PLAN_URL = 'https://lnkbio.onrender.com/platby';
+const DEF_PLAN_URL = SHORT_PAY;
 const planUrl = p => DEF_PLAN_URL + '?plan=' + p.id;
 function fmtEur(v) { const n = Number(v); return (isFinite(n) ? n : 0).toLocaleString('sk-SK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '\u00a0€'; }
 function perLabel(p, en) { const n = +p || 1; return en ? `${n} ${n === 1 ? 'month' : 'months'}` : `${n} ${n === 1 ? 'mesiac' : n < 5 ? 'mesiace' : 'mesiacov'}`; }
@@ -958,7 +959,7 @@ init().then(initLists).then(() => features.initFeatures()).then(() => features.i
   // keep-awake self-ping through the public Render URL every 10 min
   // + cross-ping the checkout service so waking one wakes the other
   const targets = [process.env.RENDER_EXTERNAL_URL && process.env.RENDER_EXTERNAL_URL + '/healthz',
-    (process.env.PEER_URL || 'https://chain2pay-checkout-gl.onrender.com') + '/health'].filter(Boolean);
+    (process.env.PEER_URL || CHECKOUT_ORIGIN) + '/health'].filter(Boolean);
   const ping = () => targets.forEach(u => fetch(u, { signal: AbortSignal.timeout(60e3) }).catch(() => {}));
   setTimeout(ping, 30e3).unref(); setInterval(ping, 10 * 60e3).unref();
 }).catch(e => { console.error('init failed', e.message); process.exit(1); });

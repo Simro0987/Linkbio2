@@ -11,7 +11,8 @@ const SEED = require('./guides-seed');
 module.exports = function install(ctx) {
   const { app, admin, pool, getSettings, page, esc, hid, csrf, needAuth, lockedFor, recordFail, currentHash, wrap, sniff, shell, slugOk, T, clean, audit } = ctx;
   const SECRET = process.env.SESSION_SECRET;
-  const PUBLIC = (process.env.RENDER_EXTERNAL_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '');
+  const CHK_PUBLIC = String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
+  const PUBLIC = (process.env.LNKBIO_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '');
 
   // ================= Telegram bots (payments | support | ideas | admin), fallback → payments bot =================
   const mainTok = () => String(process.env.TELEGRAM_PAYMENTS_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim();
@@ -308,7 +309,7 @@ ${src === 'ocr' ? '<div class="msg">Kód rozpoznaný z fotky – <b>skontrolujte
   setInterval(() => { const c = Date.now() - 600e3; for (const [k, t] of seen) if (t < c) seen.delete(k); }, 300e3).unref();
   async function statusSnapshot() {
     const mons = (await pool.query(`SELECT name,status,ms,checked_at FROM monitors ORDER BY pos,id`)).rows;
-    const peer = await ctx.probe('https://chain2pay-checkout-gl.onrender.com/health').catch(() => ({ ok: false }));
+    const peer = await ctx.probe(CHK_PUBLIC + '/health').catch(() => ({ ok: false }));
     return { ok: true, at: new Date().toISOString(), lnkbio: { up: true, commit: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) }, checkout: { up: !!peer.ok, ms: peer.ms }, monitors: mons,
       bots: Object.fromEntries(Object.keys(BOTENV).map((b) => [b, ownTok(b) ? 'own' : mainTok() ? 'fallback' : 'off'])) };
   }
@@ -336,7 +337,7 @@ ${src === 'ocr' ? '<div class="msg">Kód rozpoznaný z fotky – <b>skontrolujte
     const t = alertTok(), got = String(req.query.token || '');
     if (!t || got.length !== t.length || !crypto.timingSafeEqual(Buffer.from(got), Buffer.from(t))) return res.status(401).json({ ok: false });
     if (limited('alert', 30, 3600e3)) return res.status(429).json({ ok: false });
-    const targets = { checkout: 'https://chain2pay-checkout-gl.onrender.com/health', lnkbio: PUBLIC + '/healthz' };
+    const targets = { checkout: CHK_PUBLIC + '/health', lnkbio: PUBLIC + '/healthz' };
     const out = {};
     for (const [k, u] of Object.entries(targets)) {
       let r = await ctx.probe(u); if (!r.ok) { await new Promise((z) => setTimeout(z, 15000)); r = await ctx.probe(u); }
@@ -350,7 +351,7 @@ ${src === 'ocr' ? '<div class="msg">Kód rozpoznaný z fotky – <b>skontrolujte
   admin.get('/agent', needAuth, wrap(async (req, res) => {
     const k = agentKey();
     res.send(page('Agent / uptime', `<h1>🤖 Agent hook & uptime</h1>${anav}<div class="card"><h2>Agent hook</h2><p>Endpoint: <code>POST ${esc(PUBLIC)}/api/agent/hook</code> · tajomstvo <code>AGENT_HOOK_SECRET</code> ${k ? '✅ nastavené (…' + esc(k.slice(-4)) + ')' : '❌ chýba'}</p><p class="hint">Hlavičky: X-Agent-Timestamp (unix s), X-Agent-Signature: sha256=HMAC_SHA256(secret, timestamp + "." + body). Akcie: status, event, ping. Detaily v AGENT.md.</p></div>
-<div class="card"><h2>cron-job.org</h2><ol><li>Úloha 1 (uptime lnkbio): <code>${esc(PUBLIC)}/healthz</code> každých 5 min, notifikácie pri zlyhaní (e-mail).</li><li>Úloha 2 (uptime checkout): <code>https://chain2pay-checkout-gl.onrender.com/health</code> každých 5 min.</li><li>Úloha 3 (Telegram alert cez Admin bota): <code class="mono">${k ? esc(PUBLIC + '/api/status-alert?token=' + alertTok()) : '— najprv nastavte AGENT_HOOK_SECRET —'}</code> každých 5 min (GET). Pri výpadku príde správa „🔴 … nedostupný“, po obnove „🟢“.</li></ol><p class="hint">URL s tokenom je tajná – nezdieľajte ju.</p></div>`, 'a adm'));
+<div class="card"><h2>cron-job.org</h2><ol><li>Úloha 1 (uptime lnkbio): <code>${esc(PUBLIC)}/healthz</code> každých 5 min, notifikácie pri zlyhaní (e-mail).</li><li>Úloha 2 (uptime checkout): <code>${esc(CHK_PUBLIC)}/health</code> každých 5 min.</li><li>Úloha 3 (Telegram alert cez Admin bota): <code class="mono">${k ? esc(PUBLIC + '/api/status-alert?token=' + alertTok()) : '— najprv nastavte AGENT_HOOK_SECRET —'}</code> každých 5 min (GET). Pri výpadku príde správa „🔴 … nedostupný“, po obnove „🟢“.</li></ol><p class="hint">URL s tokenom je tajná – nezdieľajte ju.</p></div>`, 'a adm'));
   }));
 
   // ================= tables + seed + webhook registration =================
