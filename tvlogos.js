@@ -39,29 +39,58 @@ function candidates(idx, name, category) {
   const rank = (c) => (c.country === want ? -100 : 0) + (PREF.includes(c.country) ? PREF.indexOf(c.country) : 50);
   return hits.slice().sort((a, b) => rank(a) - rank(b)).map((c) => ({ url: RAW + c.path.split('/').map(encodeURIComponent).join('/'), country: c.country }));
 }
-let tree = null, treeAt = 0, treeP = null;
-async function getIndex() {
-  if (tree && Date.now() - treeAt < 24 * 3600e3) return tree;
-  if (!treeP) treeP = (async () => {
-    const r = await fetch(`https://api.github.com/repos/${REPO}/git/trees/${BR}?recursive=1`, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'lnkbio-logo-matcher' }, signal: AbortSignal.timeout(30000) });
-    if (!r.ok) throw new Error('GitHub tree ' + r.status);
-    const j = await r.json(); tree = makeIndex((j.tree || []).filter((x) => x.type === 'blob').map((x) => x.path)); treeAt = Date.now(); return tree;
-  })().finally(() => { treeP = null; });
-  return treeP;
+const CDN = `https://cdn.jsdelivr.net/gh/${REPO}@${BR}/`;
+const UA = { 'user-agent': 'lnkbio-logo-matcher/1.0 (+https://lnkbio.onrender.com)' };
+const st = { source: '', at: '', lastErr: '', refreshing: false, refreshedAt: 0 };
+let tree = null;
+function loadSnapshot() {
+  const j = JSON.parse(require('zlib').gunzipSync(require('fs').readFileSync(require('path').join(__dirname, 'tvlogos-tree.json.gz'))).toString('utf8'));
+  tree = makeIndex(j.paths); st.source = 'snapshot'; st.at = j.at;
 }
+async function fetchList() {
+  const errs = [];
+  try {
+    const r = await fetch(`https://api.github.com/repos/${REPO}/git/trees/${BR}?recursive=1`, { headers: { accept: 'application/vnd.github+json', ...UA }, signal: AbortSignal.timeout(25000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}${r.headers.get('x-ratelimit-remaining') === '0' ? ' (rate limit)' : ''}`);
+    const j = await r.json(); const paths = (j.tree || []).filter((x) => x.type === 'blob').map((x) => x.path); if (paths.length < 1000) throw new Error('short list'); return { paths, source: 'github-api' };
+  } catch (e) { errs.push('GitHub API: ' + e.message); }
+  try {
+    const r = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${REPO}@${BR}?structure=flat`, { headers: UA, signal: AbortSignal.timeout(25000) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || !Array.isArray(j.files)) throw new Error(`HTTP ${r.status}${j.message ? ' ' + j.message : ''}`);
+    return { paths: j.files.map((f) => String(f.name).replace(/^\//, '')), source: 'jsdelivr' };
+  } catch (e) { errs.push('jsDelivr: ' + e.message); }
+  throw new Error(errs.join('; '));
+}
+function refresh() {
+  if (st.refreshing || Date.now() - st.refreshedAt < 24 * 3600e3) return;
+  st.refreshing = true; st.refreshedAt = Date.now();
+  fetchList().then(({ paths, source }) => { tree = makeIndex(paths); st.source = source; st.at = new Date().toISOString().slice(0, 16); st.lastErr = ''; })
+    .catch((e) => { st.lastErr = e.message; console.error('tvlogos refresh failed (using snapshot):', e.message); })
+    .finally(() => { st.refreshing = false; });
+}
+async function getIndex() { if (!tree) loadSnapshot(); refresh(); return tree; }
 const okCache = new Map();
+async function head(url) {
+  try { const r = await fetch(url, { method: 'HEAD', redirect: 'error', headers: UA, signal: AbortSignal.timeout(6000) }); if (r.status === 200 && /^image\//i.test(r.headers.get('content-type') || '')) return ''; return 'HTTP ' + r.status; }
+  catch (e) { return (e.cause && e.cause.code) || e.name || e.message; }
+}
+// returns a working URL (raw.githubusercontent, else jsDelivr CDN) or ''
 async function verify(url) {
-  if (!url.startsWith(RAW)) return false;
+  if (!url.startsWith(RAW)) return '';
   if (okCache.has(url)) return okCache.get(url);
-  let ok = false;
-  try { const r = await fetch(url, { method: 'HEAD', redirect: 'error', signal: AbortSignal.timeout(10000) }); ok = r.status === 200 && /^image\//i.test(r.headers.get('content-type') || ''); } catch { ok = false; }
+  let ok = '', e1 = await head(url);
+  if (!e1) ok = url; else { const alt = CDN + url.slice(RAW.length), e2 = await head(alt); if (!e2) ok = alt; else st.lastErr = `image check: raw ${e1}, cdn ${e2}`; }
   okCache.set(url, ok); return ok;
 }
 async function pool(items, n, fn) { const out = new Array(items.length); let i = 0; await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); } })); return out; }
-// best verified logo for each channel
-async function matchAll(chs) {
-  const idx = await getIndex();
-  return pool(chs, 10, async (c) => { for (const x of candidates(idx, c.name, c.category).slice(0, 3)) if (await verify(x.url)) return { ...c, url: x.url }; return { ...c, url: '' }; });
+async function matchAll(chs, onProgress) {
+  const idx = await getIndex(); let done = 0;
+  return pool(chs, 12, async (c) => {
+    let url = ''; for (const x of candidates(idx, c.name, c.category).slice(0, 3)) { url = await verify(x.url); if (url) break; }
+    done++; if (onProgress) onProgress(done, chs.length); return { ...c, url };
+  });
 }
-async function suggest(name, category) { const idx = await getIndex(); const cs = candidates(idx, name, category).slice(0, 6); const ok = await pool(cs, 6, (x) => verify(x.url)); return cs.filter((_, i) => ok[i]); }
-module.exports = { matchAll, suggest, normName, makeIndex, candidates, RAW };
+async function suggest(name, category) { const idx = await getIndex(); const cs = candidates(idx, name, category).slice(0, 6); const ok = await pool(cs, 6, (x) => verify(x.url)); return cs.map((x, i) => ({ ...x, url: ok[i] })).filter((x) => x.url); }
+const isRepoLogo = (u) => typeof u === 'string' && (u.startsWith(RAW) || u.startsWith(CDN)) && !/\.\.|[?#]/.test(u);
+const short = (u) => u.replace(RAW, '').replace(CDN, '');
+module.exports = { matchAll, suggest, normName, makeIndex, candidates, RAW, CDN, isRepoLogo, short, status: () => ({ ...st }), getIndex };

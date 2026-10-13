@@ -223,15 +223,27 @@ ${rs.map((r) => `<div class="card"><p><b>${esc(r.channel_name)}</b> <span class=
   };
   // ---------- logos from GitHub tv-logo/tv-logos ----------
   const logoTrash = async (c, changes, label) => { if (changes.length) await c.query(`INSERT INTO l_trash (t,data,label) VALUES ('tvch_logos',$1::jsonb,$2)`, [JSON.stringify({ changes }), label.slice(0, 200)]); };
+  const jobs = new Map();
   admin.post('/tvch/logos/preview', needAuth, csrf, wrap(async (req, res) => {
-    const miss = (await all()).filter((r) => !r.logo);
-    let m; try { m = await LOGOS.matchAll(miss); } catch (e) { return res.send(page('Logá', `<h1>Logá</h1><p class="err">GitHub repozitár log je nedostupný (${esc(e.message)}). Skúste neskôr.</p><p><a href="/admin/kanaly-katalog">← Späť</a></p>`, 'adm')); }
-    const hit = m.filter((x) => x.url), no = m.filter((x) => !x.url);
+    for (const [k, v] of jobs) if (v.exp < Date.now()) jobs.delete(k);
+    const running = [...jobs.entries()].find(([, v]) => !v.done); if (running) return res.redirect(303, '/admin/tvch/logos/job/' + running[0]);
+    const miss = (await all()).filter((r) => !r.logo), id = crypto.randomBytes(12).toString('hex');
+    const j = { done: false, n: 0, total: miss.length, exp: Date.now() + 30 * 60e3, err: '', res: null }; jobs.set(id, j);
+    LOGOS.matchAll(miss, (d) => { j.n = d; }).then((m) => { j.res = m; }).catch((e) => { j.err = e.message; console.error('tvlogos job failed:', e.message); }).finally(() => { j.done = true; });
+    res.redirect(303, '/admin/tvch/logos/job/' + id);
+  }));
+  admin.get('/tvch/logos/job/:id([a-f0-9]{24})', needAuth, wrap(async (req, res) => {
+    const j = jobs.get(req.params.id); if (!j) return back(res, 'expired');
+    const ls = LOGOS.status(), src = `<p class="hint">Zoznam log: ${esc(ls.source || '—')}${ls.at ? ' (' + esc(ls.at) + ')' : ''}${ls.lastErr ? ' · posledná chyba: ' + esc(ls.lastErr) : ''}</p>`;
+    if (!j.done) { res.setHeader('Cache-Control', 'no-store'); return res.send(page('Hľadám logá…', `<meta http-equiv="refresh" content="2"><h1>🖼 Hľadám logá…</h1><p>Spracované <b>${j.n}</b> / ${j.total} kanálov. Stránka sa obnovuje automaticky.</p>${src}<p><a href="/admin/kanaly-katalog">← Späť</a></p>`, 'adm')); }
+    if (j.err) return res.send(page('Logá', `<h1>Logá</h1><p class="err">Repozitár log je nedostupný: ${esc(j.err)}</p>${src}<p><a href="/admin/kanaly-katalog">← Späť</a></p>`, 'adm'));
+    const m = j.res, hit = m.filter((x) => x.url), no = m.filter((x) => !x.url);
     for (const [k, v] of pending) if (v.exp < Date.now()) pending.delete(k);
     const tok = crypto.randomBytes(18).toString('hex'); pending.set(tok, { logos: hit.map((x) => ({ id: x.id, url: x.url })), exp: Date.now() + 30 * 60e3 });
+    res.setHeader('Cache-Control', 'no-store');
     res.send(page('Doplniť logá', `<h1>🖼 Doplniť chýbajúce logá – náhľad</h1><p><a href="/admin/kanaly-katalog">← Späť</a></p>
-<div class="card"><p>Kanálov bez loga: <b>${miss.length}</b> · nájdené (overené obrázky): <b>${hit.length}</b> · nenájdené: <b>${no.length}</b></p><p class="hint">Zdroj: verejný repozitár GitHub <b>tv-logo/tv-logos</b>. Každé logo bolo overené (HTTP 200, obrázok). Uložia sa len kanálom, ktoré stále nemajú logo; akcia sa dá vrátiť z Koša.</p></div>
-${hit.length ? `<div class="card"><h2>Ukážka</h2>${hit.slice(0, 24).map((x) => `<p><img src="${esc(x.url)}" alt="" width="40" height="40" loading="lazy" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <b>${esc(x.name)}</b> <span class="hint">${esc(x.category)} · ${esc(x.url.replace(LOGOS.RAW, ''))}</span></p>`).join('')}</div>
+<div class="card"><p>Kanálov bez loga: <b>${m.length}</b> · nájdené (overené obrázky): <b>${hit.length}</b> · nenájdené: <b>${no.length}</b></p><p class="hint">Zdroj: verejný repozitár GitHub <b>tv-logo/tv-logos</b> (obrázky z raw.githubusercontent.com, záložne cdn.jsdelivr.net). Každé logo bolo overené (HTTP 200, obrázok). Uložia sa len kanálom, ktoré stále nemajú logo; akcia sa dá vrátiť z Koša.</p>${src}</div>
+${hit.length ? `<div class="card"><h2>Ukážka</h2>${hit.slice(0, 24).map((x) => `<p><img src="${esc(x.url)}" alt="" width="40" height="40" loading="lazy" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <b>${esc(x.name)}</b> <span class="hint">${esc(x.category)} · ${esc(LOGOS.short(x.url))}</span></p>`).join('')}</div>
 <form method="post" action="/admin/tvch/logos/confirm" class="card">${hid(req)}<input type="hidden" name="tok" value="${tok}"><label class="ck"><input type="checkbox" name="confirm" value="1" required> Uložiť ${hit.length} log</label><button>Uložiť logá</button></form>` : ''}
 ${no.length ? `<details class="card"><summary>Nenájdené (${no.length})</summary><p class="hint">${no.slice(0, 1000).map((x) => esc(x.name)).join(', ')}</p></details>` : ''}`, 'adm'));
   }));
@@ -241,7 +253,7 @@ ${no.length ? `<details class="card"><summary>Nenájdené (${no.length})</summar
     const c = await pool.connect(); const ch = [];
     try {
       await c.query('BEGIN');
-      for (const x of pd.logos) if (x.url.startsWith(LOGOS.RAW) && (await c.query(`UPDATE tv_channels SET logo=$1 WHERE id=$2 AND logo='' RETURNING id`, [x.url, x.id])).rowCount) ch.push({ id: x.id, old: '', url: x.url });
+      for (const x of pd.logos) if (LOGOS.isRepoLogo(x.url) && (await c.query(`UPDATE tv_channels SET logo=$1 WHERE id=$2 AND logo='' RETURNING id`, [x.url, x.id])).rowCount) ch.push({ id: x.id, old: '', url: x.url });
       await logoTrash(c, ch, `Doplnené logá – ${ch.length} kanálov (obnoviť = vrátiť späť)`);
       await c.query('COMMIT');
     } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); drop(); }
@@ -249,13 +261,13 @@ ${no.length ? `<details class="card"><summary>Nenájdené (${no.length})</summar
   }));
   admin.get('/tvch/:id(\\d+)/logo', needAuth, wrap(async (req, res) => {
     const r = (await all()).find((x) => x.id === +req.params.id); if (!r) return back(res, 'ok');
-    let sg = [], err = ''; try { sg = await LOGOS.suggest(r.name, r.category); } catch (e) { err = e.message; }
-    res.send(page('Nájsť logo', `<h1>🔎 Logo pre „${esc(r.name)}“</h1><p><a href="/admin/kanaly-katalog">← Späť</a></p>${err ? `<p class="err">GitHub nedostupný: ${esc(err)}</p>` : ''}
+    let sg = [], err = ''; try { sg = await LOGOS.suggest(r.name, r.category); } catch (e) { err = e.message; console.error('tvlogos suggest failed:', e.message); } if (!sg.length && LOGOS.status().lastErr) err = err || LOGOS.status().lastErr;
+    res.send(page('Nájsť logo', `<h1>🔎 Logo pre „${esc(r.name)}“</h1><p><a href="/admin/kanaly-katalog">← Späť</a></p>${err ? `<p class="err">Problém so zdrojom log: ${esc(err)}</p>` : ''}
 ${r.logo ? `<p>Aktuálne: <img src="${esc(r.logo)}" alt="" width="48" height="48" referrerpolicy="no-referrer"></p>` : ''}
-${sg.map((x) => `<form method="post" action="/admin/tvch/${r.id}/setlogo" class="card">${hid(req)}<input type="hidden" name="logo" value="${esc(x.url)}"><p><img src="${esc(x.url)}" alt="" width="64" height="64" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <span class="hint">${esc(x.country)} · ${esc(x.url.replace(LOGOS.RAW, ''))}</span></p><button>Použiť toto logo</button></form>`).join('') || (err ? '' : '<p class="hint">Nenašlo sa žiadne logo. Môžete zadať vlastnú https URL v úprave kanála.</p>')}`, 'adm'));
+${sg.map((x) => `<form method="post" action="/admin/tvch/${r.id}/setlogo" class="card">${hid(req)}<input type="hidden" name="logo" value="${esc(x.url)}"><p><img src="${esc(x.url)}" alt="" width="64" height="64" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <span class="hint">${esc(x.country)} · ${esc(LOGOS.short(x.url))}</span></p><button>Použiť toto logo</button></form>`).join('') || (err ? '' : '<p class="hint">Nenašlo sa žiadne logo. Môžete zadať vlastnú https URL v úprave kanála.</p>')}`, 'adm'));
   }));
   admin.post('/tvch/:id(\\d+)/setlogo', needAuth, csrf, wrap(async (req, res) => {
-    const url = String(req.body.logo || ''); if (!url.startsWith(LOGOS.RAW) || safeLogo(url) !== url) return back(res, 'badlogo');
+    const url = String(req.body.logo || ''); if (!LOGOS.isRepoLogo(url) || safeLogo(url) !== url) return back(res, 'badlogo');
     const c = await pool.connect();
     try { await c.query('BEGIN'); const o = (await c.query('SELECT name,logo FROM tv_channels WHERE id=$1 FOR UPDATE', [+req.params.id])).rows[0];
       if (o) { await c.query('UPDATE tv_channels SET logo=$1 WHERE id=$2', [url, +req.params.id]); await logoTrash(c, [{ id: +req.params.id, old: o.logo, url }], `Zmena loga – ${o.name} (obnoviť = vrátiť späť)`); }
