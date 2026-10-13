@@ -18,7 +18,7 @@ if (!ENV_HASH || SECRET.length < 32 || !process.env.DATABASE_URL) { console.erro
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: PROD || process.env.PGSSL !== '0' ? { rejectUnauthorized: true } : false, max: 5, keepAlive: true, idleTimeoutMillis: 300000 });
 pool.on('error', e => console.error('pg pool', e.message));
-const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets']);
+const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets', 'platby']);
 const CODE_RE = /^[a-z0-9-]{1,40}$/;
 const B62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const rndCode = () => Array.from(crypto.randomBytes(7), b => B62[b % 62]).join('');
@@ -45,10 +45,12 @@ const SOCIALS = [
   ['telegram', 'Telegram', '✈️'], ['instagram', 'Instagram', '📷'], ['facebook', 'Facebook', '📘'],
   ['x', 'X', '✖️'], ['tiktok', 'TikTok', '🎵'], ['whatsapp', 'WhatsApp', '💬'], ['signal', 'Signal', '🔒'], ['youtube', 'YouTube', '▶️'], ['email', 'E-mail', '✉️'],
 ];
+const CHECKOUT_ORIGIN = 'https://chain2pay-checkout-gl.onrender.com';
+const SHORT_PAY = 'https://lnkbio.onrender.com/platby';
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
   meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
-  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: 'https://chain2pay-checkout-gl.onrender.com', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
+  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: 'https://lnkbio.onrender.com/platby', chat_enabled: '1', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
 };
 
 async function init() {
@@ -72,6 +74,11 @@ async function init() {
     const { name, ...cols } = PRESETS.tvsoft;
     await setSettings({ ...base, ...cols, preset: 'tvsoft' });
     await pool.query(`UPDATE buttons SET brand='platby' WHERE label='Platby'`);
+  }
+  const sp = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_shortpay','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  if (sp.rowCount) {
+    await pool.query(`UPDATE buttons SET url=$1 WHERE url IN ('https://chain2pay-checkout-gl.onrender.com','https://chain2pay-checkout-gl.onrender.com/')`, [SHORT_PAY]);
+    await pool.query(`UPDATE settings SET v=$1 WHERE k='checkout_url' AND v IN ('https://chain2pay-checkout-gl.onrender.com','https://chain2pay-checkout-gl.onrender.com/')`, [SHORT_PAY]);
   }
 }
 // ---- AES-256-GCM encryption at rest for sensitive settings (contacts) ----
@@ -208,7 +215,7 @@ app.disable('x-powered-by');
 app.use(compression({ threshold: 0, filter: (req, res) => !/^image\//.test(String(res.getHeader('Content-Type') || '')) && compression.filter(req, res) }));
 app.use(helmet({
   contentSecurityPolicy: { useDefaults: false, directives: {
-    defaultSrc: ["'none'"], styleSrc: ["'self'"], imgSrc: ["'self'"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
+    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: [CHECKOUT_ORIGIN], styleSrc: ["'self'"], imgSrc: ["'self'"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
   strictTransportSecurity: { maxAge: 63072000, includeSubDomains: true, preload: true },
   frameguard: { action: 'deny' },
   referrerPolicy: { policy: 'no-referrer' },
@@ -255,6 +262,22 @@ app.get('/theme.css', wrap(async (req, res) => {
 }));
 
 const page = (title, body, cls = '', desc = '', extra = '') => `<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(desc || title)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head><body><main class="w ${cls}">${body}</main></body></html>`;
+
+const CHAT_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 'chat.js')) + fs.readFileSync(path.join(__dirname, 'static', 'chat.css'))).digest('hex').slice(0, 10);
+// short one-word payment link
+app.get('/platby', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, CHECKOUT_ORIGIN); });
+// public site info for the support chatbot knowledge base (only data already shown on public pages)
+app.get('/api/site-info', wrap(async (req, res) => {
+  const s = await getSettings(), base = 'https://lnkbio.onrender.com/' + s.slug;
+  const t = await chTree();
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.json({ title: s.title, bio: s.bio, chat_enabled: s.chat_enabled !== '0', pay_link: SHORT_PAY,
+    pages: Object.fromEntries(Object.entries(PAGES).map(([k, [n, u]]) => [n, base + u])),
+    about: s.about_text, payments: s.pay_text, contact: s.contact_text,
+    contacts: Object.fromEntries(SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n]) => [n, s['soc_' + k]])),
+    faq: (await getList('faq')).map(x => ({ q: x.q, a: x.a })),
+    channels: [...t.entries()].map(([r, m]) => ({ region: r, categories: [...m.entries()].map(([c, l]) => ({ name: c, items: l.slice(0, 40).map(x => x.name) })) })) });
+}));
 
 app.get('/', wrap(async (req, res) => { const s = await getSettings(); res.redirect(302, '/' + s.slug); }));
 
@@ -342,7 +365,7 @@ ${listAdmin(req, 'nav', await getList('nav'))}
 <label>O nás</label><textarea name="about_text" rows="5" maxlength="5000">${esc(s.about_text)}</textarea>
 <label>Kontakt – doplňujúci text</label><textarea name="contact_text" rows="3" maxlength="5000">${esc(s.contact_text)}</textarea>
 <label>Platby – úvodný text</label><textarea name="pay_text" rows="3" maxlength="5000">${esc(s.pay_text)}</textarea>
-<label>URL platobnej brány (checkout)</label><input name="checkout_url" type="url" maxlength="2000" value="${esc(s.checkout_url)}"><button>Uložiť texty</button></form>
+<label>URL platobnej brány (checkout)</label><input name="checkout_url" type="url" maxlength="2000" value="${esc(s.checkout_url)}">${chk('chat_enabled', s.chat_enabled !== '0', '💬 Zobraziť AI chatbota podpory na verejných stránkach')}<button>Uložiť texty</button></form>
 ${listAdmin(req, 'faq', await getList('faq'))}
 ${listAdmin(req, 'channels', await getList('channels'))}
 <form method="post" action="/admin/social" class="card">${hid(req)}<h2>Sociálne siete (voliteľné)</h2><p class="hint">Prázdne pole = nezobrazí sa.</p>
@@ -686,7 +709,7 @@ admin.post('/texts', needAuth, csrf, wrap(async (req, res) => {
   const u = String(req.body.checkout_url || '').trim(), cu = u ? safeUrl(u) : '';
   if (cu === null) return ok(res, 'badurl', 'texts');
   const t = k => clean(String(req.body[k] || '').replace(/\r/g, ''), 5000);
-  await setSettings({ about_text: t('about_text'), contact_text: t('contact_text'), pay_text: t('pay_text'), checkout_url: cu }); ok(res, 'ok', 'texts');
+  await setSettings({ about_text: t('about_text'), contact_text: t('contact_text'), pay_text: t('pay_text'), checkout_url: cu, chat_enabled: req.body.chat_enabled ? '1' : '0' }); ok(res, 'ok', 'texts');
 }));
 function listAdmin(req, t, rows) {
   const L = LISTS[t];
@@ -725,7 +748,8 @@ async function shell(req, res, s, active, title, content, sub = '') {
     const on = !n.url && n.page === active;
     return `<li><a href="${esc(href)}"${on ? ' class="on" aria-current="page"' : ''}${n.url ? ' rel="noopener noreferrer nofollow"' + (n.newtab ? ' target="_blank"' : '') : ''}><span class="ni">${n.url ? '🔗' : NAV_ICONS[n.page]}</span>${esc(n.label)}</a>${on && sub ? sub : ''}</li>`;
   }).join('');
-  const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
+  const chat = s.chat_enabled !== '0';
+  const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${chat ? `<link rel="stylesheet" href="/static/chat.css?v=${CHAT_V}"><script src="/static/chat.js?v=${CHAT_V}" defer></script>` : ''}${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
   const brand = `<a class="brand" href="/${esc(s.slug)}">${s.img.logo ? `<img src="/img/logo?v=${esc(s.img.logo)}" alt="" width="32" height="32">` : '<span class="bl">▶</span>'}${esc(s.title)}</a>`;
   res.setHeader('Cache-Control', 'public, max-age=60');
   res.send(`<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(s.meta_desc || s.bio)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head>

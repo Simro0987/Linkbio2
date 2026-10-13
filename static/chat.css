@@ -1,0 +1,12 @@
+#lcB{position:fixed;right:14px;bottom:14px;z-index:9998;width:54px;height:54px;border-radius:50%;border:1px solid #e5091466;background:linear-gradient(135deg,#e50914,#b20710);color:#fff;font-size:24px;box-shadow:0 6px 20px #e5091455,0 2px 8px #0008;cursor:pointer;padding:0;margin:0}
+#lcW{position:fixed;right:14px;bottom:78px;z-index:9999;width:min(360px,calc(100vw - 28px));height:min(520px,calc(100vh - 110px));background:#0b0d18;color:#e6e9f5;border:1px solid #263052;border-radius:14px;display:none;flex-direction:column;box-shadow:0 12px 40px #000a;font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+#lcW.open{display:flex}#lcW *{box-sizing:border-box}
+#lcH{padding:10px 12px;background:linear-gradient(90deg,#141a2e,#0b0d18);border-bottom:1px solid #263052;display:flex;align-items:center;font-weight:700}#lcH span{flex:1}#lcH .lv{color:#e50914;margin-right:6px;font-size:11px}
+#lcH button{background:none;border:0;color:#8b93b5;font-size:22px;line-height:1;padding:2px 6px;cursor:pointer;margin:0;width:auto}
+#lcL{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}
+.lcM{max-width:86%;padding:8px 10px;border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere}.lcU{align-self:flex-end;background:#e50914;color:#fff}.lcA{align-self:flex-start;background:#141a2e;border:1px solid #263052}.lcO{align-self:flex-start;background:#0f3d2e;color:#ecfdf5}
+.lcM a{color:#7fb0ff}
+#lcHum{margin:0 8px 8px;padding:7px;border:1px solid #263052;background:none;color:#c9cfe6;border-radius:8px;cursor:pointer;font-size:13px}
+#lcF{display:flex;gap:6px;align-items:flex-end;padding:8px;border-top:1px solid #263052;margin:0}
+#lcI{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid #263052;background:#07080f;color:#e6e9f5;font:16px/1.4 system-ui,sans-serif;resize:none;height:62px;max-height:140px}
+#lcF button{flex:0 0 40px;width:40px;height:40px;padding:0;margin:0;border:0;border-radius:50%;background:#e50914;color:#fff;font-size:16px;cursor:pointer}
