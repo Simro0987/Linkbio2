@@ -218,7 +218,7 @@ app.disable('x-powered-by');
 app.use(compression({ threshold: 0, filter: (req, res) => !/^image\//.test(String(res.getHeader('Content-Type') || '')) && compression.filter(req, res) }));
 app.use(helmet({
   contentSecurityPolicy: { useDefaults: false, directives: {
-    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: [CHECKOUT_ORIGIN], styleSrc: ["'self'"], imgSrc: ["'self'"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
+    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: [CHECKOUT_ORIGIN], styleSrc: ["'self'"], imgSrc: ["'self'", "https:"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
   strictTransportSecurity: { maxAge: 63072000, includeSubDomains: true, preload: true },
   frameguard: { action: 'deny' },
   referrerPolicy: { policy: 'no-referrer' },
@@ -375,7 +375,7 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>
@@ -413,7 +413,7 @@ ${listAdmin(req, 'nav', await getList('nav'))}
 <label>URL platobnej brány (checkout)</label><input name="checkout_url" type="url" maxlength="2000" value="${esc(s.checkout_url)}">${chk('chat_enabled', s.chat_enabled !== '0', '💬 Zobraziť AI chatbota podpory na verejných stránkach')}<button>Uložiť texty</button></form>
 ${listAdmin(req, 'faq', await getList('faq'))}
 <form method="post" action="/admin/kanaly" class="card" id="kanaly">${hid(req)}<h2>📺 Sekcia „Kanály“</h2>
-<p class="hint">Zoznam kanálov sa načítava automaticky zo <a href="/admin/stav">📡 Stav služieb</a> (jediný zdroj – kanály pridávajte/upravujte len tam). Názov, zobrazenie v menu a poradie nastavíte v <a href="#l-nav">Navigácii</a> (položka so stránkou „Kanály“).</p>
+<p><a class="btnl" href="/admin/kanaly-katalog">📺 Spravovať katalóg kanálov (pridať, upraviť, import CSV/Excel)</a></p><p class="hint">Stavový zoznam sa načítava automaticky zo <a href="/admin/stav">📡 Stav služieb</a> (jediný zdroj – kanály pridávajte/upravujte len tam). Názov, zobrazenie v menu a poradie nastavíte v <a href="#l-nav">Navigácii</a> (položka so stránkou „Kanály“).</p>
 <label>Úvodný text (SK)</label><textarea name="kan_intro" rows="2" maxlength="1000">${esc(s.kan_intro)}</textarea>
 <label>Úvodný text (EN)</label><textarea name="kan_intro_en" rows="2" maxlength="1000">${esc(s.kan_intro_en)}</textarea>
 ${chk('kan_status', s.kan_status !== '0', 'Zobraziť stav pri každom kanáli')}${chk('kan_catalog', s.kan_catalog === '1', 'Zobraziť aj starý katalóg (regióny/kategórie) pod zoznamom')}<button>Uložiť</button></form>
@@ -807,7 +807,8 @@ admin.post('/trash/:id(\\d+)/restore', needAuth, csrf, wrap(async (req, res) => 
     await c.query('BEGIN');
     const x = (await c.query(`DELETE FROM l_trash WHERE id=$1 RETURNING t,data`, [idOf(req)])).rows[0];
     if (x) {
-      t = x.t; const tbl = t === 'monitors' ? 'monitors' : LISTS[t] ? 'l_' + t : null; if (!tbl) throw new Error('bad trash type');
+      t = x.t; if (t === 'tvch' || t === 'tvch_bulk') { await features.tvchRestore(c, x); await c.query('COMMIT'); ok(res, 'restored', 'trash'); return; }
+      const tbl = t === 'monitors' ? 'monitors' : LISTS[t] ? 'l_' + t : null; if (!tbl) throw new Error('bad trash type');
       const cols = (await c.query(`SELECT column_name FROM information_schema.columns WHERE table_name=$1`, [tbl])).rows.map(r => r.column_name).filter(k => k !== 'id' && k in x.data);
       const vals = cols.map(k => (x.data[k] !== null && typeof x.data[k] === 'object') ? JSON.stringify(x.data[k]) : x.data[k]);
       await c.query(`INSERT INTO ${tbl} (${cols.join(',')}) VALUES (${cols.map((_, i) => '$' + (i + 1)).join(',')})`, vals);
@@ -823,7 +824,7 @@ admin.post('/trash/:id(\\d+)/purge', needAuth, csrf, wrap(async (req, res) => {
 }));
 async function trashAdmin(req) {
   const rows = (await pool.query(`SELECT id,t,label,deleted_at FROM l_trash ORDER BY deleted_at DESC LIMIT 200`)).rows;
-  const TN = { nav: 'Sekcia menu', faq: 'FAQ', channels: 'Kanál (katalóg)', plans: 'Plán', monitors: 'Stav služieb' };
+  const TN = { nav: 'Sekcia menu', faq: 'FAQ', channels: 'Kanál (katalóg)', plans: 'Plán', monitors: 'Stav služieb', tvch: 'Kanál (katalóg kanálov)', tvch_bulk: 'Katalóg kanálov (hromadne)' };
   return `<h2 id="trash">🗑️ Kôš (obnoviť zmazané)</h2>${rows.map(r => `<div class="card"><p><b>${esc(r.label || '—')}</b> <span class="hint">${esc(TN[r.t] || r.t)} · zmazané ${esc(new Date(r.deleted_at).toLocaleString('sk-SK', { timeZone: 'Europe/Zurich' }))}</span></p><div class="row">
 <form method="post" action="/admin/trash/${r.id}/restore">${hid(req)}<button class="g">↩ Obnoviť</button></form>
 <form method="post" action="/admin/trash/${r.id}/purge">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> natrvalo</label><button class="d">Vymazať natrvalo</button></form></div></div>`).join('') || '<p class="hint">Kôš je prázdny.</p>'}`;
@@ -897,6 +898,7 @@ admin.post('/cennik/texts', needAuth, csrf, wrap(async (req, res) => {
 const features = require('./features')({ app, admin, pool, getSettings, setSettings, page, esc, hid, csrf, needAuth, lockedFor, recordFail, fails, currentHash, encV, decV, wrap, writeSess,
   dropCache: () => { cache = null; }, buildExport, safeUrl, chTree: (...a) => chTree(...a), PROD });
 require('./extras')(Object.assign(features, { sniff, shell: (...a) => shell(...a), slugOk: (r) => slugOk(r), T, clean }));
+require('./tvch')(features);
 app.use('/admin', admin);
 
 // ---- short links ----
@@ -991,7 +993,7 @@ app.get('/:slug/kanaly', wrap(async (req, res, next) => {
     const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
     if (regs.length) cat = `<h2 class="ph">${tx(en, 'Katalóg', 'Catalogue')}</h2><div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} ${T(req, 'kategórií')} • ${n} ${T(req, 'položiek')}</span></a>`).join('')}</div>`;
   }
-  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${cat}`);
+  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${await features.tvchPublic(req)}${cat}`);
 }));
 app.get('/:slug/kanaly-katalog', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
@@ -1058,7 +1060,7 @@ app.get('/:slug/stav', wrap(async (req, res, next) => {
 app.use((req, res) => res.status(404).send(page('404', `<h1>404</h1><p class="bio">${T(req, 'Stránka neexistuje.')}</p>`)));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
 
-init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => {
+init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // keep-awake self-ping through the public Render URL every 10 min
   // + cross-ping the checkout service so waking one wakes the other

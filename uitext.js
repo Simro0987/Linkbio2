@@ -5,7 +5,7 @@ let OV = {};
 const DEF = new Map(); // sk -> en default
 const S = String.raw`'((?:[^'\\]|\\.)*)'`;
 const un = (x) => x.replace(/\\(.)/g, '$1');
-for (const f of ['server.js', 'extras.js', 'features.js']) {
+for (const f of ['server.js', 'extras.js', 'features.js', 'tvch.js']) {
   const src = fs.readFileSync(path.join(__dirname, f), 'utf8');
   for (const m of src.matchAll(new RegExp(String.raw`tx\([^,()]+,\s*` + S + String.raw`,\s*` + S + String.raw`\)`, 'g'))) DEF.set(un(m[1]), un(m[2]));
 }
