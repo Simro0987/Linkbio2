@@ -6,7 +6,7 @@ const VODCAT = /film|seri[aá]l|series|vod|movie|kino|cinema|dokument[aá]rn.*fi
 const YEAR = /\b(19[2-9]\d|20[0-4]\d)\b/;
 const isVod = (c) => VODCAT.test(c.category || '') || /[([]\s*(19[2-9]\d|20[0-4]\d)\s*[)\]]/.test(c.name || '');
 const WORK = new Set(['Q11424', 'Q5398426', 'Q24856', 'Q506240', 'Q1259759', 'Q202866', 'Q24862', 'Q21191270', 'Q526877', 'Q581714', 'Q1366112', 'Q229390', 'Q93204', 'Q17517379', 'Q117467246', 'Q63952888']);
-const commons = (fn) => { fn = String(fn).replace(/ /g, '_'); const h = crypto.createHash('md5').update(fn).digest('hex'), e = encodeURIComponent(fn); return `https://upload.wikimedia.org/wikipedia/commons/thumb/${h[0]}/${h.slice(0, 2)}/${e}/300px-${e}${/\.(svg|tiff?|pdf)$/i.test(fn) ? '.png' : ''}`; };
+const commons = (fn) => { fn = String(fn).replace(/ /g, '_'); const h = crypto.createHash('md5').update(fn).digest('hex'), e = encodeURIComponent(fn); return `https://upload.wikimedia.org/wikipedia/commons/thumb/${h[0]}/${h.slice(0, 2)}/${e}/330px-${e}${/\.(svg|tiff?|pdf)$/i.test(fn) ? '.png' : ''}`; };
 const cache = new Map();
 async function wd(params) { const r = await fetch('https://www.wikidata.org/w/api.php?' + new URLSearchParams({ format: 'json', origin: '*', ...params }), { headers: UA, signal: AbortSignal.timeout(8000) }); if (!r.ok) throw new Error('Wikidata HTTP ' + r.status); return r.json(); }
 function parse(name) {
@@ -17,7 +17,7 @@ function parse(name) {
 const norm = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s*\([^)]*\)\s*/g, ' ').replace(/[^a-z0-9]+/g, '');
 const WORKDESC = /film|movie|series|seri[aá]l|sitcom|miniseri|anim|drama|comedy|kom[eé]di|thriller|dokument|documentary|telenovel|anime|cartoon|rozpr[aá]vk|show/i;
 async function wiki(lang, q) {
-  const r = await fetch(`https://${lang}.wikipedia.org/w/api.php?` + new URLSearchParams({ action: 'query', format: 'json', generator: 'search', gsrsearch: q, gsrlimit: '6', prop: 'pageimages|description|langlinks', lllang: 'en', piprop: 'thumbnail', pithumbsize: '300', pilicense: 'any', redirects: '1' }), { headers: UA, signal: AbortSignal.timeout(8000) });
+  const r = await fetch(`https://${lang}.wikipedia.org/w/api.php?` + new URLSearchParams({ action: 'query', format: 'json', generator: 'search', gsrsearch: q, gsrlimit: '6', prop: 'pageimages|description|langlinks', lllang: 'en', piprop: 'thumbnail', pithumbsize: '330', pilicense: 'any', redirects: '1' }), { headers: UA, signal: AbortSignal.timeout(8000) });
   if (!r.ok) throw new Error('Wikipedia HTTP ' + r.status); const j = await r.json();
   return Object.values((j.query || {}).pages || {}).sort((x, y) => x.index - y.index);
 }
@@ -30,7 +30,7 @@ async function find(c) {
     for (const p of ps) {
       const d = p.description || '', nT = norm(p.title);
       if ((!p.thumbnail || !p.thumbnail.source) && lang !== 'en' && p.langlinks && p.langlinks[0] && (nT === nt || nT.startsWith(nt)) && (WORKDESC.test(d) || WORKDESC.test(p.title))) { // cs/sk article without image → its English article's poster
-        const en = await fetch('https://en.wikipedia.org/w/api.php?' + new URLSearchParams({ action: 'query', format: 'json', titles: p.langlinks[0]['*'], prop: 'pageimages', piprop: 'thumbnail', pithumbsize: '300', pilicense: 'any', redirects: '1' }), { headers: UA, signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => ({}));
+        const en = await fetch('https://en.wikipedia.org/w/api.php?' + new URLSearchParams({ action: 'query', format: 'json', titles: p.langlinks[0]['*'], prop: 'pageimages', piprop: 'thumbnail', pithumbsize: '330', pilicense: 'any', redirects: '1' }), { headers: UA, signal: AbortSignal.timeout(8000) }).then((r) => r.json()).catch(() => ({}));
         const ep = Object.values((en.query || {}).pages || {})[0]; if (ep && ep.thumbnail) p.thumbnail = ep.thumbnail;
       }
       if (!p.thumbnail || !p.thumbnail.source || !/^https:\/\/upload\.wikimedia\.org\//.test(p.thumbnail.source)) continue;
