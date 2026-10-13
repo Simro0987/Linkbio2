@@ -10,6 +10,11 @@ const STREAMISH = /(^|\b)(rtmp|rtsp|rtp|udp|mms|srt|hls)s?:\/\/|\.m3u8?\b|\.ts(\
 const ANYURL = /^\s*[a-z][a-z0-9+.-]{1,10}:\/\//i;
 const isStream = (v) => STREAMISH.test(String(v || '').trim());
 const H_NAME = /^(name|názov|nazov|kanál|kanal|channel|meno)$/i, H_CAT = /^(category|kategória|kategoria|group|skupina|žáner|zaner|genre)$/i, H_LOGO = /^(logo|logo ?url|icon|ikona|tvg-logo)$/i;
+const normH = (x) => String(x || '').replace(/^\uFEFF/, '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+const N_NAME = ['nazov kanala', 'nazov', 'kanal', 'channel', 'channel name', 'name', 'tvg-name', 'tvg name', 'title', 'meno'];
+const N_CAT = ['kategoria', 'skupina', 'group', 'group-title', 'group title', 'category', 'zaner', 'genre'];
+const N_LOGO = ['logo', 'logo url', 'tvg-logo', 'tvg logo', 'ikona', 'icon', 'image', 'obrazok'];
+const N_NUM = ['c.', 'c', '#', 'id', 'no', 'no.', 'cislo', 'nr', 'p.c.', 'por.', 'poradie'];
 const H_BAD = /url|stream|link|odkaz|m3u|playlist|xtream|user|pass|heslo|server|host|port|epg|tvg-id|token/i;
 
 function safeLogo(v) {
@@ -90,14 +95,22 @@ function parseXlsx(buf) {
 function analyze(rows) {
   const info = { ignoredCols: [], badLogos: 0, skipped: 0, dupes: 0, header: false, tooMany: false };
   if (!rows.length) return { items: [], info };
-  const h = rows[0].map((c) => cleanTxt(c, 60));
-  let ni = h.findIndex((c) => H_NAME.test(c)), ci = h.findIndex((c) => H_CAT.test(c)), li = h.findIndex((c) => H_LOGO.test(c));
+  const h = rows[0].map((c) => cleanTxt(String(c).replace(/^\uFEFF/, ''), 60));
+  const hn = h.map(normH);
+  const pick = (list, not = []) => { for (const k of list) { const i = hn.findIndex((c, j) => c === k && !not.includes(j)); if (i >= 0) return i; } return -1; };
+  let ni = pick(N_NAME), ci = pick(N_CAT, [ni]), li = pick(N_LOGO, [ni, ci]);
   let body = rows;
-  if (ni >= 0 || ci >= 0) {
+  const numCol = (i) => { if (N_NUM.includes(hn[i])) return true; const v = rows.slice(1, 201).map((r) => String(r[i] || '').trim()).filter(Boolean); return v.length > 0 && v.filter((x) => /^\d+[.)]?$/.test(x)).length / v.length > 0.8; };
+  if (ni >= 0 || ci >= 0 || li >= 0) {
     info.header = true; body = rows.slice(1);
+    if (ni < 0 || numCol(ni)) ni = hn.findIndex((c, i) => i !== ci && i !== li && c && !numCol(i) && !H_BAD.test(c) && !N_NUM.includes(c));
+    if (li < 0) { // fallback: an unmapped column with https image links
+      li = hn.findIndex((c, i) => { if (i === ni || i === ci) return false; const v = body.slice(0, 200).map((r) => String(r[i] || '').trim()).filter(Boolean); return v.length && v.filter((x) => /^https:\/\/\S+\.(png|jpe?g|svg|webp|gif)(\?\S*)?$/i.test(x) && !isStream(x)).length / v.length > 0.5; });
+    }
     h.forEach((c, i) => { if (i !== ni && i !== ci && i !== li && c) info.ignoredCols.push(c + (H_BAD.test(c) ? ' ⚠' : '')); });
-    if (ni < 0) ni = [0, 1, 2].find((i) => i !== ci && i !== li);
-  } else { ni = 0; ci = 1; li = 2; }
+    info.map = { name: ni >= 0 ? h[ni] : '—', category: ci >= 0 ? h[ci] : '— (Ostatné)', logo: li >= 0 ? h[li] : '—' };
+    if (ni < 0) return { items: [], info };
+  } else { ni = 0; ci = 1; li = 2; info.map = { name: 'stĺpec 1', category: 'stĺpec 2', logo: 'stĺpec 3' }; }
   // any column (other than chosen) whose values look like stream links is ignored; also chosen columns full of stream URLs
   const width = Math.max(...body.slice(0, 200).map((r) => r.length), 0);
   for (let i = 0; i < width; i++) {
@@ -110,13 +123,14 @@ function analyze(rows) {
   if (body.length > MAX_ROWS) { info.tooMany = true; }
   const seen = new Set(), items = [];
   for (const r of body.slice(0, MAX_ROWS)) {
-    const name = cleanTxt(r[ni], 120), cat = cleanTxt(r[ci], 80) || 'Ostatné';
+    const name = cleanTxt(r[ni], 120), cat = cleanTxt(ci >= 0 ? r[ci] : '', 80) || 'Ostatné';
     if (!txtOk(name) || !txtOk(cat)) { info.skipped++; continue; }
     let logo = li >= 0 ? safeLogo(r[li]) : '';
     if (logo === null) { info.badLogos++; logo = ''; }
     const k = (name + '|' + cat).toLowerCase(); if (seen.has(k)) { info.dupes++; continue; }
     seen.add(k); items.push({ name, category: cat, logo });
   }
+  info.sample = items.slice(0, 5);
   return { items, info };
 }
 
@@ -277,6 +291,8 @@ ${l.map((r, i) => `<div class="card"><form method="post" action="/admin/tvch/${r
     const g = groups(items), cur = (await all()).length;
     res.send(page('Náhľad importu', `<h1>⬆ Náhľad importu</h1><p><a href="/admin/kanaly-katalog">← Späť</a></p>
 <div class="card"><p>Súbor: <b>${esc(req.file.originalname || '')}</b> · formát: ${p.del === 'xlsx' ? 'Excel .xlsx' : 'CSV, oddeľovač „' + (p.del === '\t' ? 'tab' : esc(p.del)) + '“'} · hlavička: ${info.header ? 'áno' : 'nie (stĺpce: názov, kategória, logo)'}</p>
+<p>Mapovanie stĺpcov: názov ← <b>${esc(info.map.name)}</b> · kategória ← <b>${esc(info.map.category)}</b> · logo ← <b>${esc(info.map.logo)}</b></p>
+<table><tr><th>Názov</th><th>Kategória</th><th>Logo</th></tr>${(info.sample || []).map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.category)}</td><td>${x.logo ? esc(x.logo.slice(0, 60)) : '—'}</td></tr>`).join('')}</table>
 <p>Platných kanálov: <b>${items.length}</b> v <b>${g.size}</b> kategóriách · nových oproti katalógu: <b>${newOnes}</b> · duplicít v súbore: ${info.dupes} · preskočených riadkov: ${info.skipped} · neplatných log: ${info.badLogos}</p>
 ${info.ignoredCols.length ? `<p class="err">⚠ Ignorované stĺpce (neukladáme stream URL, playlisty ani prihlasovacie údaje): ${info.ignoredCols.map(esc).join(', ')}</p>` : ''}${info.streamInMain ? '<p class="err">⚠ Niektoré riadky obsahovali stream odkazy v názve/kategórii – boli preskočené.</p>' : ''}${info.badLogos ? '<p class="hint">Logá, ktoré nie sú https obrázky (napr. stream odkazy alebo porty), boli vynechané.</p>' : ''}</div>
 <div class="card"><h2>Kategórie</h2>${[...g].slice(0, 60).map(([c, l]) => `<p><b>${esc(c)}</b> (${l.length}): <span class="hint">${l.slice(0, 8).map((x) => esc(x.name)).join(', ')}${l.length > 8 ? ' …' : ''}</span></p>`).join('')}</div>
