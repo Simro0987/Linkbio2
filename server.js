@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const path = require('path');
 const { Pool } = require('pg');
+const QRCode = require('qrcode');
 
 const PORT = process.env.PORT || 3000;
 const ENV_HASH = process.env.ADMIN_PASSWORD_HASH || '';
@@ -17,16 +18,21 @@ if (!ENV_HASH || SECRET.length < 32 || !process.env.DATABASE_URL) { console.erro
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: PROD || process.env.PGSSL !== '0' ? { rejectUnauthorized: true } : false, max: 5, keepAlive: true, idleTimeoutMillis: 300000 });
 pool.on('error', e => console.error('pg pool', e.message));
-const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img']);
+const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets']);
+const CODE_RE = /^[a-z0-9-]{1,40}$/;
+const B62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const rndCode = () => Array.from(crypto.randomBytes(7), b => B62[b % 62]).join('');
+const BRANDS = { '': '— bez značky —', telegram: 'Telegram', whatsapp: 'WhatsApp', instagram: 'Instagram', facebook: 'Facebook', tiktok: 'TikTok', x: 'X', youtube: 'YouTube', signal: 'Signal', email: 'Email', web: 'Web', platby: 'Platby' };
 const SLUG_RE = /^[a-z0-9-]{1,30}$/;
 const HEX_RE = /^#[0-9a-f]{6}$/;
 
 // ---- theme presets / fonts ----
 const PRESETS = {
-  kava: { name: 'Káva', c_bg: '#1b120d', c_card: '#2e1f16', c_btntext: '#fff7ee', c_text: '#f3e6d8' },
-  tmava: { name: 'Tmavá', c_bg: '#0f1115', c_card: '#1f2430', c_btntext: '#ffffff', c_text: '#e5e7eb' },
-  svetla: { name: 'Svetlá', c_bg: '#f7f5f2', c_card: '#ffffff', c_btntext: '#1f2937', c_text: '#1f2937' },
-  moda: { name: 'Modá', c_bg: '#0b1d3a', c_card: '#1e40af', c_btntext: '#ffffff', c_text: '#dbeafe' },
+  tvsoft: { name: 'TV Software', c_bg: '#07080f', c_card: '#141a2e', c_btntext: '#f5f7ff', c_text: '#e6e9f5', layout: 'tv' },
+  kava: { name: 'Káva', c_bg: '#1b120d', c_card: '#2e1f16', c_btntext: '#fff7ee', c_text: '#f3e6d8', layout: 'classic' },
+  tmava: { name: 'Tmavá', c_bg: '#0f1115', c_card: '#1f2430', c_btntext: '#ffffff', c_text: '#e5e7eb', layout: 'classic' },
+  svetla: { name: 'Svetlá', c_bg: '#f7f5f2', c_card: '#ffffff', c_btntext: '#1f2937', c_text: '#1f2937', layout: 'classic' },
+  moda: { name: 'Modá', c_bg: '#0b1d3a', c_card: '#1e40af', c_btntext: '#ffffff', c_text: '#dbeafe', layout: 'classic' },
 };
 const FONTS = {
   system: { name: 'Systémové (sans-serif)', css: 'system-ui,-apple-system,"Segoe UI",Roboto,sans-serif' },
@@ -40,8 +46,8 @@ const SOCIALS = [
   ['x', 'X', '✖️'], ['tiktok', 'TikTok', '🎵'], ['email', 'E-mail', '✉️'],
 ];
 const DEFAULTS = {
-  slug: 'kava', title: 'Káva v Linku', bio: 'Malá kaviareň s veľkou chuťou ☕ Dobrá káva, pokojná chvíľa.',
-  meta_title: '', meta_desc: '', footer: '', preset: 'kava', ...Object.fromEntries(Object.entries(PRESETS.kava).filter(([k]) => k !== 'name')),
+  slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
+  meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
   btn_style: 'rounded', font: 'system', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
 };
 
@@ -51,12 +57,22 @@ async function init() {
   await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE`);
   await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS newtab BOOLEAN NOT NULL DEFAULT FALSE`);
   await pool.query(`CREATE TABLE IF NOT EXISTS images (k TEXT PRIMARY KEY, mime TEXT NOT NULL, data BYTEA NOT NULL, ver TEXT NOT NULL)`);
+  await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS start_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS end_at TIMESTAMPTZ`);
+  await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS brand TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS short_links (code TEXT PRIMARY KEY, target_url TEXT NOT NULL, expires_at TIMESTAMPTZ, active BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   const base = { slug: DEFAULTS.slug, title: DEFAULTS.title, bio: DEFAULTS.bio };
   for (const [k, v] of Object.entries(DEFAULTS)) await pool.query(`INSERT INTO settings (k,v) VALUES ($1,$2) ON CONFLICT (k) DO NOTHING`, [k, v]);
   const r = await pool.query(`INSERT INTO settings (k,v) VALUES ('seeded','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
   const m = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_kava','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
   if (m.rowCount) for (const [k, v] of Object.entries(base)) await pool.query(`UPDATE settings SET v=$2 WHERE k=$1`, [k, v]);
-  if (r.rowCount) await pool.query(`INSERT INTO buttons (label,url,emoji,pos) VALUES ($1,$2,$3,1)`, ['Platby', 'https://chain2pay-checkout-gl.onrender.com', '💳']);
+  if (r.rowCount) await pool.query(`INSERT INTO buttons (label,url,emoji,pos,brand) VALUES ($1,$2,$3,1,'platby')`, ['Platby', 'https://chain2pay-checkout-gl.onrender.com', '💳']);
+  const tv = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_tvsoft','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  if (tv.rowCount) {
+    const { name, ...cols } = PRESETS.tvsoft;
+    await setSettings({ ...base, ...cols, preset: 'tvsoft' });
+    await pool.query(`UPDATE buttons SET brand='platby' WHERE label='Platby'`);
+  }
 }
 let cache = null;
 async function getSettings() {
@@ -78,7 +94,7 @@ async function setSettings(obj) {
   } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); cache = null; }
 }
 let bcache = null;
-const getButtons = async () => bcache || (bcache = (await pool.query(`SELECT id,label,url,emoji,pos,enabled,newtab FROM buttons ORDER BY pos, id`)).rows);
+const getButtons = async () => bcache || (bcache = (await pool.query(`SELECT id,label,url,emoji,pos,enabled,newtab,start_at,end_at,brand FROM buttons ORDER BY pos, id`)).rows);
 const bq = async (q, a) => { try { return await pool.query(q, a); } finally { bcache = null; } };
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"'`=\/]/g, c => '&#' + c.charCodeAt(0) + ';');
@@ -87,6 +103,25 @@ function safeUrl(u) {
   if (u.length > 2000) return null;
   try { const x = new URL(u); return (x.protocol === 'https:' || x.protocol === 'http:') ? x.href : null; } catch { return null; }
 }
+// Europe/Zurich <-> UTC for datetime-local inputs
+const TZ = 'Europe/Zurich';
+function tzOffsetMs(d) {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(d).map(x => [x.type, x.value]));
+  return Date.UTC(+p.year, p.month - 1, +p.day, +p.hour, +p.minute, +p.second) - Math.floor(d.getTime() / 1000) * 1000;
+}
+function zurichToDate(v) {
+  v = String(v || '').trim(); if (!v) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(v); if (!m) return undefined;
+  const guess = Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5]);
+  let t = guess - tzOffsetMs(new Date(guess)); t = guess - tzOffsetMs(new Date(t));
+  return isNaN(t) ? undefined : new Date(t);
+}
+function dateToZurich(d) {
+  if (!d) return ''; d = new Date(d);
+  return new Date(d.getTime() + tzOffsetMs(d)).toISOString().slice(0, 16);
+}
+const fmtZ = d => d ? dateToZurich(d).replace('T', ' ') : '';
+const inWindow = (b, now = Date.now()) => (!b.start_at || new Date(b.start_at).getTime() <= now) && (!b.end_at || new Date(b.end_at).getTime() > now);
 const EMAIL_RE = /^[^\s@<>"'()\\,;:]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,24}$/i;
 const clean = (s, n) => String(s || '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, n);
 const hex = (v, d) => { v = String(v || '').trim().toLowerCase(); return HEX_RE.test(v) ? v : d; };
@@ -192,7 +227,8 @@ function themeCss(s) {
   const bg = hex(s.c_bg, DEFAULTS.c_bg), card = hex(s.c_card, DEFAULTS.c_card), bt = hex(s.c_btntext, DEFAULTS.c_btntext), tx = hex(s.c_text, DEFAULTS.c_text);
   const font = (FONTS[s.font] || FONTS.system).css, rad = s.btn_style === 'square' ? '0' : '14px';
   const bgImg = s.img.bg ? `background-image:url("/img/bg?v=${s.img.bg}");background-size:cover;background-position:center;background-attachment:fixed;` : '';
-  return `body{background-color:${bg};${bgImg}color:${tx};font-family:${font}}
+  const tvCss = s.layout === 'tv' && !s.img.bg ? `background-image:radial-gradient(1200px 500px at 50% -10%,rgba(229,9,20,.28),transparent 60%),radial-gradient(900px 500px at 100% 100%,rgba(37,99,235,.25),transparent 60%),linear-gradient(180deg,#0b0d18 0%,${bg} 100%);background-attachment:fixed;` : '';
+  return `body{background-color:${bg};${bgImg}${tvCss}color:${tx};font-family:${font}}
 .bio,.f,.soc a{color:${tx};opacity:.85}.b{background:${card};border-color:${card};color:${bt};border-radius:${rad};filter:none}
 .b:hover,.b:focus{background:${card};filter:brightness(1.15)}.soc a{border-color:${card}}`;
 }
@@ -233,22 +269,31 @@ admin.post('/logout', csrf, (req, res) => { writeSess(res, { auth: false, csrf: 
 
 const MSGS = { ok: 'Uložené.', badslug: 'Neplatný slug (a-z, 0-9, pomlčka, 1–30 znakov, nie rezervované slovo).', badurl: 'Neplatná URL (povolené len http/https).', badlabel: 'Chýba názov tlačidla.',
   badimg: 'Neplatný obrázok – povolené len PNG, JPG alebo WebP (SVG nie).', big: 'Obrázok je príliš veľký (max 2 MB).', noimg: 'Nevybrali ste súbor.', badsoc: 'Neplatná adresa sociálnej siete.',
+  badtime: 'Neplatný dátum/čas.', badwin: 'Koniec musí byť po začiatku.', badcode: 'Neplatný alebo rezervovaný kód.', dupcode: 'Kód už existuje.', rate: 'Príliš veľa nových odkazov. Skúste neskôr.',
+  badjson: 'Neplatný súbor zálohy.', bigjson: 'Záloha je príliš veľká (max 10 MB).', noconfirm: 'Potvrďte obnovu zaškrtnutím.', restored: 'Záloha bola obnovená.',
   badpw: 'Aktuálne heslo nie je správne.', shortpw: 'Nové heslo musí mať aspoň 12 znakov.', pwmismatch: 'Nové heslá sa nezhodujú.', pwok: 'Heslo bolo zmenené.', lock: 'Príliš veľa pokusov. Skúste neskôr.' };
 const sel = (name, opts, cur) => `<select name="${name}">${Object.entries(opts).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
 
 admin.get('/', needAuth, wrap(async (req, res) => {
   const s = await getSettings(); const bs = await getButtons();
-  const m = MSGS[req.query.m] ? `<div class="msg ${/^(ok|pwok)$/.test(req.query.m) ? '' : 'err'}">${esc(MSGS[req.query.m])}</div>` : '';
+  const m = MSGS[req.query.m] ? `<div class="msg ${/^(ok|pwok|restored)$/.test(req.query.m) ? '' : 'err'}">${esc(MSGS[req.query.m])}</div>` : '';
   const chk = (n, v, t) => `<label class="ck"><input type="checkbox" name="${n}" value="1"${v ? ' checked' : ''}> ${t}</label>`;
   const rows = bs.map((b, i) => `<div class="card${b.enabled ? '' : ' off'}"><form method="post" action="/admin/buttons/${b.id}/edit">${hid(req)}
 <label>Emoji ikona (voliteľné)</label><input name="emoji" value="${esc(b.emoji)}" maxlength="16">
 <label>Názov</label><input name="label" value="${esc(b.label)}" maxlength="80" required>
 <label>URL</label><input name="url" type="url" value="${esc(b.url)}" maxlength="2000" required>
-${chk('enabled', b.enabled, 'Zobraziť na stránke')}${chk('newtab', b.newtab, 'Otvoriť v novej karte')}<button>Uložiť</button></form>
+${btnExtra(b)}${chk('enabled', b.enabled, 'Zobraziť na stránke')}${chk('newtab', b.newtab, 'Otvoriť v novej karte')}<button>Uložiť</button></form>
 <div class="row"><form method="post" action="/admin/buttons/${b.id}/toggle">${hid(req)}<button class="g">${b.enabled ? '🙈 Skryť' : '👁 Zobraziť'}</button></form>
 ${i > 0 ? `<form method="post" action="/admin/buttons/${b.id}/move">${hid(req)}<input type="hidden" name="dir" value="up"><button class="g">↑ Hore</button></form>` : ''}
 ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">${hid(req)}<input type="hidden" name="dir" value="down"><button class="g">↓ Dole</button></form>` : ''}
-<form method="post" action="/admin/buttons/${b.id}/delete">${hid(req)}<button class="d">Zmazať</button></form>${b.enabled ? '' : '<span class="tag">skryté</span>'}</div></div>`).join('');
+<a class="btnl" href="/admin/qr/b/${b.id}.svg">⬇ QR</a>${(b.start_at || b.end_at) ? `<span class="tag${inWindow(b) ? ' ok' : ''}">${inWindow(b) ? 'v čase' : 'mimo času'}</span>` : ''}<form method="post" action="/admin/buttons/${b.id}/delete">${hid(req)}<button class="d">Zmazať</button></form>${b.enabled ? '' : '<span class="tag">skryté</span>'}</div></div>`).join('');
+  const sl = (await pool.query(`SELECT code,target_url,expires_at,active FROM short_links ORDER BY created_at DESC`)).rows;
+  const origin = 'https://' + req.get('host');
+  const slRows = sl.map(l => { const live = l.active && !(l.expires_at && new Date(l.expires_at) <= new Date());
+    return `<div class="card${live ? '' : ' off'}"><p><a href="/s/${esc(l.code)}" rel="noopener noreferrer" target="_blank">${esc(origin)}/s/${esc(l.code)}</a> → <span class="hint">${esc(l.target_url)}</span> ${live ? '' : '<span class="tag">neaktívny</span>'}</p>
+<form method="post" action="/admin/short/${esc(l.code)}/edit">${hid(req)}<label>Cieľová URL</label><input name="target_url" type="url" value="${esc(l.target_url)}" maxlength="2000" required>
+<label>Platnosť do (Europe/Zurich, voliteľné)</label><input type="datetime-local" name="expires_at" value="${esc(dateToZurich(l.expires_at))}">${chk('active', l.active, 'Aktívny')}<button>Uložiť</button></form>
+<div class="row"><img class="qr" src="/admin/qr/s/${esc(l.code)}.svg?inline=1" alt="QR" width="96" height="96"><a class="btnl" href="/admin/qr/s/${esc(l.code)}.svg">⬇ Stiahnuť QR</a><form method="post" action="/admin/short/${esc(l.code)}/delete">${hid(req)}<button class="d">Zmazať</button></form></div></div>`; }).join('');
   const imgBox = (k, t) => `<div class="card"><h3>${t}</h3>${s.img[k] ? `<img class="prev" src="/img/${k}?v=${s.img[k]}" alt="">` : '<p class="hint">Nenahraté.</p>'}
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
@@ -265,13 +310,23 @@ ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<
 <div class="card"><h2>Vzhľad</h2><form method="post" action="/admin/preset">${hid(req)}<label>Predvolená téma</label><div class="row">${sel('preset', Object.fromEntries(Object.entries(PRESETS).map(([k, v]) => [k, v.name])), s.preset)}<button class="g">Použiť tému</button></div></form>
 <form method="post" action="/admin/theme">${hid(req)}<div class="grid4">${color('c_bg', 'Pozadie')}${color('c_card', 'Tlačidlá / karty')}${color('c_btntext', 'Text tlačidiel')}${color('c_text', 'Text')}</div>
 <label>Štýl tlačidiel</label>${sel('btn_style', { rounded: 'Zaoblené', square: 'Hranaté' }, s.btn_style)}
+<label>Rozloženie</label>${sel('layout', { tv: 'TV Software (hero, karty)', classic: 'Klasické' }, s.layout)}
 <label>Písmo</label>${sel('font', Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.name])), s.font)}<button>Uložiť vzhľad</button></form></div>
+<div class="card"><h2>QR kód stránky</h2><div class="row"><img class="qr" src="/admin/qr/page.svg?inline=1" alt="QR" width="96" height="96"><a class="btnl" href="/admin/qr/page.svg">⬇ Stiahnuť QR (SVG)</a></div></div>
 <h2>Tlačidlá</h2>${rows || '<p>Žiadne tlačidlá.</p>'}
 <form method="post" action="/admin/buttons" class="card">${hid(req)}<h2>Pridať tlačidlo</h2>
 <label>Emoji ikona (voliteľné)</label><input name="emoji" maxlength="16"><label>Názov</label><input name="label" maxlength="80" required>
-<label>URL</label><input name="url" type="url" maxlength="2000" required placeholder="https://">${chk('enabled', true, 'Zobraziť na stránke')}${chk('newtab', false, 'Otvoriť v novej karte')}<button>Pridať</button></form>
+<label>URL</label><input name="url" type="url" maxlength="2000" required placeholder="https://">${btnExtra({})}${chk('enabled', true, 'Zobraziť na stránke')}${chk('newtab', false, 'Otvoriť v novej karte')}<button>Pridať</button></form>
+<h2>Krátke odkazy</h2>${slRows || '<p class="hint">Žiadne krátke odkazy.</p>'}
+<form method="post" action="/admin/short" class="card">${hid(req)}<h2>Nový krátky odkaz</h2>
+<label>Kód (voliteľné, a-z 0-9 pomlčka; prázdne = náhodný 7 znakov)</label><input name="code" pattern="[a-z0-9-]{1,40}" maxlength="40">
+<label>Cieľová URL</label><input name="target_url" type="url" maxlength="2000" required placeholder="https://">
+<label>Platnosť do (Europe/Zurich, voliteľné)</label><input type="datetime-local" name="expires_at">${chk('active', true, 'Aktívny')}<button>Vytvoriť</button></form>
 <form method="post" action="/admin/social" class="card">${hid(req)}<h2>Sociálne siete (voliteľné)</h2><p class="hint">Prázdne pole = nezobrazí sa.</p>
 ${SOCIALS.map(([k, n, e]) => `<label>${e} ${n}</label><input name="${k}" value="${esc(s['soc_' + k])}" maxlength="${k === 'email' ? 254 : 2000}" ${k === 'email' ? 'type="email" placeholder="meno@domena.sk"' : 'type="url" placeholder="https://"'}>`).join('')}<button>Uložiť</button></form>
+<div class="card"><h2>Záloha a obnova</h2><p><a class="btnl" href="/admin/export.json">⬇ Stiahnuť zálohu (JSON)</a></p>
+<form method="post" action="/admin/restore" enctype="multipart/form-data">${hid(req)}<label>Súbor zálohy (JSON, max 10 MB)</label><input type="file" name="backup" accept="application/json,.json" required>
+${chk('confirm', false, 'Rozumiem, že obnova prepíše všetky nastavenia, tlačidlá, krátke odkazy a obrázky.')}<button class="d">Obnoviť zo zálohy</button></form></div>
 <form method="post" action="/admin/password" class="card">${hid(req)}<h2>Zmena hesla</h2>
 <label>Aktuálne heslo</label><input type="password" name="current" autocomplete="current-password" required maxlength="200">
 <label>Nové heslo (min. 12 znakov)</label><input type="password" name="new1" autocomplete="new-password" required minlength="12" maxlength="200">
@@ -294,7 +349,8 @@ admin.post('/theme', needAuth, csrf, wrap(async (req, res) => {
   for (const k of ['c_bg', 'c_card', 'c_btntext', 'c_text']) o[k] = hex(req.body[k], s[k]);
   o.btn_style = req.body.btn_style === 'square' ? 'square' : 'rounded';
   o.font = FONTS[req.body.font] ? req.body.font : 'system';
-  const pm = Object.entries(PRESETS).find(([, p]) => ['c_bg', 'c_card', 'c_btntext', 'c_text'].every(k => p[k] === o[k]));
+  o.layout = req.body.layout === 'tv' ? 'tv' : 'classic';
+  const pm = Object.entries(PRESETS).find(([, p]) => ['c_bg', 'c_card', 'c_btntext', 'c_text', 'layout'].every(k => p[k] === o[k]));
   o.preset = pm ? pm[0] : 'custom';
   await setSettings(o); ok(res);
 }));
@@ -336,17 +392,21 @@ admin.post('/password', needAuth, csrf, wrap(async (req, res) => {
 function btnInput(req) {
   const label = clean(req.body.label, 80), url = safeUrl(req.body.url), emoji = clean(req.body.emoji, 16);
   if (!label) return { err: 'badlabel' }; if (!url) return { err: 'badurl' };
-  return { label, url, emoji, enabled: req.body.enabled === '1', newtab: req.body.newtab === '1' };
+  const start_at = zurichToDate(req.body.start_at), end_at = zurichToDate(req.body.end_at);
+  if (start_at === undefined || end_at === undefined) return { err: 'badtime' };
+  if (start_at && end_at && end_at <= start_at) return { err: 'badwin' };
+  const brand = Object.prototype.hasOwnProperty.call(BRANDS, req.body.brand) ? String(req.body.brand) : '';
+  return { label, url, emoji, enabled: req.body.enabled === '1', newtab: req.body.newtab === '1', start_at, end_at, brand };
 }
 admin.post('/buttons', needAuth, csrf, wrap(async (req, res) => {
   const b = btnInput(req); if (b.err) return ok(res, b.err);
-  await bq(`INSERT INTO buttons (label,url,emoji,enabled,newtab,pos) VALUES ($1,$2,$3,$4,$5,(SELECT COALESCE(MAX(pos),0)+1 FROM buttons))`, [b.label, b.url, b.emoji, b.enabled, b.newtab]);
+  await bq(`INSERT INTO buttons (label,url,emoji,enabled,newtab,start_at,end_at,brand,pos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,(SELECT COALESCE(MAX(pos),0)+1 FROM buttons))`, [b.label, b.url, b.emoji, b.enabled, b.newtab, b.start_at, b.end_at, b.brand]);
   ok(res);
 }));
 const idOf = req => { const n = Number(req.params.id); return Number.isInteger(n) && n > 0 ? n : 0; };
 admin.post('/buttons/:id/edit', needAuth, csrf, wrap(async (req, res) => {
   const b = btnInput(req); if (b.err) return ok(res, b.err);
-  await bq(`UPDATE buttons SET label=$1,url=$2,emoji=$3,enabled=$4,newtab=$5 WHERE id=$6`, [b.label, b.url, b.emoji, b.enabled, b.newtab, idOf(req)]);
+  await bq(`UPDATE buttons SET label=$1,url=$2,emoji=$3,enabled=$4,newtab=$5,start_at=$6,end_at=$7,brand=$8 WHERE id=$9`, [b.label, b.url, b.emoji, b.enabled, b.newtab, b.start_at, b.end_at, b.brand, idOf(req)]);
   ok(res);
 }));
 admin.post('/buttons/:id/toggle', needAuth, csrf, wrap(async (req, res) => {
@@ -366,22 +426,179 @@ admin.post('/buttons/:id/move', needAuth, csrf, wrap(async (req, res) => {
   }
   ok(res);
 }));
+// ---- buttons: brand + time window fields ----
+function btnExtra(b) {
+  return `<label>Štýl značky (voliteľné)</label>${sel('brand', BRANDS, b.brand || '')}
+<div class="grid2"><div><label>Zobraziť od (Europe/Zurich, voliteľné)</label><input type="datetime-local" name="start_at" value="${esc(dateToZurich(b.start_at))}"></div>
+<div><label>Zobraziť do (Europe/Zurich, voliteľné)</label><input type="datetime-local" name="end_at" value="${esc(dateToZurich(b.end_at))}"></div></div>`;
+}
+
+// ---- short links admin ----
+const slRate = new Map();
+function slLimited(key) {
+  const now = Date.now(); const a = (slRate.get(key) || []).filter(t => now - t < 10 * 60e3);
+  if (a.length >= 20) { slRate.set(key, a); return true; }
+  a.push(now); slRate.set(key, a); return false;
+}
+setInterval(() => { const now = Date.now(); for (const [k, a] of slRate) if (!a.some(t => now - t < 10 * 60e3)) slRate.delete(k); }, 10 * 60e3).unref();
+const codeOk = async c => CODE_RE.test(c) && !RESERVED.has(c) && c !== (await getSettings()).slug;
+function slInput(req) {
+  const target_url = safeUrl(req.body.target_url); if (!target_url) return { err: 'badurl' };
+  const expires_at = zurichToDate(req.body.expires_at); if (expires_at === undefined) return { err: 'badtime' };
+  return { target_url, expires_at, active: req.body.active === '1' };
+}
+admin.post('/short', needAuth, csrf, wrap(async (req, res) => {
+  if (slLimited(req.ip) || slLimited('*global')) return ok(res, 'rate');
+  const l = slInput(req); if (l.err) return ok(res, l.err);
+  let code = String(req.body.code || '').trim();
+  if (code) { if (!(await codeOk(code))) return ok(res, 'badcode'); }
+  for (let i = 0; i < 5 && !code; i++) { const c = rndCode(); if (!(await pool.query(`SELECT 1 FROM short_links WHERE code=$1`, [c])).rowCount) code = c; }
+  const r = await pool.query(`INSERT INTO short_links (code,target_url,expires_at,active) VALUES ($1,$2,$3,$4) ON CONFLICT (code) DO NOTHING`, [code, l.target_url, l.expires_at, l.active]);
+  ok(res, r.rowCount ? 'ok' : 'dupcode');
+}));
+admin.post('/short/:code/edit', needAuth, csrf, wrap(async (req, res) => {
+  const l = slInput(req); if (l.err) return ok(res, l.err);
+  await pool.query(`UPDATE short_links SET target_url=$1,expires_at=$2,active=$3 WHERE code=$4`, [l.target_url, l.expires_at, l.active, String(req.params.code)]); ok(res);
+}));
+admin.post('/short/:code/delete', needAuth, csrf, wrap(async (req, res) => {
+  await pool.query(`DELETE FROM short_links WHERE code=$1`, [String(req.params.code)]); ok(res);
+}));
+
+// ---- QR codes (server-side SVG) ----
+async function sendQr(req, res, url, name) {
+  const svg = await QRCode.toString(url, { type: 'svg', errorCorrectionLevel: 'M', margin: 2, color: { dark: '#000000', light: '#ffffff' } });
+  res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', (req.query.inline === '1' ? 'inline' : 'attachment') + `; filename="${name}.svg"`);
+  res.send(svg);
+}
+const pubOrigin = req => (process.env.PUBLIC_URL || ('https://' + req.get('host'))).replace(/\/+$/, '');
+admin.get('/qr/page.svg', needAuth, wrap(async (req, res) => { const s = await getSettings(); await sendQr(req, res, pubOrigin(req) + '/' + s.slug, 'qr-' + s.slug); }));
+admin.get('/qr/s/:code.svg', needAuth, wrap(async (req, res, next) => {
+  const c = String(req.params.code); if (!/^[A-Za-z0-9-]{1,40}$/.test(c)) return next();
+  if (!(await pool.query(`SELECT 1 FROM short_links WHERE code=$1`, [c])).rowCount) return next();
+  await sendQr(req, res, pubOrigin(req) + '/s/' + c, 'qr-s-' + c);
+}));
+admin.get('/qr/b/:id.svg', needAuth, wrap(async (req, res, next) => {
+  const b = (await getButtons()).find(x => x.id === idOf(req)); if (!b) return next();
+  await sendQr(req, res, b.url, 'qr-button-' + b.id);
+}));
+
+// ---- backup / restore ----
+const SKIP_KEYS = new Set(['pwhash', 'pwver', 'ver', 'seeded']);
+const isMigr = k => /^migr_/.test(k);
+admin.get('/export.json', needAuth, wrap(async (req, res) => {
+  const st = (await pool.query(`SELECT k,v FROM settings ORDER BY k`)).rows.filter(r => !SKIP_KEYS.has(r.k) && !isMigr(r.k));
+  const bs = (await pool.query(`SELECT label,url,emoji,pos,enabled,newtab,start_at,end_at,brand FROM buttons ORDER BY pos,id`)).rows;
+  const sl = (await pool.query(`SELECT code,target_url,expires_at,active FROM short_links ORDER BY created_at`)).rows;
+  const im = (await pool.query(`SELECT k,mime,data FROM images ORDER BY k`)).rows;
+  const out = { format: 'linkbio-backup', version: 1, exported_at: new Date().toISOString(),
+    settings: Object.fromEntries(st.map(r => [r.k, r.v])),
+    buttons: bs.map(b => ({ ...b, start_at: b.start_at && b.start_at.toISOString(), end_at: b.end_at && b.end_at.toISOString() })),
+    short_links: sl.map(l => ({ ...l, expires_at: l.expires_at && l.expires_at.toISOString() })),
+    images: Object.fromEntries(im.map(i => [i.k, { mime: i.mime, data: i.data.toString('base64') }])) };
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="linkbio-backup-${new Date().toISOString().slice(0, 10)}.json"`);
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.send(JSON.stringify(out, null, 1));
+}));
+const SETTING_KEYS = new Set([...Object.keys(DEFAULTS).filter(k => !SKIP_KEYS.has(k)), 'layout']);
+const isoOrNull = v => { if (v === null) return null; if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(v)) throw 0; const d = new Date(v); if (isNaN(d)) throw 0; return d; };
+const exactKeys = (o, req, opt = []) => { if (!o || typeof o !== 'object' || Array.isArray(o)) throw 0; for (const k of Object.keys(o)) if (!req.includes(k) && !opt.includes(k)) throw 0; for (const k of req) if (!(k in o)) throw 0; };
+function validateBackup(j) {
+  exactKeys(j, ['format', 'version', 'settings', 'buttons', 'short_links', 'images'], ['exported_at']);
+  if (j.format !== 'linkbio-backup' || j.version !== 1) throw 0;
+  exactKeys(j.settings, [], [...SETTING_KEYS]);
+  const st = {};
+  for (const [k, v] of Object.entries(j.settings)) {
+    if (typeof v !== 'string' || v.length > 2000) throw 0;
+    if (k === 'slug' && (!SLUG_RE.test(v) || RESERVED.has(v))) throw 0;
+    if (/^c_/.test(k) && !HEX_RE.test(v)) throw 0;
+    if (k === 'font' && !FONTS[v]) throw 0;
+    if (k === 'btn_style' && !['rounded', 'square'].includes(v)) throw 0;
+    if (k === 'layout' && !['tv', 'classic'].includes(v)) throw 0;
+    if (k === 'preset' && !PRESETS[v] && v !== 'custom') throw 0;
+    if (/^soc_/.test(k) && v && !(k === 'soc_email' ? EMAIL_RE.test(v) : safeUrl(v) === v)) throw 0;
+    st[k] = k === 'bio' || k === 'meta_desc' ? clean(v, 300) : clean(v, k === 'footer' ? 200 : k.startsWith('soc_') ? 2000 : 80);
+  }
+  if (!Array.isArray(j.buttons) || j.buttons.length > 200) throw 0;
+  const bs = j.buttons.map(b => {
+    exactKeys(b, ['label', 'url', 'emoji', 'pos', 'enabled', 'newtab', 'start_at', 'end_at', 'brand']);
+    if (typeof b.label !== 'string' || !clean(b.label, 80) || typeof b.emoji !== 'string' || typeof b.url !== 'string' || !safeUrl(b.url)) throw 0;
+    if (!Number.isInteger(b.pos) || typeof b.enabled !== 'boolean' || typeof b.newtab !== 'boolean' || typeof b.brand !== 'string' || !Object.prototype.hasOwnProperty.call(BRANDS, b.brand)) throw 0;
+    return { label: clean(b.label, 80), url: safeUrl(b.url), emoji: clean(b.emoji, 16), pos: b.pos, enabled: b.enabled, newtab: b.newtab, start_at: isoOrNull(b.start_at), end_at: isoOrNull(b.end_at), brand: b.brand };
+  });
+  if (!Array.isArray(j.short_links) || j.short_links.length > 5000) throw 0;
+  const seen = new Set();
+  const sl = j.short_links.map(l => {
+    exactKeys(l, ['code', 'target_url', 'expires_at', 'active']);
+    if (typeof l.code !== 'string' || !/^[A-Za-z0-9-]{1,40}$/.test(l.code) || RESERVED.has(l.code) || seen.has(l.code)) throw 0; seen.add(l.code);
+    if (typeof l.target_url !== 'string' || !safeUrl(l.target_url) || typeof l.active !== 'boolean') throw 0;
+    return { code: l.code, target_url: safeUrl(l.target_url), expires_at: isoOrNull(l.expires_at), active: l.active };
+  });
+  exactKeys(j.images, [], ['logo', 'bg']);
+  const im = Object.entries(j.images).map(([k, v]) => {
+    exactKeys(v, ['mime', 'data']);
+    if (typeof v.data !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(v.data)) throw 0;
+    const buf = Buffer.from(v.data, 'base64'); const mime = sniff(buf);
+    if (!mime || mime !== v.mime || buf.length > 2 * 1024 * 1024) throw 0;
+    return { k, mime, buf, ver: crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12) };
+  });
+  return { st, bs, sl, im };
+}
+const restoreUp = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 5, fieldSize: 1024 } }).single('backup');
+admin.post('/restore', needAuth, (req, res, next) => restoreUp(req, res, e => {
+  if (e) return ok(res, e.code === 'LIMIT_FILE_SIZE' ? 'bigjson' : 'badjson');
+  next();
+}), csrf, wrap(async (req, res) => {
+  if (req.body.confirm !== '1') return ok(res, 'noconfirm');
+  if (!req.file || !req.file.buffer.length) return ok(res, 'badjson');
+  let d; try { d = validateBackup(JSON.parse(req.file.buffer.toString('utf8'))); } catch { return ok(res, 'badjson'); }
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query(`DELETE FROM settings WHERE k <> ALL($1::text[]) AND k NOT LIKE 'migr\\_%'`, [[...SKIP_KEYS]]);
+    for (const [k, v] of Object.entries({ ...Object.fromEntries([...SETTING_KEYS].map(k => [k, DEFAULTS[k] ?? ''])), ...d.st })) await c.query(`INSERT INTO settings (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v`, [k, String(v)]);
+    await c.query(`UPDATE settings SET v=(COALESCE(NULLIF(v,''),'0')::bigint+1)::text WHERE k='ver'`);
+    await c.query(`DELETE FROM buttons`);
+    for (const b of d.bs) await c.query(`INSERT INTO buttons (label,url,emoji,pos,enabled,newtab,start_at,end_at,brand) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [b.label, b.url, b.emoji, b.pos, b.enabled, b.newtab, b.start_at, b.end_at, b.brand]);
+    await c.query(`DELETE FROM short_links`);
+    for (const l of d.sl) await c.query(`INSERT INTO short_links (code,target_url,expires_at,active) VALUES ($1,$2,$3,$4)`, [l.code, l.target_url, l.expires_at, l.active]);
+    await c.query(`DELETE FROM images`);
+    for (const i of d.im) await c.query(`INSERT INTO images (k,mime,data,ver) VALUES ($1,$2,$3,$4)`, [i.k, i.mime, i.buf, i.ver]);
+    await c.query('COMMIT');
+  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); cache = null; bcache = null; }
+  ok(res, 'restored');
+}));
 app.use('/admin', admin);
+
+// ---- short links ----
+app.get('/s/:code', wrap(async (req, res) => {
+  const code = String(req.params.code);
+  res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Robots-Tag', 'noindex');
+  if (!/^[A-Za-z0-9-]{1,40}$/.test(code)) return res.status(404).send(page('404', '<h1>404</h1><p class="bio">Odkaz neexistuje.</p>'));
+  const r = await pool.query(`SELECT target_url FROM short_links WHERE code=$1 AND active AND (expires_at IS NULL OR expires_at > now())`, [code]);
+  const u = r.rowCount && safeUrl(r.rows[0].target_url);
+  if (!u) return res.status(404).send(page('404', '<h1>404</h1><p class="bio">Odkaz neexistuje alebo vypršal.</p>'));
+  res.redirect(302, u);
+}));
 
 // ---- public page ----
 app.get('/:slug', wrap(async (req, res, next) => {
   const s = await getSettings();
   if (req.params.slug !== s.slug) return next();
-  const bs = (await getButtons()).filter(b => b.enabled);
+  const now = Date.now(); const bs = (await getButtons()).filter(b => b.enabled && inWindow(b, now));
   const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => {
     const href = k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k];
     return `<a href="${esc(href)}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`;
   }).join('');
   const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
   res.setHeader('Cache-Control', 'public, max-age=60');
+  res.setHeader('Vary', 'Accept-Encoding');
   res.send(page(s.meta_title || s.title, `${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(s.title)}</h1>${s.bio ? `<p class="bio">${esc(s.bio)}</p>` : ''}
-${bs.map(b => `<a class="b" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`).join('\n')}
-${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}`, 'pub', s.meta_desc || s.bio, extra));
+${s.layout === 'tv' ? '<div class="tvbar"><span class="live">● LIVE</span><span>▶ Stream</span><span>📺 TV</span><span>⚙ Software</span></div>' : ''}${bs.map(b => `<a class="b${BRANDS[b.brand] && b.brand ? ' br br-' + b.brand : ''}" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`).join('\n')}
+${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}`, 'pub' + (s.layout === 'tv' ? ' tv' : ''), s.meta_desc || s.bio, extra));
 }));
 app.use((req, res) => res.status(404).send(page('404', '<h1>404</h1><p class="bio">Stránka neexistuje.</p>')));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });

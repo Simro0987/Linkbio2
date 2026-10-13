@@ -13,3 +13,28 @@ select{padding:9px;border-radius:8px;border:1px solid #8a6a52;background:#1b120d
 input[type=checkbox]{width:auto;margin-right:6px}.ck{display:flex;align-items:center;margin-top:8px}.hint{font-size:.8rem;color:#8a6a52;margin:4px 0}
 .prev{max-width:120px;max-height:120px;border-radius:8px;display:block;margin-bottom:8px}.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0 14px}
 .grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0 12px}.off{opacity:.6}.tag{font-size:.8rem;background:#7f1d1d;padding:3px 8px;border-radius:10px}h3{margin:0 0 8px;font-size:1rem}
+.btnl{display:inline-block;padding:9px 14px;border-radius:8px;background:#334155;color:#fff;text-decoration:none;font-weight:600;margin:8px 6px 0 0}.qr{background:#fff;border-radius:6px;padding:4px}.tag.ok{background:#14532d}
+/* Brand button presets — own CSS, colors inspired by LittleLink (MIT, https://github.com/sethcottle/littlelink) */
+.w .b.br{border-width:1px;border-style:solid;filter:none}
+.w .b.br-telegram,.w .b.br-telegram:hover{background:#26a5e4;border-color:#26a5e4;color:#fff}
+.w .b.br-whatsapp,.w .b.br-whatsapp:hover{background:#25d366;border-color:#25d366;color:#fff}
+.w .b.br-instagram,.w .b.br-instagram:hover{background:linear-gradient(45deg,#f58529,#dd2a7b 50%,#8134af 75%,#515bd4);border-color:#dd2a7b;color:#fff}
+.w .b.br-facebook,.w .b.br-facebook:hover{background:#1877f2;border-color:#1877f2;color:#fff}
+.w .b.br-tiktok,.w .b.br-tiktok:hover{background:#000;border-color:#25f4ee;color:#fff;box-shadow:3px 3px 0 #fe2c55}
+.w .b.br-x,.w .b.br-x:hover{background:#000;border-color:#333;color:#fff}
+.w .b.br-youtube,.w .b.br-youtube:hover{background:#ff0000;border-color:#ff0000;color:#fff}
+.w .b.br-signal,.w .b.br-signal:hover{background:#3a76f0;border-color:#3a76f0;color:#fff}
+.w .b.br-email,.w .b.br-email:hover{background:#ffffff;border-color:#d1d5db;color:#111827}
+.w .b.br-web,.w .b.br-web:hover{background:#334155;border-color:#475569;color:#fff}
+.w .b.br-platby,.w .b.br-platby:hover{background:linear-gradient(90deg,#e50914,#7c3aed 55%,#2563eb);border-color:#e50914;color:#fff}
+.w .b.br:hover,.w .b.br:focus{filter:brightness(1.1)}
+/* TV Software layout */
+.pub.tv{padding-top:28px}.pub.tv h1{font-size:2.1rem;font-weight:800;letter-spacing:-.02em;background:linear-gradient(90deg,#fff,#c7d2fe);-webkit-background-clip:text;background-clip:text;color:transparent}
+.pub.tv h1::before{content:"▶";display:block;margin:0 auto 14px;width:64px;height:64px;line-height:64px;border-radius:18px;font-size:1.6rem;color:#fff;-webkit-text-fill-color:#fff;background:linear-gradient(135deg,#e50914,#2563eb);box-shadow:0 0 30px rgba(229,9,20,.45)}
+.pub.tv .logo+h1::before{display:none}.pub.tv .logo{border-radius:20px;box-shadow:0 0 0 3px rgba(255,255,255,.08),0 10px 40px rgba(37,99,235,.35)}
+.pub.tv .bio{font-size:.98rem;opacity:.8}
+.tvbar{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:-12px 0 22px;font-size:.75rem;letter-spacing:.08em;text-transform:uppercase}.tvbar span{padding:4px 10px;border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.04)}.tvbar .live{color:#ff4d57;border-color:rgba(229,9,20,.5)}
+.pub.tv .b{position:relative;text-align:left;padding:18px 20px 18px 22px;border:1px solid rgba(255,255,255,.08);box-shadow:0 8px 24px rgba(0,0,0,.35),inset 4px 0 0 #e50914;backdrop-filter:blur(6px)}
+.pub.tv .b::after{content:"▶";position:absolute;right:18px;top:50%;transform:translateY(-50%);opacity:.7;font-size:.85rem}
+.pub.tv .b:nth-of-type(even){box-shadow:0 8px 24px rgba(0,0,0,.35),inset 4px 0 0 #2563eb}
+.pub.tv .soc a{background:rgba(255,255,255,.04)}
