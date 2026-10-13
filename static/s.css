@@ -78,3 +78,14 @@ body.adm{background:radial-gradient(1000px 420px at 50% -10%,rgba(229,9,20,.22),
 .adm button{background:linear-gradient(135deg,#e50914,#b20710);box-shadow:0 3px 12px #e5091440}
 .adm button:hover{filter:brightness(1.12)}.adm button.g{background:#263052;box-shadow:none}.adm button.d{background:#7f1d1d;box-shadow:none}
 .adm .btnl{background:#1d4ed8}.adm a{color:#7fb0ff}.adm .msg{background:#0f3d2e;border:1px solid #166534}.adm .err{background:#4c0d12;border-color:#e50914}
+/* language switch */
+.langsw{display:inline-block;margin-left:auto;margin-right:8px;padding:3px 10px;border:1px solid rgba(255,255,255,.2);border-radius:999px;color:inherit;text-decoration:none;font-size:.8rem;font-weight:700;opacity:.85}.langsw:hover{opacity:1}
+.sb .langsw{margin:10px 0 0}
+/* service status */
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;vertical-align:middle;background:#64748b}.dot.up{background:#22c55e;box-shadow:0 0 8px #22c55e88}.dot.slow{background:#f59e0b;box-shadow:0 0 8px #f59e0b88}.dot.down{background:#ef4444;box-shadow:0 0 8px #ef444488}
+.stl{list-style:none;padding:0;margin:14px 0}.stl li{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:14px 16px;margin-bottom:10px;border-radius:12px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09)}.stl .sm{font-weight:700;flex:1}.stl .st{opacity:.65;font-size:.8rem}
+.sbanner{display:flex;flex-direction:column;gap:6px;margin:0 0 16px}.sbanner div{padding:10px 14px;border-radius:12px;font-weight:700;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1)}.sbanner .up{border-color:#22c55e66}.sbanner .slow{border-color:#f59e0b88}.sbanner .down{border-color:#ef444488;background:rgba(239,68,68,.12)}
+.tbadge{display:block;margin-top:6px;font-size:.78rem;opacity:.85}
+/* 2FA */
+.qrbox svg{width:220px;height:220px;background:#fff;border-radius:8px;padding:6px}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all;letter-spacing:.05em}.codes{columns:2;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.05rem}
+.aud{font-size:.8rem;opacity:.8}.aud td{padding:2px 8px 2px 0}

@@ -50,7 +50,7 @@ const SHORT_PAY = 'https://lnkbio.onrender.com/platby';
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
   meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
-  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: 'https://lnkbio.onrender.com/platby', chat_enabled: '1', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
+  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: 'https://lnkbio.onrender.com/platby', chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', stav_nav: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
 };
 
 async function init() {
@@ -84,7 +84,7 @@ async function init() {
 // ---- AES-256-GCM encryption at rest for sensitive settings (contacts) ----
 const ENC_KEY = /^[0-9a-f]{64}$/i.test(process.env.DATA_ENC_KEY || '') ? Buffer.from(process.env.DATA_ENC_KEY, 'hex') : null;
 if (!ENC_KEY) { console.error('Missing/invalid DATA_ENC_KEY (64 hex chars)'); process.exit(1); }
-const isEncKey = k => /^soc_/.test(k) || k === 'contact_text';
+const isEncKey = k => /^soc_/.test(k) || k === 'contact_text' || k === 'contact_text_en' || k === 'totp_secret' || k === 'totp_pending';
 function encrypt(buf, aad = 'linkbio') {
   const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', ENC_KEY, iv); c.setAAD(Buffer.from(aad));
   const ct = Buffer.concat([c.update(buf), c.final()]);
@@ -226,6 +226,23 @@ const CSS_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirna
 app.use('/static', express.static(path.join(__dirname, 'static'), { maxAge: '365d', immutable: true, etag: true, index: false }));
 app.use(express.urlencoded({ extended: false, limit: '20kb' }));
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+// ---- SK/EN language: ?lang=en|sk (sets cookie) or cookie; UI strings via dictionary, admin content as entered ----
+app.use((req, res, next) => {
+  const q = String(req.query.lang || '').toLowerCase();
+  if (q === 'sk' || q === 'en') { req.lang = q; res.append('Set-Cookie', `lang=${q}; Path=/; Max-Age=31536000; SameSite=Lax${PROD ? '; Secure' : ''}`); }
+  else { const m = String(req.headers.cookie || '').match(/(?:^|;\s*)lang=(sk|en)\b/); req.lang = m ? m[1] : 'sk'; }
+  next();
+});
+const EN = { 'Domov': 'Home', 'Kanály': 'Channels', 'Platby': 'Payments', 'Kontakt': 'Contact', 'FAQ': 'FAQ', 'O nás': 'About us', 'Stav služieb': 'Service status',
+  'Vyberte región.': 'Choose a region.', 'Vyberte kategóriu.': 'Choose a category.', 'kategórií': 'categories', 'položiek': 'items', '‹ Predošlá': '‹ Previous', 'Ďalšia ›': 'Next ›',
+  'Katalóg je zatiaľ prázdny.': 'The catalogue is empty for now.', '💳 Prejsť k platbe': '💳 Go to payment', 'Kontakty zatiaľ nie sú vyplnené.': 'No contacts yet.',
+  'Časté otázky': 'Frequently asked questions', 'Zatiaľ žiadne otázky.': 'No questions yet.', 'Hlavné menu': 'Main menu', 'Omrvinky': 'Breadcrumbs', 'Menu': 'Menu',
+  'Odkaz neexistuje.': 'This link does not exist.', 'Odkaz neexistuje alebo vypršal.': 'This link does not exist or has expired.', 'Stránka neexistuje.': 'Page not found.',
+  'Aktuálny stav našich služieb. Stránka sa obnovuje automaticky.': 'Current status of our services. This page refreshes automatically.' };
+const T = (req, sk) => (req && req.lang === 'en' && EN[sk]) || sk;
+const loc = (req, s, k) => (req && req.lang === 'en' && s[k + '_en']) || s[k];
+const langHref = req => { const u = new URL(req.originalUrl, 'http://x'); u.searchParams.set('lang', req.lang === 'en' ? 'sk' : 'en'); return u.pathname + u.search; };
+const langSw = req => `<a class="langsw" href="${esc(langHref(req))}" hreflang="${req.lang === 'en' ? 'sk' : 'en'}">🌐 ${req.lang === 'en' ? 'SK' : 'EN'}</a>`;
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
 app.get('/robots.txt', (req, res) => res.type('text').send('User-agent: *\nDisallow: /admin\n'));
 app.get('/favicon.ico', wrap(async (req, res) => { const s = await getSettings(); if (s.img.logo) return res.redirect(302, '/img/logo?v=' + s.img.logo); res.status(204).end(); }));
@@ -298,8 +315,13 @@ admin.post('/login', csrf, wrap(async (req, res) => {
   if (lockedFor(ip)) return res.redirect(303, '/admin/login?e=l');
   const good = await bcrypt.compare(String(req.body.password || '').slice(0, 200), await currentHash());
   if (!good) { recordFail(ip); return res.redirect(303, '/admin/login?e=1'); }
-  fails.delete(ip);
   const s = await getSettings();
+  if (s.totp_on === '1' && s.totp_secret) {
+    // password ok -> second step (TOTP / recovery code); rate limit continues on the 2FA step
+    writeSess(res, { auth: false, mfa: true, mfaAt: Date.now(), mfaN: 0, pv: s.pwver, csrf: crypto.randomBytes(24).toString('base64url') });
+    return res.redirect(303, '/admin/login/2fa');
+  }
+  fails.delete(ip);
   writeSess(res, { auth: true, pv: s.pwver, csrf: crypto.randomBytes(24).toString('base64url') });
   res.redirect(303, '/admin');
 }));
@@ -336,10 +358,12 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>
+<label>Titulok (EN, voliteľné)</label><input name="title_en" value="${esc(s.title_en)}" maxlength="80">
+<label>Krátke bio (EN, voliteľné)</label><textarea name="bio_en" maxlength="300" rows="2">${esc(s.bio_en)}</textarea>
 <label>Slug (adresa stránky)</label><input name="slug" value="${esc(s.slug)}" pattern="[a-z0-9-]{1,30}" maxlength="30" required>
 <label>Titulok v prehliadači &lt;title&gt; (prázdne = titulok)</label><input name="meta_title" value="${esc(s.meta_title)}" maxlength="80">
 <label>Meta popis (prázdne = bio)</label><textarea name="meta_desc" maxlength="300" rows="2">${esc(s.meta_desc)}</textarea>
@@ -365,6 +389,10 @@ ${listAdmin(req, 'nav', await getList('nav'))}
 <label>O nás</label><textarea name="about_text" rows="5" maxlength="5000">${esc(s.about_text)}</textarea>
 <label>Kontakt – doplňujúci text</label><textarea name="contact_text" rows="3" maxlength="5000">${esc(s.contact_text)}</textarea>
 <label>Platby – úvodný text</label><textarea name="pay_text" rows="3" maxlength="5000">${esc(s.pay_text)}</textarea>
+<details><summary>🇬🇧 Anglické verzie textov (voliteľné; prázdne = zobrazí sa slovenský text)</summary>
+<label>O nás (EN)</label><textarea name="about_text_en" rows="4" maxlength="5000">${esc(s.about_text_en)}</textarea>
+<label>Kontakt (EN)</label><textarea name="contact_text_en" rows="2" maxlength="5000">${esc(s.contact_text_en)}</textarea>
+<label>Platby (EN)</label><textarea name="pay_text_en" rows="2" maxlength="5000">${esc(s.pay_text_en)}</textarea></details>
 <label>URL platobnej brány (checkout)</label><input name="checkout_url" type="url" maxlength="2000" value="${esc(s.checkout_url)}">${chk('chat_enabled', s.chat_enabled !== '0', '💬 Zobraziť AI chatbota podpory na verejných stránkach')}<button>Uložiť texty</button></form>
 ${listAdmin(req, 'faq', await getList('faq'))}
 ${listAdmin(req, 'channels', await getList('channels'))}
@@ -383,7 +411,7 @@ admin.post('/settings', needAuth, csrf, wrap(async (req, res) => {
   const slug = String(req.body.slug || '').trim();
   if (!SLUG_RE.test(slug) || RESERVED.has(slug)) return ok(res, 'badslug');
   await setSettings({ title: clean(req.body.title, 80) || 'Odkazy', bio: clean(String(req.body.bio || '').replace(/\r/g, ''), 300), slug,
-    meta_title: clean(req.body.meta_title, 80), meta_desc: clean(String(req.body.meta_desc || '').replace(/\s+/g, ' '), 300), footer: clean(req.body.footer, 200) });
+    title_en: clean(req.body.title_en, 80), bio_en: clean(String(req.body.bio_en || '').replace(/\r/g, ''), 300), meta_title: clean(req.body.meta_title, 80), meta_desc: clean(String(req.body.meta_desc || '').replace(/\s+/g, ' '), 300), footer: clean(req.body.footer, 200) });
   ok(res);
 }));
 admin.post('/preset', needAuth, csrf, wrap(async (req, res) => {
@@ -532,9 +560,9 @@ admin.get('/qr/b/:id.svg', needAuth, wrap(async (req, res, next) => {
 }));
 
 // ---- backup / restore ----
-const SKIP_KEYS = new Set(['pwhash', 'pwver', 'ver', 'seeded']);
+const SKIP_KEYS = new Set(['pwhash', 'pwver', 'ver', 'seeded', 'totp_on', 'totp_secret', 'totp_pending', 'totp_rc', 'totp_last', 'sec_meta']);
 const isMigr = k => /^migr_/.test(k);
-admin.get('/export.json', needAuth, wrap(async (req, res) => {
+async function buildExport() {
   const st = (await pool.query(`SELECT k,v FROM settings ORDER BY k`)).rows.filter(r => !SKIP_KEYS.has(r.k) && !isMigr(r.k)).map(r => ({ k: r.k, v: decV(r.k, r.v) }));
   const bs = (await pool.query(`SELECT label,url,emoji,pos,enabled,newtab,start_at,end_at,brand,section FROM buttons ORDER BY pos,id`)).rows;
   const sl = (await pool.query(`SELECT code,target_url,expires_at,active FROM short_links ORDER BY created_at`)).rows;
@@ -545,6 +573,10 @@ admin.get('/export.json', needAuth, wrap(async (req, res) => {
     short_links: sl.map(l => ({ ...l, expires_at: l.expires_at && l.expires_at.toISOString() })),
     images: Object.fromEntries(im.map(i => [i.k, { mime: i.mime, data: i.data.toString('base64') }])),
     lists: Object.fromEntries(await Promise.all(Object.keys(LISTS).map(async t => [t, (await pool.query(`SELECT * FROM l_${t} ORDER BY pos,id`)).rows.map(({ id, pos, ...r }) => r)]))) };
+  return out;
+}
+admin.get('/export.json', needAuth, wrap(async (req, res) => {
+  const out = await buildExport();
   // encrypted + authenticated (AES-256-GCM) backup file; only this server (DATA_ENC_KEY) can restore it
   const e = encrypt(Buffer.from(JSON.stringify(out)), 'backup');
   const file = { format: 'linkbio-backup-enc', version: 1, alg: 'AES-256-GCM', exported_at: out.exported_at, ...e };
@@ -562,7 +594,8 @@ function validateBackup(j) {
   exactKeys(j.settings, [], [...SETTING_KEYS]);
   const st = {};
   for (const [k, v] of Object.entries(j.settings)) {
-    if (typeof v !== 'string' || v.length > 2000) throw 0;
+    const LONG = /^(about_text|contact_text|pay_text)(_en)?$/.test(k);
+    if (typeof v !== 'string' || v.length > (LONG ? 5000 : 2000)) throw 0;
     if (k === 'slug' && (!SLUG_RE.test(v) || RESERVED.has(v))) throw 0;
     if (/^c_/.test(k) && !HEX_RE.test(v)) throw 0;
     if (k === 'font' && !FONTS[v]) throw 0;
@@ -570,7 +603,7 @@ function validateBackup(j) {
     if (k === 'layout' && !['tv', 'classic'].includes(v)) throw 0;
     if (k === 'preset' && !PRESETS[v] && v !== 'custom') throw 0;
     if (/^soc_/.test(k) && v && !(k === 'soc_email' ? EMAIL_RE.test(v) : safeUrl(v) === v)) throw 0;
-    st[k] = k === 'bio' || k === 'meta_desc' ? clean(v, 300) : clean(v, k === 'footer' ? 200 : k.startsWith('soc_') ? 2000 : 80);
+    st[k] = LONG ? clean(v.replace(/\r/g, ''), 5000) : k === 'bio' || k === 'bio_en' || k === 'meta_desc' ? clean(v, 300) : clean(v, k === 'footer' ? 200 : k.startsWith('soc_') ? 2000 : 80);
   }
   if (!Array.isArray(j.buttons) || j.buttons.length > 200) throw 0;
   const bs = j.buttons.map(b => {
@@ -600,7 +633,7 @@ function validateBackup(j) {
   for (const t of Object.keys(LISTS)) {
     if (!Array.isArray(j.lists[t]) || j.lists[t].length > 20000) throw 0;
     const names = LISTS[t].fields.map(f => f[0]);
-    ls[t] = j.lists[t].map(o => { exactKeys(o, names); const r = listInput(t, o); if (!r) throw 0; return r; });
+    ls[t] = j.lists[t].map(o => { exactKeys(o, names.filter(n => !/_en$/.test(n)), names); const r = listInput(t, o); if (!r) throw 0; return r; });
   }
   return { st, bs, sl, im, ls };
 }
@@ -641,7 +674,7 @@ admin.post('/restore', needAuth, (req, res, next) => restoreUp(req, res, e => {
 const PAGES = { home: ['Domov', ''], channels: ['Kanály', '/kanaly'], payments: ['Platby', '/platby'], contact: ['Kontakt', '/kontakt'], faq: ['FAQ', '/faq'], about: ['O nás', '/o-nas'] };
 const NAV_ICONS = { home: '🏠', channels: '📺', payments: '💳', contact: '✉️', faq: '❓', about: 'ℹ️' };
 const LISTS = {
-  faq: { title: 'FAQ', fields: [['q', 'Otázka', 'text', 200, true], ['a', 'Odpoveď', 'area', 2000, true]] },
+  faq: { title: 'FAQ', fields: [['q', 'Otázka', 'text', 200, true], ['a', 'Odpoveď', 'area', 2000, true], ['q_en', 'Otázka (EN, voliteľné)', 'text', 200, false], ['a_en', 'Odpoveď (EN, voliteľné)', 'area', 2000, false]] },
   channels: { title: 'Kanály (katalóg)', fields: [['name', 'Názov', 'text', 80, true], ['region', 'Región', 'text', 40, true], ['category', 'Kategória', 'text', 40, true], ['note', 'Popis', 'area', 500, false]] },
   nav: { title: 'Navigácia', fields: [['label', 'Názov', 'text', 40, true], ['page', 'Interná stránka (ak nie je URL)', 'sel', 0, false], ['url', 'Externá URL (voliteľné, prepíše stránku)', 'url', 2000, false], ['visible', 'Zobraziť v menu', 'bool'], ['newtab', 'Otvoriť v novej karte', 'bool']] },
 };
@@ -668,6 +701,8 @@ async function initLists() {
   for (const r of pl) await pool.query(`UPDATE settings SET v=$2 WHERE k=$1`, [r.k, encV(r.k, r.v)]);
   if (pl.length) cache = null;
   await pool.query(`CREATE TABLE IF NOT EXISTS l_faq (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, q TEXT NOT NULL, a TEXT NOT NULL)`);
+  await pool.query(`ALTER TABLE l_faq ADD COLUMN IF NOT EXISTS q_en TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE l_faq ADD COLUMN IF NOT EXISTS a_en TEXT NOT NULL DEFAULT ''`);
   await pool.query(`CREATE TABLE IF NOT EXISTS l_channels (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, name TEXT NOT NULL, region TEXT NOT NULL, category TEXT NOT NULL, note TEXT NOT NULL DEFAULT '')`);
   await pool.query(`CREATE INDEX IF NOT EXISTS l_channels_rc ON l_channels (region, category)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS l_nav (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, label TEXT NOT NULL, page TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', visible BOOLEAN NOT NULL DEFAULT TRUE, newtab BOOLEAN NOT NULL DEFAULT FALSE)`);
@@ -709,7 +744,7 @@ admin.post('/texts', needAuth, csrf, wrap(async (req, res) => {
   const u = String(req.body.checkout_url || '').trim(), cu = u ? safeUrl(u) : '';
   if (cu === null) return ok(res, 'badurl', 'texts');
   const t = k => clean(String(req.body[k] || '').replace(/\r/g, ''), 5000);
-  await setSettings({ about_text: t('about_text'), contact_text: t('contact_text'), pay_text: t('pay_text'), checkout_url: cu, chat_enabled: req.body.chat_enabled ? '1' : '0' }); ok(res, 'ok', 'texts');
+  await setSettings({ about_text: t('about_text'), contact_text: t('contact_text'), pay_text: t('pay_text'), about_text_en: t('about_text_en'), contact_text_en: t('contact_text_en'), pay_text_en: t('pay_text_en'), checkout_url: cu, chat_enabled: req.body.chat_enabled ? '1' : '0' }); ok(res, 'ok', 'texts');
 }));
 function listAdmin(req, t, rows) {
   const L = LISTS[t];
@@ -724,6 +759,8 @@ ${i < rows.length - 1 ? `<form method="post" action="/admin/l/${t}/${o.id}/move"
 <form method="post" action="/admin/l/${t}/${o.id}/delete">${hid(req)}<button class="d">Zmazať</button></form></div></details>`).join('');
   return `<h2 id="l-${t}">${L.title}</h2>${body || '<p class="hint">Prázdne.</p>'}<details class="card"><summary>➕ Pridať</summary><form method="post" action="/admin/l/${t}">${hid(req)}${fld()}<button>Pridať</button></form></details>`;
 }
+const features = require('./features')({ app, admin, pool, getSettings, setSettings, page, esc, hid, csrf, needAuth, lockedFor, recordFail, fails, currentHash, encV, decV, wrap, writeSess,
+  dropCache: () => { cache = null; }, buildExport, safeUrl, chTree: (...a) => chTree(...a), PROD });
 app.use('/admin', admin);
 
 // ---- short links ----
@@ -746,18 +783,20 @@ async function shell(req, res, s, active, title, content, sub = '') {
   const items = nav.map(n => {
     const href = n.url || ('/' + s.slug + PAGES[n.page][1]);
     const on = !n.url && n.page === active;
-    return `<li><a href="${esc(href)}"${on ? ' class="on" aria-current="page"' : ''}${n.url ? ' rel="noopener noreferrer nofollow"' + (n.newtab ? ' target="_blank"' : '') : ''}><span class="ni">${n.url ? '🔗' : NAV_ICONS[n.page]}</span>${esc(n.label)}</a>${on && sub ? sub : ''}</li>`;
-  }).join('');
+    const label = !n.url && PAGES[n.page] && n.label === PAGES[n.page][0] ? T(req, n.label) : n.label;
+    return `<li><a href="${esc(href)}"${on ? ' class="on" aria-current="page"' : ''}${n.url ? ' rel="noopener noreferrer nofollow"' + (n.newtab ? ' target="_blank"' : '') : ''}><span class="ni">${n.url ? '🔗' : NAV_ICONS[n.page]}</span>${esc(label)}</a>${on && sub ? sub : ''}</li>`;
+  }).join('') + (s.stav_nav === '1' ? `<li><a href="/${esc(s.slug)}/stav"${active === 'stav' ? ' class="on" aria-current="page"' : ''}><span class="ni">📡</span>${esc(T(req, 'Stav služieb'))}</a></li>` : '');
   const chat = s.chat_enabled !== '0';
   const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${chat ? `<link rel="stylesheet" href="/static/chat.css?v=${CHAT_V}"><script src="/static/chat.js?v=${CHAT_V}" defer></script>` : ''}${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
-  const brand = `<a class="brand" href="/${esc(s.slug)}">${s.img.logo ? `<img src="/img/logo?v=${esc(s.img.logo)}" alt="" width="32" height="32">` : '<span class="bl">▶</span>'}${esc(s.title)}</a>`;
+  const brand = `<a class="brand" href="/${esc(s.slug)}">${s.img.logo ? `<img src="/img/logo?v=${esc(s.img.logo)}" alt="" width="32" height="32">` : '<span class="bl">▶</span>'}${esc(loc(req, s, 'title'))}</a>`;
   res.setHeader('Cache-Control', 'public, max-age=60');
-  res.send(`<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(s.meta_desc || s.bio)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head>
-<body class="site${s.layout === 'tv' ? ' tv' : ''}"><input type="checkbox" id="nt" class="nt" aria-hidden="true"><header class="top">${brand}<label for="nt" class="burger" aria-label="Menu">☰</label></header>
-<aside class="side"><div class="sb">${brand}</div><nav aria-label="Hlavné menu"><ul>${items}</ul></nav></aside><label for="nt" class="scrim" aria-hidden="true"></label>
+  res.setHeader('Vary', 'Cookie');
+  res.send(`<!doctype html><html lang="${req.lang === 'en' ? 'en' : 'sk'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">${active === 'stav' ? '<meta http-equiv="refresh" content="60">' : ''}<meta name="description" content="${esc(s.meta_desc || loc(req, s, 'bio'))}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head>
+<body class="site${s.layout === 'tv' ? ' tv' : ''}"><input type="checkbox" id="nt" class="nt" aria-hidden="true"><header class="top">${brand}${langSw(req)}<label for="nt" class="burger" aria-label="Menu">☰</label></header>
+<aside class="side"><div class="sb">${brand}${langSw(req)}</div><nav aria-label="${T(req, 'Hlavné menu')}"><ul>${items}</ul></nav></aside><label for="nt" class="scrim" aria-hidden="true"></label>
 <main class="w pub${s.layout === 'tv' ? ' tv' : ''}">${content}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}</main></body></html>`);
 }
-const crumbs = (s, parts) => `<nav class="crumbs" aria-label="Omrvinky">${parts.map(([n, h], i) => i < parts.length - 1 ? `<a href="${esc(h)}">${esc(n)}</a>${ARROW}` : `<span>${esc(n)}</span>`).join('')}</nav>`;
+const crumbs = (s, parts) => `<nav class="crumbs" aria-label="Breadcrumbs">${parts.map(([n, h], i) => i < parts.length - 1 ? `<a href="${esc(h)}">${esc(n)}</a>${ARROW}` : `<span>${esc(n)}</span>`).join('')}</nav>`;
 const para = t => esc(t).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 const btnHtml = b => `<a class="b${b.brand ? ' br br-' + b.brand : ''}" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`;
 const SOC_BRAND = { telegram: 'telegram', instagram: 'instagram', facebook: 'facebook', x: 'x', tiktok: 'tiktok', email: 'email', whatsapp: 'whatsapp', signal: 'signal', youtube: 'youtube' };
@@ -777,7 +816,8 @@ app.get('/:slug', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const bs = await pubBtns('home');
   const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => `<a href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
-  await shell(req, res, s, 'home', s.meta_title || s.title, `<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(s.title)}</h1>${s.bio ? `<p class="bio">${esc(s.bio)}</p>` : ''}
+  const banner = await features.monitorBanner(req.lang).catch(() => '');
+  await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
 ${s.layout === 'tv' ? '<div class="tvbar"><span class="live">● LIVE</span><span>▶ Stream</span><span>📺 TV</span><span>⚙ Software</span></div>' : ''}</section>
 ${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}`);
 }));
@@ -786,57 +826,67 @@ app.get('/:slug/kanaly', wrap(async (req, res, next) => {
   const t = await chTree(), b = chBase(s);
   const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
   const sub = regs.length ? `<ul class="subnav">${regs.map(([r]) => `<li><a href="${b}/${enc(r)}">${esc(r)}</a></li>`).join('')}</ul>` : '';
-  await shell(req, res, s, 'channels', 'Kanály – ' + s.title, `${crumbs(s, [['Kanály']])}<h1 class="ph">Kanály</h1><p class="lead">Vyberte región.</p>
-<div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} kategórií • ${n} položiek</span></a>`).join('') || '<p class="hint">Katalóg je zatiaľ prázdny.</p>'}</div>`, sub);
+  const badges = await Promise.all(regs.map(([r]) => features.monitorBadge(r, req.lang).catch(() => '')));
+  await shell(req, res, s, 'channels', T(req, 'Kanály') + ' – ' + loc(req, s, 'title'), `${crumbs(s, [[T(req, 'Kanály')]])}<h1 class="ph">${T(req, 'Kanály')}</h1><p class="lead">${T(req, 'Vyberte región.')}</p>
+<div class="tiles">${regs.map(([r, nc, n], i) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} ${T(req, 'kategórií')} • ${n} ${T(req, 'položiek')}</span>${badges[i]}</a>`).join('') || `<p class="hint">${T(req, 'Katalóg je zatiaľ prázdny.')}</p>`}</div>`, sub);
 }));
 app.get('/:slug/kanaly/:reg', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const t = await chTree(), b = chBase(s), r = req.params.reg, m = t.get(r); if (!m) return next();
   const sub = `<ul class="subnav"><li><a class="on" href="${b}/${enc(r)}">${esc(r)}</a><ul>${[...m.keys()].map(c => `<li><a href="${b}/${enc(r)}/${enc(c)}">${esc(c)}</a></li>`).join('')}</ul></li></ul>`;
-  await shell(req, res, s, 'channels', r + ' – Kanály', `${crumbs(s, [['Kanály', b], [r]])}<h1 class="ph">${esc(r)}</h1><p class="lead">Vyberte kategóriu.</p>
-<div class="tiles">${[...m.entries()].map(([c, l]) => `<a class="tile" href="${b}/${enc(r)}/${enc(c)}"><span class="tt">${esc(c)}</span><span class="tm">${l.length} položiek</span></a>`).join('')}</div>`, sub);
+  const cats = [...m.entries()];
+  const badges = await Promise.all(cats.map(([c]) => features.monitorBadge(r + ' › ' + c, req.lang).catch(() => '')));
+  await shell(req, res, s, 'channels', r + ' – ' + T(req, 'Kanály'), `${crumbs(s, [[T(req, 'Kanály'), b], [r]])}<h1 class="ph">${esc(r)}</h1><p class="lead">${T(req, 'Vyberte kategóriu.')}</p>
+<div class="tiles">${cats.map(([c, l], i) => `<a class="tile" href="${b}/${enc(r)}/${enc(c)}"><span class="tt">${esc(c)}</span><span class="tm">${l.length} ${T(req, 'položiek')}</span>${badges[i]}</a>`).join('')}</div>`, sub);
 }));
 app.get('/:slug/kanaly/:reg/:cat', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const t = await chTree(), b = chBase(s), r = req.params.reg, c = req.params.cat, m = t.get(r), l = m && m.get(c); if (!l) return next();
   const pages = Math.max(1, Math.ceil(l.length / PER_PAGE)), p = Math.min(pages, Math.max(1, parseInt(req.query.p, 10) || 1));
   const base = `${b}/${enc(r)}/${enc(c)}`;
-  const pg = pages > 1 ? `<nav class="pager">${p > 1 ? `<a href="${base}?p=${p - 1}">‹ Predošlá</a>` : ''}<span>${p} / ${pages}</span>${p < pages ? `<a href="${base}?p=${p + 1}">Ďalšia ›</a>` : ''}</nav>` : '';
+  const pg = pages > 1 ? `<nav class="pager">${p > 1 ? `<a href="${base}?p=${p - 1}">${T(req, '‹ Predošlá')}</a>` : ''}<span>${p} / ${pages}</span>${p < pages ? `<a href="${base}?p=${p + 1}">${T(req, 'Ďalšia ›')}</a>` : ''}</nav>` : '';
   const sub = `<ul class="subnav"><li><a href="${b}/${enc(r)}">${esc(r)}</a><ul>${[...m.keys()].map(x => `<li><a${x === c ? ' class="on"' : ''} href="${b}/${enc(r)}/${enc(x)}">${esc(x)}</a></li>`).join('')}</ul></li></ul>`;
-  await shell(req, res, s, 'channels', c + ' – ' + r, `${crumbs(s, [['Kanály', b], [r, b + '/' + enc(r)], [c]])}<h1 class="ph">${esc(c)}</h1>
+  await shell(req, res, s, 'channels', c + ' – ' + r, `${crumbs(s, [[T(req, 'Kanály'), b], [r, b + '/' + enc(r)], [c]])}<h1 class="ph">${esc(c)}</h1>
 <div class="guide">${l.slice((p - 1) * PER_PAGE, p * PER_PAGE).map((x, i) => `<a class="gi" href="/${esc(s.slug)}/kanal/${x.id}"><span class="gn">${(p - 1) * PER_PAGE + i + 1}</span><span class="gt">${esc(x.name)}</span><span class="gp">▶</span></a>`).join('')}</div>${pg}`, sub);
 }));
 app.get('/:slug/kanal/:id(\\d+)', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const x = (await getList('channels')).find(c => c.id === Number(req.params.id)); if (!x) return next();
   const b = chBase(s);
-  await shell(req, res, s, 'channels', x.name, `${crumbs(s, [['Kanály', b], [x.region, b + '/' + enc(x.region)], [x.category, b + '/' + enc(x.region) + '/' + enc(x.category)], [x.name]])}
+  await shell(req, res, s, 'channels', x.name, `${crumbs(s, [[T(req, 'Kanály'), b], [x.region, b + '/' + enc(x.region)], [x.category, b + '/' + enc(x.region) + '/' + enc(x.category)], [x.name]])}
 <article class="card detail"><div class="dh"><span class="bl">▶</span><h1 class="ph">${esc(x.name)}</h1></div><p class="tm">${esc(x.region)} • ${esc(x.category)}</p>${x.note ? para(x.note) : ''}</article>`);
 }));
 app.get('/:slug/platby', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const bs = await pubBtns('pay');
-  await shell(req, res, s, 'payments', 'Platby – ' + s.title, `<h1 class="ph">Platby</h1>${s.pay_text ? `<div class="prose">${para(s.pay_text)}</div>` : ''}
-${s.checkout_url ? `<a class="b br br-platby" href="${esc(s.checkout_url)}" rel="noopener noreferrer nofollow">💳 Prejsť k platbe</a>` : ''}${bs.map(btnHtml).join('\n')}`);
+  const co = s.checkout_url && req.lang === 'en' ? (() => { try { const u = new URL(s.checkout_url); u.searchParams.set('lang', 'en'); return u.href; } catch { return s.checkout_url; } })() : s.checkout_url;
+  await shell(req, res, s, 'payments', T(req, 'Platby') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Platby')}</h1>${loc(req, s, 'pay_text') ? `<div class="prose">${para(loc(req, s, 'pay_text'))}</div>` : ''}
+${s.checkout_url ? `<a class="b br br-platby" href="${esc(co)}" rel="noopener noreferrer nofollow">${T(req, '💳 Prejsť k platbe')}</a>` : ''}${bs.map(btnHtml).join('\n')}`);
 }));
 app.get('/:slug/kontakt', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow">${e} ${esc(n)}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`).join('');
-  await shell(req, res, s, 'contact', 'Kontakt – ' + s.title, `<h1 class="ph">Kontakt</h1>${s.contact_text ? `<div class="prose">${para(s.contact_text)}</div>` : ''}${soc || '<p class="hint">Kontakty zatiaľ nie sú vyplnené.</p>'}`);
+  await shell(req, res, s, 'contact', T(req, 'Kontakt') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Kontakt')}</h1>${loc(req, s, 'contact_text') ? `<div class="prose">${para(loc(req, s, 'contact_text'))}</div>` : ''}${soc || `<p class="hint">${T(req, 'Kontakty zatiaľ nie sú vyplnené.')}</p>`}`);
 }));
 app.get('/:slug/faq', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const f = await getList('faq');
-  await shell(req, res, s, 'faq', 'FAQ – ' + s.title, `<h1 class="ph">Časté otázky</h1>${f.map(x => `<details class="qa"><summary>${esc(x.q)}</summary>${para(x.a)}</details>`).join('') || '<p class="hint">Zatiaľ žiadne otázky.</p>'}`);
+  const en = req.lang === 'en';
+  await shell(req, res, s, 'faq', 'FAQ – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Časté otázky')}</h1>${f.map(x => `<details class="qa"><summary>${esc(en && x.q_en ? x.q_en : x.q)}</summary>${para(en && x.a_en ? x.a_en : x.a)}</details>`).join('') || `<p class="hint">${T(req, 'Zatiaľ žiadne otázky.')}</p>`}`);
 }));
 app.get('/:slug/o-nas', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
-  await shell(req, res, s, 'about', 'O nás – ' + s.title, `<h1 class="ph">O nás</h1><div class="prose">${para(s.about_text || '')}</div>`);
+  await shell(req, res, s, 'about', T(req, 'O nás') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'O nás')}</h1><div class="prose">${para(loc(req, s, 'about_text') || '')}</div>`);
 }));
-app.use((req, res) => res.status(404).send(page('404', '<h1>404</h1><p class="bio">Stránka neexistuje.</p>')));
+app.get('/:slug/stav', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  res.setHeader('X-Robots-Tag', 'noindex');
+  await shell(req, res, s, 'stav', T(req, 'Stav služieb') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Stav služieb')}</h1><p class="lead">${T(req, 'Aktuálny stav našich služieb. Stránka sa obnovuje automaticky.')}</p>${await features.monitorPage(req.lang)}`);
+}));
+app.use((req, res) => res.status(404).send(page('404', `<h1>404</h1><p class="bio">${T(req, 'Stránka neexistuje.')}</p>`)));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
 
-init().then(initLists).then(() => {
+init().then(initLists).then(() => features.initFeatures()).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // keep-awake self-ping through the public Render URL every 10 min
   // + cross-ping the checkout service so waking one wakes the other
