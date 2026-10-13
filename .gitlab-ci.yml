@@ -1,0 +1,7 @@
+# Keep-awake: scheduled pipeline pings the Render service (backup to in-app self-ping)
+keepalive:
+  image: curlimages/curl:latest
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  script:
+    - curl -fsS -m 60 --retry 3 https://lnkbio.onrender.com/healthz

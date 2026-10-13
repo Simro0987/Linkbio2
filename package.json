@@ -1,0 +1,2 @@
+{"name":"linkbio","version":"1.0.0","private":true,"main":"server.js","scripts":{"start":"node server.js"},"engines":{"node":">=18"},
+"dependencies":{"bcryptjs":"^2.4.3","express":"^4.21.2","helmet":"^8.0.0","pg":"^8.13.1"}}
