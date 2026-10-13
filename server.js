@@ -1,4 +1,5 @@
 'use strict';
+const { tx } = require('./uitext');
 const express = require('express');
 const helmet = require('helmet');
 const compression = require('compression');
@@ -51,7 +52,7 @@ const SHORT_PAY = LNK_PUBLIC + '/platby';
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
   meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
-  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: SHORT_PAY, chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', kan_intro: '', kan_intro_en: '', kan_status: '1', kan_catalog: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
+  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: SHORT_PAY, chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', ui_texts: '{}', cen_home: '1', tvbar_on: '1', kan_intro: '', kan_intro_en: '', kan_status: '1', kan_catalog: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
 };
 
 async function init() {
@@ -101,7 +102,7 @@ let cache = null;
 async function getSettings() {
   if (cache) return cache;
   const r = await pool.query(`SELECT k,v FROM settings`);
-  const s = { ...DEFAULTS }; r.rows.forEach(x => { s[x.k] = decV(x.k, x.v); });
+  const s = { ...DEFAULTS }; r.rows.forEach(x => { s[x.k] = decV(x.k, x.v); }); UI.setOverrides(s.ui_texts);
   const im = await pool.query(`SELECT k,ver FROM images`);
   s.img = {}; im.rows.forEach(x => { s.img[x.k] = x.ver; });
   return (cache = s);
@@ -241,7 +242,9 @@ const EN = { 'Cenník': 'Pricing', 'Domov': 'Home', 'Kanály': 'Channels', 'Plat
   'Časté otázky': 'Frequently asked questions', 'Zatiaľ žiadne otázky.': 'No questions yet.', 'Hlavné menu': 'Main menu', 'Omrvinky': 'Breadcrumbs', 'Menu': 'Menu',
   'Odkaz neexistuje.': 'This link does not exist.', 'Odkaz neexistuje alebo vypršal.': 'This link does not exist or has expired.', 'Stránka neexistuje.': 'Page not found.',
   'Aktuálny stav našich služieb. Stránka sa obnovuje automaticky.': 'Current status of our services. This page refreshes automatically.' };
-const T = (req, sk) => (req && req.lang === 'en' && EN[sk]) || sk;
+Object.assign(EN, { 'Kontroluje sa': 'Checking', 'Funguje': 'Up', 'Pomalé': 'Slow', 'Výpadok': 'Down', '● LIVE': '● LIVE', '▶ Stream': '▶ Stream', '📺 TV': '📺 TV', '⚙ Software': '⚙ Software' });
+const UI = require('./uitext'); UI.addDefaults(EN);
+const T = (req, sk) => UI.tx(!!(req && req.lang === 'en'), sk, EN[sk] || '');
 const loc = (req, s, k) => (req && req.lang === 'en' && s[k + '_en']) || s[k];
 const langHref = req => { const u = new URL(req.originalUrl, 'http://x'); u.searchParams.set('lang', req.lang === 'en' ? 'sk' : 'en'); return u.pathname.replace(/^[/\\]+/, '/') + u.search; };
 const langSw = req => `<a class="langsw" href="${esc(langHref(req))}" hreflang="${req.lang === 'en' ? 'sk' : 'en'}">🌐 ${req.lang === 'en' ? 'SK' : 'EN'}</a>`;
@@ -372,7 +375,7 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>
@@ -835,6 +838,25 @@ admin.post('/l/:t(faq|channels|nav|plans)/:id/move', needAuth, csrf, wrap(async 
   }
   lok(res, t, 'ok');
 }));
+admin.get('/texty', needAuth, wrap(async (req, res) => {
+  const s = await getSettings(); const rows = UI.all();
+  const m = req.query.m === 'ok' ? '<p class="ok">Uložené.</p>' : '';
+  res.send(page('Texty stránky', `<h1>✏️ Texty stránky</h1>${m}<p><a href="/admin">← Admin</a></p><p class="hint">Všetky nadpisy, popisy a tlačidlá verejnej stránky. Ľavý stĺpec je predvolený text; vyplňte vlastný SK/EN text (prázdne = predvolené). Názvy sekcií v menu sa menia v Navigácii, ceny a balíky v Cenníku, kanály v Stave služieb.</p>
+<form method="post" action="/admin/texty" class="card">${hid(req)}
+<label class="ck"><input type="checkbox" name="cen_home" value="1"${s.cen_home !== '0' ? ' checked' : ''}> Zobraziť Cenník aj na hlavnej stránke</label>
+<label class="ck"><input type="checkbox" name="tvbar_on" value="1"${s.tvbar_on !== '0' ? ' checked' : ''}> Zobraziť TV pás (● LIVE …) na hlavnej stránke</label>
+${rows.map((r, i) => `<details><summary>${esc(r.sk)}${r.osk || r.oen ? ' ✏️' : ''}</summary><input type="hidden" name="k${i}" value="${esc(r.sk)}"><label>SK (predvolené: ${esc(r.sk)})</label><input name="s${i}" maxlength="500" value="${esc(r.osk)}"><label>EN (predvolené: ${esc(r.en)})</label><input name="e${i}" maxlength="500" value="${esc(r.oen)}"></details>`).join('')}
+<button>Uložiť texty</button></form>`));
+}));
+admin.post('/texty', needAuth, csrf, wrap(async (req, res) => {
+  const o = {};
+  for (let i = 0; i < 2000 && req.body['k' + i] != null; i++) {
+    const k = String(req.body['k' + i]); if (!UI.has(k)) continue;
+    const sk = clean(req.body['s' + i], 500), en = clean(req.body['e' + i], 500);
+    if (sk || en) o[k] = { ...(sk ? { sk } : {}), ...(en ? { en } : {}) };
+  }
+  await setSettings({ ui_texts: JSON.stringify(o), cen_home: req.body.cen_home ? '1' : '0', tvbar_on: req.body.tvbar_on ? '1' : '0' }); res.redirect(303, '/admin/texty?m=ok');
+}));
 admin.post('/kanaly', needAuth, csrf, wrap(async (req, res) => {
   const t = k => clean(String(req.body[k] || '').replace(/\r/g, ''), 1000);
   await setSettings({ kan_intro: t('kan_intro'), kan_intro_en: t('kan_intro_en'), kan_status: req.body.kan_status ? '1' : '0', kan_catalog: req.body.kan_catalog ? '1' : '0' }); ok(res, 'ok', 'kanaly');
@@ -919,9 +941,9 @@ async function pricingHtml(req, s, h = 'h2') {
   const en = req.lang === 'en', L = (o, k) => (en && o[k + '_en']) || o[k];
   const ps = (await getList('plans')).filter(p => p.active); if (!ps.length) return '';
   const cards = ps.map(p => { const f = L(p, 'features').split('\n').map(x => x.trim()).filter(Boolean), mo = (+p.period || 1);
-    return `<div class="plan${p.popular ? ' pop' : ''}">${p.popular ? `<span class="pbadge">⭐ ${en ? 'Most popular' : 'Najobľúbenejší'}</span>` : ''}${L(p, 'badge') ? `<span class="pdisc">${esc(L(p, 'badge'))}</span>` : ''}
-<h3>${esc(L(p, 'name'))}</h3><p class="pprice">${p.old_price ? `<s>${esc(fmtEur(p.old_price))}</s> ` : ''}<b>${esc(fmtEur(p.price))}</b><span> / ${esc(perLabel(p.period, en))}</span></p>${mo > 1 && +p.price > 0 ? `<p class="hint">≈ ${esc(fmtEur(p.price / mo))} / ${en ? 'month' : 'mesiac'}</p>` : ''}
-${f.length ? `<ul class="pfeat">${f.map(x => `<li>${esc(x).replace(/(Návod na inštaláciu prehrávača|Player installation guide)/, `<a href="/${esc(s.slug)}/navody">$1</a>`)}</li>`).join('')}</ul>` : ''}${L(p, 'note') ? `<p class="hint">${esc(L(p, 'note'))}</p>` : ''}<a class="btn pbtn" href="${esc(p.btn_url || planUrl(p))}" rel="noopener">${esc(L(p, 'btn') || (en ? 'Choose payment' : 'Vybrať platbu'))}</a></div>`; }).join('');
+    return `<div class="plan${p.popular ? ' pop' : ''}">${p.popular ? `<span class="pbadge">⭐ ${tx(en, 'Najobľúbenejší', 'Most popular')}</span>` : ''}${L(p, 'badge') ? `<span class="pdisc">${esc(L(p, 'badge'))}</span>` : ''}
+<h3>${esc(L(p, 'name'))}</h3><p class="pprice">${p.old_price ? `<s>${esc(fmtEur(p.old_price))}</s> ` : ''}<b>${esc(fmtEur(p.price))}</b><span> / ${esc(perLabel(p.period, en))}</span></p>${mo > 1 && +p.price > 0 ? `<p class="hint">≈ ${esc(fmtEur(p.price / mo))} / ${tx(en, 'mesiac', 'month')}</p>` : ''}
+${f.length ? `<ul class="pfeat">${f.map(x => `<li>${esc(x).replace(/(Návod na inštaláciu prehrávača|Player installation guide)/, `<a href="/${esc(s.slug)}/navody">$1</a>`)}</li>`).join('')}</ul>` : ''}${L(p, 'note') ? `<p class="hint">${esc(L(p, 'note'))}</p>` : ''}<a class="btn pbtn" href="${esc(p.btn_url || planUrl(p))}" rel="noopener">${esc(L(p, 'btn') || (tx(en, 'Vybrať platbu', 'Choose payment')))}</a></div>`; }).join('');
   return `<section class="pricing" id="cennik"><${h} class="ph">${T(req, 'Cenník')}</${h}>${loc(req, s, 'pricing_intro') ? `<div class="prose">${para(loc(req, s, 'pricing_intro'))}</div>` : ''}<div class="plans">${cards}</div>${loc(req, s, 'pricing_note') ? `<div class="prose hint pnote">${para(loc(req, s, 'pricing_note'))}</div>` : ''}</section>`;
 }
 const para = t => esc(t).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
@@ -945,13 +967,13 @@ app.get('/:slug', wrap(async (req, res, next) => {
   const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => `<a href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
   const banner = await features.monitorBanner(req.lang).catch(() => '');
   await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
-${s.layout === 'tv' ? '<div class="tvbar"><span class="live">● LIVE</span><span>▶ Stream</span><span>📺 TV</span><span>⚙ Software</span></div>' : ''}</section>
-${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${await pricingHtml(req, s)}`);
+${s.layout === 'tv' ? (s.tvbar_on !== '0' ? `<div class="tvbar"><span class="live">${esc(T(req, '● LIVE'))}</span><span>${esc(T(req, '▶ Stream'))}</span><span>${esc(T(req, '📺 TV'))}</span><span>${esc(T(req, '⚙ Software'))}</span></div>` : '') : ''}</section>
+${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.cen_home !== '0' ? await pricingHtml(req, s) : ''}`);
 }));
 app.get('/:slug/cennik', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const h = await pricingHtml(req, s, 'h1');
-  await shell(req, res, s, 'cennik', T(req, 'Cenník') + ' – ' + loc(req, s, 'title'), h || `<h1 class="ph">${T(req, 'Cenník')}</h1><p class="hint">${req.lang === 'en' ? 'Pricing coming soon.' : 'Cenník pripravujeme.'}</p>`);
+  await shell(req, res, s, 'cennik', T(req, 'Cenník') + ' – ' + loc(req, s, 'title'), h || `<h1 class="ph">${T(req, 'Cenník')}</h1><p class="hint">${tx(req.lang === 'en', 'Cenník pripravujeme.', 'Pricing coming soon.')}</p>`);
 }));
 app.get('/:slug/kanaly', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
@@ -961,13 +983,13 @@ app.get('/:slug/kanaly', wrap(async (req, res, next) => {
   const chs = await features.monitorChannels(req.lang).catch(() => []);
   const intro = (en && s.kan_intro_en) || s.kan_intro;
   const showSt = s.kan_status !== '0';
-  const list = chs.length ? `<div class="guide">${chs.map((c, i) => `<div class="gi"><span class="gn">${i + 1}</span><span class="gt">${esc(c.name)}</span>${showSt ? `<span class="tbadge"><span class="dot ${esc(c.cls)}"></span>${esc(c.label)}</span>` : '<span class="gp">▶</span>'}</div>`).join('')}</div>`
-    : `<p class="hint">${en ? 'No channels yet.' : 'Zatiaľ žiadne kanály.'}</p>`;
+  const list = chs.length ? `<div class="guide">${chs.map((c, i) => `<div class="gi"><span class="gn">${i + 1}</span><span class="gt">${esc(c.name)}</span>${showSt ? `<span class="tbadge"><span class="dot ${esc(c.cls)}"></span>${esc(T(req, c.label))}</span>` : '<span class="gp">▶</span>'}</div>`).join('')}</div>`
+    : `<p class="hint">${tx(en, 'Zatiaľ žiadne kanály.', 'No channels yet.')}</p>`;
   let cat = '';
   if (s.kan_catalog === '1') {
     const t = await chTree(), b = chBase(s);
     const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
-    if (regs.length) cat = `<h2 class="ph">${en ? 'Catalogue' : 'Katalóg'}</h2><div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} ${T(req, 'kategórií')} • ${n} ${T(req, 'položiek')}</span></a>`).join('')}</div>`;
+    if (regs.length) cat = `<h2 class="ph">${tx(en, 'Katalóg', 'Catalogue')}</h2><div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} ${T(req, 'kategórií')} • ${n} ${T(req, 'položiek')}</span></a>`).join('')}</div>`;
   }
   return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${cat}`);
 }));

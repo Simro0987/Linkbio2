@@ -1,4 +1,5 @@
 'use strict';
+const { tx } = require('./uitext');
 // lnkbio add-ons: TOTP 2FA, API keys panel (Render env), service status monitor, daily encrypted Telegram backup.
 const crypto = require('crypto');
 const zlib = require('zlib');
@@ -264,12 +265,12 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
   ctx.dropMon = () => { mcache = null; };
   // channel list for the public 'Kanály' section – single source of truth = monitors (Stav služieb)
   ctx.monitorChannels = async (lang) => {
-    const L = { sk: { up: 'Funguje', slow: 'Pomalé', down: 'Výpadok', '': 'Kontroluje sa' }, en: { up: 'Up', slow: 'Slow', down: 'Down', '': 'Checking' } }[lang === 'en' ? 'en' : 'sk'];
+    const L = { up: 'Funguje', slow: 'Pomalé', down: 'Výpadok', '': 'Kontroluje sa' };
     return (await getMon()).map((m) => ({ name: m.name, cls: m.status || '', label: L[m.status || ''] || L[''] }));
   };
   ctx.monitorPage = async (lang) => {
     const ms = await getMon();
-    return `<ul class="stl">${ms.map((m) => { const p = pubItem(m, lang); return `<li><span class="dot ${esc(p.cls)}"></span><span class="sm">${esc(p.msg)}</span><span class="st">${lang === 'en' ? 'Last check' : 'Posledná kontrola'}: ${esc(fmtT(p.at, lang))}</span></li>`; }).join('') || `<li>${lang === 'en' ? 'No services are monitored yet.' : 'Zatiaľ nie sú sledované žiadne služby.'}</li>`}</ul>`;
+    return `<ul class="stl">${ms.map((m) => { const p = pubItem(m, lang); return `<li><span class="dot ${esc(p.cls)}"></span><span class="sm">${esc(p.msg)}</span><span class="st">${tx(lang === 'en', 'Posledná kontrola', 'Last check')}: ${esc(fmtT(p.at, lang))}</span></li>`; }).join('') || `<li>${tx(lang === 'en', 'Zatiaľ nie sú sledované žiadne služby.', 'No services are monitored yet.')}</li>`}</ul>`;
   };
 
   const MM = { ok: 'Uložené.', badurl: 'Neplatná URL (len http/https, verejná adresa – súkromné/lokálne IP sú zakázané).', badname: 'Chýba názov.', checked: 'Kontrola dokončená.', needconfirm: 'Zmazanie treba potvrdiť zaškrtnutím.' };

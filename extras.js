@@ -1,4 +1,5 @@
 'use strict';
+const { tx } = require('./uitext');
 // lnkbio extras: multi-bot Telegram routing, Návrhy (ideas bot + form), Návody (guides), Azteco redeem prep (BTCPay fresh address),
 // agent HMAC hook + status alert endpoint. Security: CSRF on all admin POSTs, password re-entry for Azteco, rate limits, CSP-safe (no inline JS).
 const crypto = require('crypto');
@@ -62,13 +63,13 @@ module.exports = function install(ctx) {
   app.get('/:slug/navrhy', wrap(async (req, res, next) => {
     const s = await slugOk(req); if (!s) return next();
     const en = req.lang === 'en', m = req.query.m;
-    const msg = m === 'ok' ? `<div class="msg">${en ? 'Thank you! Your suggestion was sent.' : 'Ďakujeme! Návrh bol odoslaný.'}</div>` : m === 'err' ? `<div class="msg err">${en ? 'Could not send – check the text and try again later.' : 'Nepodarilo sa odoslať – skontrolujte text a skúste neskôr.'}</div>` : '';
+    const msg = m === 'ok' ? `<div class="msg">${tx(en, 'Ďakujeme! Návrh bol odoslaný.', 'Thank you! Your suggestion was sent.')}</div>` : m === 'err' ? `<div class="msg err">${tx(en, 'Nepodarilo sa odoslať – skontrolujte text a skúste neskôr.', 'Could not send – check the text and try again later.')}</div>` : '';
     res.setHeader('Cache-Control', 'no-store');
-    await shell(req, res, s, 'navrhy', T(req, 'Návrhy') + ' – ' + s.title, `<h1 class="ph">${T(req, 'Návrhy')}</h1>${msg}<p class="lead">${en ? 'Have an idea how to improve our service? Write to us.' : 'Máte nápad, ako zlepšiť naše služby? Napíšte nám.'}</p>
+    await shell(req, res, s, 'navrhy', T(req, 'Návrhy') + ' – ' + s.title, `<h1 class="ph">${T(req, 'Návrhy')}</h1>${msg}<p class="lead">${tx(en, 'Máte nápad, ako zlepšiť naše služby? Napíšte nám.', 'Have an idea how to improve our service? Write to us.')}</p>
 <form method="post" action="/${esc(s.slug)}/navrhy" class="card idea"><input type="hidden" name="t" value="${esc(formTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
-<label for="it">${en ? 'Your suggestion' : 'Váš návrh'}</label><textarea id="it" name="text" required minlength="5" maxlength="2000" rows="6"></textarea>
-<label for="ic">${en ? 'Contact (optional – e-mail or Telegram)' : 'Kontakt (voliteľné – e-mail alebo Telegram)'}</label><input id="ic" name="contact" maxlength="120">
-<button class="b">${en ? 'Send suggestion' : 'Odoslať návrh'}</button></form>`);
+<label for="it">${tx(en, 'Váš návrh', 'Your suggestion')}</label><textarea id="it" name="text" required minlength="5" maxlength="2000" rows="6"></textarea>
+<label for="ic">${tx(en, 'Kontakt (voliteľné – e-mail alebo Telegram)', 'Contact (optional – e-mail or Telegram)')}</label><input id="ic" name="contact" maxlength="120">
+<button class="b">${tx(en, 'Odoslať návrh', 'Send suggestion')}</button></form>`);
   }));
   app.post('/:slug/navrhy', express.urlencoded({ extended: false, limit: '8kb' }), wrap(async (req, res, next) => {
     const s = await slugOk(req); if (!s) return next();
@@ -104,19 +105,19 @@ module.exports = function install(ctx) {
   let icache = null;
   const getInstalls = async () => icache || (icache = (await pool.query(`SELECT guide_id,dev,text,text_en,url,badge FROM guide_installs`)).rows);
   const instFor = (inst, g, dev) => inst.find((r) => r.guide_id === g.id && r.dev === dev && r.text);
-  const yn = (v, en) => (v === 1 ? `<span class="fy">✅ ${en ? 'yes' : 'áno'}</span>` : v === 'p' ? `<span class="fp">💎 ${en ? 'paid' : 'platené'}</span>` : `<span class="fn">— ${en ? 'no' : 'nie'}</span>`);
+  const yn = (v, en) => (v === 1 ? `<span class="fy">✅ ${tx(en, 'áno', 'yes')}</span>` : v === 'p' ? `<span class="fp">💎 ${tx(en, 'platené', 'paid')}</span>` : `<span class="fn">— ${tx(en, 'nie', 'no')}</span>`);
   const PRICE = { free: ['Zadarmo', 'Free'], freemium: ['Freemium', 'Freemium'], paid: ['Platené', 'Paid'] };
   const priceTag = (m, en) => (m ? `<span class="pt pt-${m.price}">${PRICE[m.price][en ? 1 : 0]}</span>` : '');
   const ossTag = (m) => (m && m.oss ? '<span class="oss">Open-source</span>' : '');
   const PICON = Object.fromEntries(require('fs').readdirSync(require('path').join(__dirname, 'static', 'pl')).map((f) => [f.replace(/\.\w+$/, ''), f]));
   const plIcon = (g, sz = 28) => (PICON[g.mkey] ? `<img class="picon" src="/static/pl/${esc(PICON[g.mkey])}" alt="" width="${sz}" height="${sz}">` : '');
   const devIcon = (d) => `<img class="dicon" src="/static/dev/${esc(d.icon)}.svg" alt="" width="44" height="44">`;
-  const featTable = (m, en) => m ? `<div class="card"><h2>${en ? 'Features & price' : 'Funkcie a cena'}</h2><table class="feat"><tbody>
-<tr><th>${en ? 'TV guide (EPG)' : 'TV program (EPG)'}</th><td>${yn(m.f.epg, en)}</td></tr><tr><th>${en ? 'Archive / catch-up' : 'Archív / catch-up'}</th><td>${yn(m.f.archive, en)}</td></tr>
-<tr><th>${en ? 'Recording' : 'Nahrávanie'}</th><td>${yn(m.f.rec, en)}</td></tr><tr><th>${en ? 'Multi-screen' : 'Viac obrazoviek'}</th><td>${yn(m.f.multi, en)}</td></tr>
-<tr><th>${en ? 'Price' : 'Cena'}</th><td>${priceTag(m, en)} ${esc(en ? m.price_en : m.price_sk)}</td></tr><tr><th>${en ? 'Paid features' : 'Platené funkcie'}</th><td>${esc(en ? m.paid_en : m.paid_sk)}</td></tr></tbody></table>
-<p class="hint">📼 ${esc(en ? m.arch_en : m.arch_sk)} ${en ? 'Archive only works if your service includes it for the channel.' : 'Archív funguje len ak ho služba pre daný kanál poskytuje.'}</p></div>` : '';
-  const NAV = (s, en, parts) => `<nav class="crumbs"><a href="/${esc(s.slug)}/navody">${en ? 'Player installation guide' : 'Návod na inštaláciu prehrávača'}</a>${parts.map(([t, h]) => `<span class="chev">›</span>${h ? `<a href="${h}">${esc(t)}</a>` : `<span>${esc(t)}</span>`}`).join('')}</nav>`;
+  const featTable = (m, en) => m ? `<div class="card"><h2>${tx(en, 'Funkcie a cena', 'Features & price')}</h2><table class="feat"><tbody>
+<tr><th>${tx(en, 'TV program (EPG)', 'TV guide (EPG)')}</th><td>${yn(m.f.epg, en)}</td></tr><tr><th>${tx(en, 'Archív / catch-up', 'Archive / catch-up')}</th><td>${yn(m.f.archive, en)}</td></tr>
+<tr><th>${tx(en, 'Nahrávanie', 'Recording')}</th><td>${yn(m.f.rec, en)}</td></tr><tr><th>${tx(en, 'Viac obrazoviek', 'Multi-screen')}</th><td>${yn(m.f.multi, en)}</td></tr>
+<tr><th>${tx(en, 'Cena', 'Price')}</th><td>${priceTag(m, en)} ${esc(en ? m.price_en : m.price_sk)}</td></tr><tr><th>${tx(en, 'Platené funkcie', 'Paid features')}</th><td>${esc(en ? m.paid_en : m.paid_sk)}</td></tr></tbody></table>
+<p class="hint">📼 ${esc(en ? m.arch_en : m.arch_sk)} ${tx(en, 'Archív funguje len ak ho služba pre daný kanál poskytuje.', 'Archive only works if your service includes it for the channel.')}</p></div>` : '';
+  const NAV = (s, en, parts) => `<nav class="crumbs"><a href="/${esc(s.slug)}/navody">${tx(en, 'Návod na inštaláciu prehrávača', 'Player installation guide')}</a>${parts.map(([t, h]) => `<span class="chev">›</span>${h ? `<a href="${h}">${esc(t)}</a>` : `<span>${esc(t)}</span>`}`).join('')}</nav>`;
   const FILT = { archive: (m) => m.f.archive, oss: (m) => m.oss, free: (m) => m.price === 'free' };
   app.get('/:slug/navody', wrap(async (req, res, next) => {
     const s = await slugOk(req); if (!s) return next();
@@ -125,28 +126,28 @@ module.exports = function install(ctx) {
     const cnt = (d) => gs.filter((g) => instFor(inst, g, d.k)).length;
     const rows = gs.filter((g) => META[g.mkey] && (!f || FILT[f](META[g.mkey]))).map((g) => { const m = META[g.mkey]; return `<tr><th>${plIcon(g, 20)}<a href="/${esc(s.slug)}/navody/${esc(g.slug)}">${esc(en && g.title_en ? g.title_en : g.title)}</a> ${ossTag(m)}</th>${DEVS.map((d) => `<td class="${instFor(inst, g, d.k) ? 'y' : 'n'}">${instFor(inst, g, d.k) ? '✅' : '—'}</td>`).join('')}<td>${yn(m.f.epg, en)}</td><td>${yn(m.f.archive, en)}</td><td>${priceTag(m, en)}</td></tr>`; }).join('');
     const fb = (k, sk, e) => `<a class="fb${f === k ? ' on' : ''}" href="/${esc(s.slug)}/navody${k ? '?f=' + k : ''}#cmp">${en ? e : sk}</a>`;
-    await shell(req, res, s, 'navody', T(req, 'Návody') + ' – ' + s.title, `<h1 class="ph">${en ? 'Player installation guide' : 'Návod na inštaláciu prehrávača'}</h1><p class="lead">${en ? '1) Pick your device → 2) pick a player → 3) follow the step-by-step guide. Use the details you received from us (“URL from us”, username, password).' : '1) Vyberte zariadenie → 2) vyberte prehrávač → 3) postupujte podľa návodu. Použite údaje, ktoré ste dostali od nás („URL od nás“, meno, heslo).'}</p>
-<h2>${en ? 'Which device do you have?' : 'Aké máte zariadenie?'}</h2><div class="devs">${DEVS.filter((d) => cnt(d)).map((d) => `<a class="dev" href="/${esc(s.slug)}/navody/d/${d.k}">${devIcon(d)}<span class="tt">${esc(en ? d.name_en : d.name)}</span><span class="tm">${esc(en ? d.sub_en : d.sub)} · ${cnt(d)} ${en ? 'players' : 'prehrávačov'}</span></a>`).join('')}</div>
-${rows || f ? `<h2 id="cmp">${en ? 'Comparison' : 'Porovnanie'}</h2><p class="fbs">${fb('', 'Všetky', 'All')}${fb('archive', '📼 S archívom', '📼 With archive')}${fb('oss', 'Open-source', 'Open-source')}${fb('free', 'Zadarmo', 'Free')}</p><div class="tblw"><table class="cmp"><thead><tr><th>${en ? 'Player' : 'Prehrávač'}</th>${DEVS.map((d) => `<th>${esc(en ? d.name_en : d.name)}</th>`).join('')}<th>EPG</th><th>${en ? 'Archive' : 'Archív'}</th><th>${en ? 'Price' : 'Cena'}</th></tr></thead><tbody>${rows}</tbody></table></div><p class="hint">💎 = ${en ? 'requires the paid version' : 'vyžaduje platenú verziu'}.</p>` : ''}`);
+    await shell(req, res, s, 'navody', T(req, 'Návody') + ' – ' + s.title, `<h1 class="ph">${tx(en, 'Návod na inštaláciu prehrávača', 'Player installation guide')}</h1><p class="lead">${tx(en, '1) Vyberte zariadenie → 2) vyberte prehrávač → 3) postupujte podľa návodu. Použite údaje, ktoré ste dostali od nás („URL od nás“, meno, heslo).', '1) Pick your device → 2) pick a player → 3) follow the step-by-step guide. Use the details you received from us (“URL from us”, username, password).')}</p>
+<h2>${tx(en, 'Aké máte zariadenie?', 'Which device do you have?')}</h2><div class="devs">${DEVS.filter((d) => cnt(d)).map((d) => `<a class="dev" href="/${esc(s.slug)}/navody/d/${d.k}">${devIcon(d)}<span class="tt">${esc(en ? d.name_en : d.name)}</span><span class="tm">${esc(en ? d.sub_en : d.sub)} · ${cnt(d)} ${tx(en, 'prehrávačov', 'players')}</span></a>`).join('')}</div>
+${rows || f ? `<h2 id="cmp">${tx(en, 'Porovnanie', 'Comparison')}</h2><p class="fbs">${fb('', 'Všetky', 'All')}${fb('archive', '📼 S archívom', '📼 With archive')}${fb('oss', 'Open-source', 'Open-source')}${fb('free', 'Zadarmo', 'Free')}</p><div class="tblw"><table class="cmp"><thead><tr><th>${tx(en, 'Prehrávač', 'Player')}</th>${DEVS.map((d) => `<th>${esc(en ? d.name_en : d.name)}</th>`).join('')}<th>EPG</th><th>${tx(en, 'Archív', 'Archive')}</th><th>${tx(en, 'Cena', 'Price')}</th></tr></thead><tbody>${rows}</tbody></table></div><p class="hint">💎 = ${tx(en, 'vyžaduje platenú verziu', 'requires the paid version')}.</p>` : ''}`);
   }));
   app.get('/:slug/navody/d/:dev', wrap(async (req, res, next) => {
     const s = await slugOk(req); if (!s) return next(); const d = devOf(req.params.dev); if (!d) return next();
     const en = req.lang === 'en', inst = await getInstalls(), gs = (await getGuides()).filter((g) => g.visible && instFor(inst, g, d.k)), dn = en ? d.name_en : d.name;
-    await shell(req, res, s, 'navody', dn + ' – ' + T(req, 'Návody'), `${NAV(s, en, [[dn]])}<h1 class="ph">${devIcon(d)} ${esc(dn)}</h1><p class="lead">${en ? 'Players available for this device:' : 'Prehrávače dostupné pre toto zariadenie:'}</p>
-<div class="tiles">${gs.map((g) => { const m = META[g.mkey]; return `<a class="tile" href="/${esc(s.slug)}/navody/d/${d.k}/${esc(g.slug)}"><span class="tt">${plIcon(g)}${esc(en && g.title_en ? g.title_en : g.title)}</span><span class="tags">${priceTag(m, en)}${ossTag(m)}${m && m.f.archive ? `<span class="pt">📼 ${en ? 'Archive' : 'Archív'}${m.f.archive === 'p' ? ' 💎' : ''}</span>` : ''}</span><span class="tm">${esc(en && g.intro_en ? g.intro_en : g.intro)}</span></a>`; }).join('') || `<p class="hint">${en ? 'No guides for this device yet.' : 'Pre toto zariadenie zatiaľ nemáme návod.'}</p>`}</div>`);
+    await shell(req, res, s, 'navody', dn + ' – ' + T(req, 'Návody'), `${NAV(s, en, [[dn]])}<h1 class="ph">${devIcon(d)} ${esc(dn)}</h1><p class="lead">${tx(en, 'Prehrávače dostupné pre toto zariadenie:', 'Players available for this device:')}</p>
+<div class="tiles">${gs.map((g) => { const m = META[g.mkey]; return `<a class="tile" href="/${esc(s.slug)}/navody/d/${d.k}/${esc(g.slug)}"><span class="tt">${plIcon(g)}${esc(en && g.title_en ? g.title_en : g.title)}</span><span class="tags">${priceTag(m, en)}${ossTag(m)}${m && m.f.archive ? `<span class="pt">📼 ${tx(en, 'Archív', 'Archive')}${m.f.archive === 'p' ? ' 💎' : ''}</span>` : ''}</span><span class="tm">${esc(en && g.intro_en ? g.intro_en : g.intro)}</span></a>`; }).join('') || `<p class="hint">${tx(en, 'Pre toto zariadenie zatiaľ nemáme návod.', 'No guides for this device yet.')}</p>`}</div>`);
   }));
-  const stepsHtml = (steps, en, start) => steps.map((st, i) => { const im = stepImg(st); return `<li class="gstep"><div class="gtx"><span class="gnum">${i + start}</span><p>${esc(en && st.text_en ? st.text_en : st.text).replace(/\n/g, '<br>')}</p></div>${im ? `<img src="${im}" alt="${esc((en ? 'Step ' : 'Krok ') + (i + start))}" loading="lazy">` : ''}</li>`; }).join('');
+  const stepsHtml = (steps, en, start) => steps.map((st, i) => { const im = stepImg(st); return `<li class="gstep"><div class="gtx"><span class="gnum">${i + start}</span><p>${esc(en && st.text_en ? st.text_en : st.text).replace(/\n/g, '<br>')}</p></div>${im ? `<img src="${im}" alt="${esc((tx(en, 'Krok ', 'Step ')) + (i + start))}" loading="lazy">` : ''}</li>`; }).join('');
   app.get('/:slug/navody/d/:dev/:g', wrap(async (req, res, next) => {
     const s = await slugOk(req); if (!s) return next(); const d = devOf(req.params.dev); if (!d) return next();
     const g = (await getGuides()).find((x) => x.visible && x.slug === req.params.g); if (!g) return next();
     const en = req.lang === 'en', title = en && g.title_en ? g.title_en : g.title, dn = en ? d.name_en : d.name, m = META[g.mkey];
     const ins = instFor(await getInstalls(), g, d.k); if (!ins) return res.redirect(302, `/${s.slug}/navody/d/${d.k}`);
-    const b = BADGE[ins.badge], link = ins.url ? (b ? `<a class="badge" href="${esc(ins.url)}" rel="noopener noreferrer nofollow" target="_blank"><img class="${b[4]}" src="${b[0]}" alt="${esc(b[1])}" width="${b[2]}" height="${b[3]}"></a>` : `<a class="btn" href="${esc(ins.url)}" rel="noopener noreferrer nofollow" target="_blank">⬇ ${en ? 'Official download' : 'Oficiálne stiahnutie'}</a>`) : '';
+    const b = BADGE[ins.badge], link = ins.url ? (b ? `<a class="badge" href="${esc(ins.url)}" rel="noopener noreferrer nofollow" target="_blank"><img class="${b[4]}" src="${b[0]}" alt="${esc(b[1])}" width="${b[2]}" height="${b[3]}"></a>` : `<a class="btn" href="${esc(ins.url)}" rel="noopener noreferrer nofollow" target="_blank">⬇ ${tx(en, 'Oficiálne stiahnutie', 'Official download')}</a>`) : '';
     const setup = g.steps.filter((st) => !/-(store|firetv)$/.test(st.def_img || ''));
     await shell(req, res, s, 'navody', title + ' – ' + dn, `${NAV(s, en, [[dn, `/${esc(s.slug)}/navody/d/${d.k}`], [title]])}<h1 class="ph">${plIcon(g, 40)}${esc(title)} <span class="sub">· ${esc(dn)}</span></h1><p class="tags">${priceTag(m, en)}${ossTag(m)}</p><p class="lead">${esc(en && g.intro_en ? g.intro_en : g.intro)}</p>
-<h2>${en ? 'Install' : 'Inštalácia'}</h2><ol class="gsteps"><li class="gstep"><div class="gtx"><span class="gnum">1</span><p>${esc(en && ins.text_en ? ins.text_en : ins.text).replace(/\n/g, '<br>')}</p></div>${link ? `<p class="dl">${link}</p>` : ''}</li></ol>
-<h2>${en ? 'Setup' : 'Nastavenie'}</h2><ol class="gsteps">${stepsHtml(setup, en, 2)}</ol>${featTable(m, en)}
-<p class="hint">${en ? 'We do not provide any content through these apps – they are only players for the details you received from us.' : 'Prostredníctvom týchto aplikácií neposkytujeme žiadny obsah – sú to len prehrávače pre údaje, ktoré ste dostali od nás.'}</p>`);
+<h2>${tx(en, 'Inštalácia', 'Install')}</h2><ol class="gsteps"><li class="gstep"><div class="gtx"><span class="gnum">1</span><p>${esc(en && ins.text_en ? ins.text_en : ins.text).replace(/\n/g, '<br>')}</p></div>${link ? `<p class="dl">${link}</p>` : ''}</li></ol>
+<h2>${tx(en, 'Nastavenie', 'Setup')}</h2><ol class="gsteps">${stepsHtml(setup, en, 2)}</ol>${featTable(m, en)}
+<p class="hint">${tx(en, 'Prostredníctvom týchto aplikácií neposkytujeme žiadny obsah – sú to len prehrávače pre údaje, ktoré ste dostali od nás.', 'We do not provide any content through these apps – they are only players for the details you received from us.')}</p>`);
   }));
   app.get('/:slug/navody/:g', wrap(async (req, res, next) => {
     const s = await slugOk(req); if (!s) return next();
@@ -154,8 +155,8 @@ ${rows || f ? `<h2 id="cmp">${en ? 'Comparison' : 'Porovnanie'}</h2><p class="fb
     const en = req.lang === 'en', title = en && g.title_en ? g.title_en : g.title, inst = await getInstalls(), m = META[g.mkey];
     const ds = DEVS.filter((d) => instFor(inst, g, d.k));
     await shell(req, res, s, 'navody', title + ' – ' + T(req, 'Návody'), `${NAV(s, en, [[title]])}<h1 class="ph">${plIcon(g, 40)}${esc(title)}</h1><p class="tags">${priceTag(m, en)}${ossTag(m)}</p><p class="lead">${esc(en && g.intro_en ? g.intro_en : g.intro)}</p>
-${ds.length ? `<h2>${en ? 'Pick your device' : 'Vyberte zariadenie'}</h2><div class="devs">${ds.map((d) => `<a class="dev" href="/${esc(s.slug)}/navody/d/${d.k}/${esc(g.slug)}">${devIcon(d)}<span class="tt">${esc(en ? d.name_en : d.name)}</span></a>`).join('')}</div>` : ''}
-<h2>${en ? 'Setup' : 'Nastavenie'}</h2><ol class="gsteps">${stepsHtml(g.steps.filter((st) => !/-(store|firetv)$/.test(st.def_img || '')), en, 1)}</ol>${featTable(m, en)}`);
+${ds.length ? `<h2>${tx(en, 'Vyberte zariadenie', 'Pick your device')}</h2><div class="devs">${ds.map((d) => `<a class="dev" href="/${esc(s.slug)}/navody/d/${d.k}/${esc(g.slug)}">${devIcon(d)}<span class="tt">${esc(en ? d.name_en : d.name)}</span></a>`).join('')}</div>` : ''}
+<h2>${tx(en, 'Nastavenie', 'Setup')}</h2><ol class="gsteps">${stepsHtml(g.steps.filter((st) => !/-(store|firetv)$/.test(st.def_img || '')), en, 1)}</ol>${featTable(m, en)}`);
   }));
   // admin
   const gUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 8, fieldSize: 4096 } }).single('image');
