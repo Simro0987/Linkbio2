@@ -89,3 +89,9 @@ body.adm{background:radial-gradient(1000px 420px at 50% -10%,rgba(229,9,20,.22),
 /* 2FA */
 .qrbox svg{width:220px;height:220px;background:#fff;border-radius:8px;padding:6px}.mono{font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all;letter-spacing:.05em}.codes{columns:2;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.05rem}
 .aud{font-size:.8rem;opacity:.8}.aud td{padding:2px 8px 2px 0}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}.idea textarea{width:100%}
+.gsteps{list-style:none;padding:0;margin:0}.gstep{background:#141a2e;border:1px solid #263052;border-radius:12px;padding:12px;margin:0 0 14px}.gtx{display:flex;gap:10px;align-items:flex-start}.gtx p{margin:2px 0 10px}
+.gnum{flex:0 0 auto;width:28px;height:28px;border-radius:50%;background:#2f6bff;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+.gstep img{display:block;width:100%;max-width:640px;height:auto;border-radius:8px;margin:0 auto}.gprev{max-width:320px;height:auto;border-radius:6px}
+.tblw{overflow-x:auto}.cmp{border-collapse:collapse;width:100%;font-size:.85rem}.cmp th,.cmp td{border:1px solid #263052;padding:6px;text-align:center}.cmp tbody th{text-align:left}.cmp a{color:#7fb0ff}.cmp td.n{color:#667}
+.plats{margin:6px 0 0;padding-left:18px}.plats a{color:#7fb0ff}

@@ -128,9 +128,19 @@ module.exports = function install(ctx) {
     if (!r.ok) throw new Error(`Render API ${method} ${p.split('/').slice(0, 3).join('/')} → HTTP ${r.status}`);
     return r.status === 204 ? null : r.json().catch(() => null);
   }
+  const TG = true;
   const tgJson = async (u) => (await fetch(u, { signal: AbortSignal.timeout(10000) })).json();
   const SECRETS = {
-    TELEGRAM_BOT_TOKEN: { name: 'Telegram bot token', svc: ['checkout', 'lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…',
+    TELEGRAM_PAYMENTS_BOT_TOKEN: { name: '💳 Platby bot', desc: 'Nové objednávky, dôkazy o platbe, tlačidlá ✅/❌, výsledky Azteco. Záložný bot pre všetky ostatné (ak ich token chýba).', svc: ['checkout', 'lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG,
+      test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
+    TELEGRAM_SUPPORT_BOT_TOKEN: { name: '🛟 Support bot', desc: 'Eskalácie z chatbota, správy zákazníkov; vaše odpovede (Reply) sa vrátia do chat widgetu. Webhook /api/telegram/support/webhook na checkoute (vlastné tajomstvo).', svc: ['checkout'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG,
+      test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
+    TELEGRAM_IDEAS_BOT_TOKEN: { name: '💡 Návrhy bot', desc: 'Verejný bot – ľudia posielajú návrhy, bot poďakuje a prepošle vám; aj formulár „Návrhy“ na webe. Webhook /api/telegram/ideas/webhook na lnkbio.', svc: ['lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG, ideas: true,
+      test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
+    TELEGRAM_ADMIN_BOT_TOKEN: { name: '🛡 Admin bot', desc: 'Výpadky webu, monitor služieb, denné zálohy, bezpečnostné udalosti (zlyhané prihlásenia, blokovanie), zmeny kľúčov, udalosti agenta.', svc: ['lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG,
+      test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
+    AGENT_HOOK_SECRET: { name: '🤖 Agent hook secret', desc: 'HMAC tajomstvo pre /api/agent/hook a token pre /api/status-alert.', svc: ['lnkbio'], re: /^[A-Za-z0-9_-]{32,128}$/, hint: '32–128 znakov' },
+    TELEGRAM_BOT_TOKEN: { name: 'Telegram bot token (starý alias Platby bota)', desc: 'Pôvodný kľúč – používa sa, ak TELEGRAM_PAYMENTS_BOT_TOKEN nie je nastavený.', svc: ['checkout', 'lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…',
       test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
     TELEGRAM_ADMIN_CHAT_ID: { name: 'Telegram owner chat ID', svc: ['checkout', 'lnkbio'], re: /^-?\d{3,20}$/, hint: 'číselné ID chatu',
       test: async (v) => { const t = process.env.TELEGRAM_BOT_TOKEN; if (!t) return 'bez overenia (chýba token)'; const j = await tgJson(`https://api.telegram.org/bot${t}/getChat?chat_id=${encodeURIComponent(v)}`); if (!j.ok) throw new Error('Bot tento chat nevidí (getChat). Najprv pošlite botovi /start.'); return 'chat ok'; } },
@@ -147,7 +157,7 @@ module.exports = function install(ctx) {
     const m = KM[req.query.m] ? `<div class="msg${req.query.m === 'ok' ? '' : ' err'}">${esc(KM[req.query.m])}${req.query.d ? ' ' + esc(String(req.query.d).slice(0, 200)) : ''}</div>` : '';
     const aud = (await pool.query(`SELECT at,ip,action,detail FROM audit_log ORDER BY id DESC LIMIT 25`)).rows;
     const rows = Object.entries(SECRETS).map(([k, d]) => `<form method="post" action="/admin/kluce/${k}" class="card" autocomplete="off">${hid(req)}<h2>${esc(d.name)}</h2>
-<p class="hint"><code>${k}</code> → ${d.svc.join(' + ')} · ${meta[k] ? `aktuálne …${esc(meta[k].last4)} · zmenené ${esc(fmtT(meta[k].at))}` : 'nezmenené cez panel'}</p>
+${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${d.svc.join(' + ')}${d.TG ? ` · ${process.env[k] ? 'vlastný token aktívny' : 'nenastavený → používa sa Platby bot'}` : ''} · ${meta[k] ? `aktuálne …${esc(meta[k].last4)} · zmenené ${esc(fmtT(meta[k].at))}` : 'nezmenené cez panel'}</p>
 <label>Nová hodnota${d.hint ? ' (' + esc(d.hint) + ')' : ''}</label><input type="password" name="value" required maxlength="300" autocomplete="new-password" spellcheck="false">
 <label>Vaše admin heslo (potvrdenie)</label><input type="password" name="password" required maxlength="200" autocomplete="current-password"><button>Overiť a uložiť</button></form>`).join('');
     res.send(page('API kľúče', `<h1>API kľúče</h1>${nav}${m}<p class="hint">Hodnoty sa nikdy nezobrazujú späť (len posledné 4 znaky). Pred uložením sa overí formát a funkčnosť, potom sa zapíšu do Render env a služby sa redeployujú. Po zmene Telegram tokenu checkout pri štarte znova zaregistruje webhook.</p>${process.env.RENDER_API_KEY ? '' : '<div class="msg err">RENDER_API_KEY nie je nastavený – ukladanie nebude fungovať.</div>'}${rows}
@@ -174,6 +184,8 @@ module.exports = function install(ctx) {
     const errs = [];
     for (const svc of order) { try { await renderApi('POST', `/services/${SVC[svc]}/deploys`, { clearCache: 'do_not_clear' }); } catch (e) { errs.push(e.message); } }
     if (d.svc.includes('lnkbio')) process.env[k] = v;
+    if (d.ideas && ctx.registerIdeasWebhook) { try { await ctx.registerIdeasWebhook(v); info += ' · webhook ok'; } catch (e) { errs.push('webhook: ' + e.message); } }
+    if (ctx.notify) ctx.notify('admin', `🔑 Kľúč ${k} zmenený cez admin (…${v.slice(-4)}) z IP ${String(ipOf(req)).slice(0, 45)}`).catch(() => {});
     await audit(req, 'redeploy', order.join('+') + (errs.length ? ' ERR ' + errs.join('; ') : ''));
     back('ok', info + (errs.length ? ' · redeploy chyba: ' + errs.join('; ') : ''));
   }));
@@ -220,6 +232,7 @@ module.exports = function install(ctx) {
     const cutoff = Date.now() - 24 * 3600e3;
     const hist = (Array.isArray(m.hist) ? m.hist : []).filter((h) => h[0] > cutoff).slice(-299);
     hist.push([Date.now(), status === 'up' ? 1 : status === 'slow' ? 2 : 0, r.ms]);
+    if (m.status && m.status !== status && (status === 'down' || m.status === 'down') && ctx.notify) ctx.notify('admin', status === 'down' ? `🔴 Monitor: ${m.name} má výpadok (${r.code || r.err || 'chyba'})` : `🟢 Monitor: ${m.name} opäť funguje (${status})`).catch(() => {});
     await pool.query(`UPDATE monitors SET status=$1, ms=$2, checked_at=now(), hist=$3::jsonb WHERE id=$4`, [status, r.ms, JSON.stringify(hist), m.id]);
     return { status, ms: r.ms, err: r.err };
   }
@@ -309,7 +322,7 @@ ${rows || '<p class="hint">Žiadne sledované služby.</p>'}<details class="card
   }
   async function runBackup(slot) {
     const k = bkey(); if (!k) throw new Error('BACKUP_ENC_KEY missing');
-    const tok = String(process.env.TELEGRAM_BOT_TOKEN || '').trim(), chat = String(process.env.TELEGRAM_ADMIN_CHAT_ID || '').trim();
+    const tok = String(process.env.TELEGRAM_ADMIN_BOT_TOKEN || process.env.TELEGRAM_PAYMENTS_BOT_TOKEN || process.env.TELEGRAM_BOT_TOKEN || '').trim(), chat = String(process.env.TELEGRAM_ADMIN_CHAT_ID || '').trim();
     if (!tok || !chat) throw new Error('telegram not configured');
     const c = await pool.query(`INSERT INTO backup_runs (slot) VALUES ($1) ON CONFLICT DO NOTHING RETURNING slot`, [slot]);
     if (!c.rowCount) return { ok: true, skipped: true, slot };
@@ -354,6 +367,6 @@ ${rows || '<p class="hint">Žiadne sledované služby.</p>'}<details class="card
     const tick = () => { const z = zp(); if (z.mins >= 3 * 60 + 17) runBackup(`lnkbio:${z.day}`).catch(() => {}); };
     setInterval(tick, 60e3).unref(); setTimeout(tick, 90e3).unref();
   };
-  ctx.privateIp = privateIp; ctx.probe = probe;
+  ctx.privateIp = privateIp; ctx.probe = probe; ctx.audit = audit;
   return ctx;
 };

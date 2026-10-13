@@ -18,7 +18,7 @@ if (!ENV_HASH || SECRET.length < 32 || !process.env.DATABASE_URL) { console.erro
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: PROD || process.env.PGSSL !== '0' ? { rejectUnauthorized: true } : false, max: 5, keepAlive: true, idleTimeoutMillis: 300000 });
 pool.on('error', e => console.error('pg pool', e.message));
-const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets', 'platby']);
+const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets', 'platby', 'navody-img']);
 const CODE_RE = /^[a-z0-9-]{1,40}$/;
 const B62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const rndCode = () => Array.from(crypto.randomBytes(7), b => B62[b % 62]).join('');
@@ -203,7 +203,8 @@ function recordFail(ip) {
   const now = Date.now(); globalFails.push(now);
   const f = fails.get(ip) || { n: 0, first: now, until: 0 };
   if (now - f.first > 15 * 60e3) { f.n = 0; f.first = now; }
-  f.n++; if (f.n >= 5) { f.until = now + 15 * 60e3; f.n = 0; f.first = now; }
+  f.n++; if (f.n >= 5) { f.until = now + 15 * 60e3; f.n = 0; f.first = now; if (global.__notifyAdmin) global.__notifyAdmin(`🚨 Admin lnkbio: 5 neúspešných pokusov – IP ${String(ip).slice(0, 45)} zablokovaná na 15 min`); }
+  if (globalFails.length === 30 && global.__notifyAdmin) global.__notifyAdmin('🚨 Admin lnkbio: globálny limit neúspešných prihlásení (30/15 min) – prihlasovanie dočasne zablokované');
   fails.set(ip, f);
 }
 setInterval(() => { const now = Date.now(); for (const [k, v] of fails) if (v.until < now && now - v.first > 15 * 60e3) fails.delete(k); }, 10 * 60e3).unref();
@@ -233,7 +234,7 @@ app.use((req, res, next) => {
   else { const m = String(req.headers.cookie || '').match(/(?:^|;\s*)lang=(sk|en)\b/); req.lang = m ? m[1] : 'sk'; }
   next();
 });
-const EN = { 'Domov': 'Home', 'Kanály': 'Channels', 'Platby': 'Payments', 'Kontakt': 'Contact', 'FAQ': 'FAQ', 'O nás': 'About us', 'Stav služieb': 'Service status',
+const EN = { 'Domov': 'Home', 'Kanály': 'Channels', 'Platby': 'Payments', 'Kontakt': 'Contact', 'FAQ': 'FAQ', 'O nás': 'About us', 'Stav služieb': 'Service status', 'Návody': 'Guides', 'Návrhy': 'Suggestions',
   'Vyberte región.': 'Choose a region.', 'Vyberte kategóriu.': 'Choose a category.', 'kategórií': 'categories', 'položiek': 'items', '‹ Predošlá': '‹ Previous', 'Ďalšia ›': 'Next ›',
   'Katalóg je zatiaľ prázdny.': 'The catalogue is empty for now.', '💳 Prejsť k platbe': '💳 Go to payment', 'Kontakty zatiaľ nie sú vyplnené.': 'No contacts yet.',
   'Časté otázky': 'Frequently asked questions', 'Zatiaľ žiadne otázky.': 'No questions yet.', 'Hlavné menu': 'Main menu', 'Omrvinky': 'Breadcrumbs', 'Menu': 'Menu',
@@ -671,8 +672,8 @@ admin.post('/restore', needAuth, (req, res, next) => restoreUp(req, res, e => {
   ok(res, 'restored');
 }));
 // ---- generic admin-managed lists (FAQ, channels, nav) ----
-const PAGES = { home: ['Domov', ''], channels: ['Kanály', '/kanaly'], payments: ['Platby', '/platby'], contact: ['Kontakt', '/kontakt'], faq: ['FAQ', '/faq'], about: ['O nás', '/o-nas'] };
-const NAV_ICONS = { home: '🏠', channels: '📺', payments: '💳', contact: '✉️', faq: '❓', about: 'ℹ️' };
+const PAGES = { home: ['Domov', ''], channels: ['Kanály', '/kanaly'], payments: ['Platby', '/platby'], contact: ['Kontakt', '/kontakt'], faq: ['FAQ', '/faq'], about: ['O nás', '/o-nas'], navody: ['Návody', '/navody'], navrhy: ['Návrhy', '/navrhy'] };
+const NAV_ICONS = { home: '🏠', channels: '📺', payments: '💳', contact: '✉️', faq: '❓', about: 'ℹ️', navody: '📘', navrhy: '💡' };
 const LISTS = {
   faq: { title: 'FAQ', fields: [['q', 'Otázka', 'text', 200, true], ['a', 'Odpoveď', 'area', 2000, true], ['q_en', 'Otázka (EN, voliteľné)', 'text', 200, false], ['a_en', 'Odpoveď (EN, voliteľné)', 'area', 2000, false]] },
   channels: { title: 'Kanály (katalóg)', fields: [['name', 'Názov', 'text', 80, true], ['region', 'Región', 'text', 40, true], ['category', 'Kategória', 'text', 40, true], ['note', 'Popis', 'area', 500, false]] },
@@ -707,6 +708,12 @@ async function initLists() {
   await pool.query(`CREATE INDEX IF NOT EXISTS l_channels_rc ON l_channels (region, category)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS l_nav (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, label TEXT NOT NULL, page TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', visible BOOLEAN NOT NULL DEFAULT TRUE, newtab BOOLEAN NOT NULL DEFAULT FALSE)`);
   await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'home'`);
+  const m2 = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_nav2','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  if (m2.rowCount) {
+    const mx = (await pool.query(`SELECT COALESCE(MAX(pos),0) AS p FROM l_nav`)).rows[0].p;
+    await pool.query(`INSERT INTO l_nav (pos,label,page) SELECT $1,'Návody','navody' WHERE NOT EXISTS (SELECT 1 FROM l_nav WHERE page='navody')`, [mx + 1]);
+    await pool.query(`INSERT INTO l_nav (pos,label,page) SELECT $1,'Návrhy','navrhy' WHERE NOT EXISTS (SELECT 1 FROM l_nav WHERE page='navrhy')`, [mx + 2]);
+  }
   const m = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_nav','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
   if (m.rowCount) {
     let i = 1; for (const [k, [n]] of Object.entries(PAGES)) await pool.query(`INSERT INTO l_nav (pos,label,page) VALUES ($1,$2,$3)`, [i++, n, k]);
@@ -761,6 +768,7 @@ ${i < rows.length - 1 ? `<form method="post" action="/admin/l/${t}/${o.id}/move"
 }
 const features = require('./features')({ app, admin, pool, getSettings, setSettings, page, esc, hid, csrf, needAuth, lockedFor, recordFail, fails, currentHash, encV, decV, wrap, writeSess,
   dropCache: () => { cache = null; }, buildExport, safeUrl, chTree: (...a) => chTree(...a), PROD });
+require('./extras')(Object.assign(features, { sniff, shell: (...a) => shell(...a), slugOk: (r) => slugOk(r), T, clean }));
 app.use('/admin', admin);
 
 // ---- short links ----
@@ -886,7 +894,7 @@ app.get('/:slug/stav', wrap(async (req, res, next) => {
 app.use((req, res) => res.status(404).send(page('404', `<h1>404</h1><p class="bio">${T(req, 'Stránka neexistuje.')}</p>`)));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
 
-init().then(initLists).then(() => features.initFeatures()).then(() => {
+init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // keep-awake self-ping through the public Render URL every 10 min
   // + cross-ping the checkout service so waking one wakes the other
