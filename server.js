@@ -43,12 +43,12 @@ const FONTS = {
 };
 const SOCIALS = [
   ['telegram', 'Telegram', '✈️'], ['instagram', 'Instagram', '📷'], ['facebook', 'Facebook', '📘'],
-  ['x', 'X', '✖️'], ['tiktok', 'TikTok', '🎵'], ['email', 'E-mail', '✉️'],
+  ['x', 'X', '✖️'], ['tiktok', 'TikTok', '🎵'], ['whatsapp', 'WhatsApp', '💬'], ['signal', 'Signal', '🔒'], ['youtube', 'YouTube', '▶️'], ['email', 'E-mail', '✉️'],
 ];
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
   meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
-  btn_style: 'rounded', font: 'system', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
+  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: 'https://chain2pay-checkout-gl.onrender.com', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
 };
 
 async function init() {
@@ -74,11 +74,26 @@ async function init() {
     await pool.query(`UPDATE buttons SET brand='platby' WHERE label='Platby'`);
   }
 }
+// ---- AES-256-GCM encryption at rest for sensitive settings (contacts) ----
+const ENC_KEY = /^[0-9a-f]{64}$/i.test(process.env.DATA_ENC_KEY || '') ? Buffer.from(process.env.DATA_ENC_KEY, 'hex') : null;
+if (!ENC_KEY) { console.error('Missing/invalid DATA_ENC_KEY (64 hex chars)'); process.exit(1); }
+const isEncKey = k => /^soc_/.test(k) || k === 'contact_text';
+function encrypt(buf, aad = 'linkbio') {
+  const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', ENC_KEY, iv); c.setAAD(Buffer.from(aad));
+  const ct = Buffer.concat([c.update(buf), c.final()]);
+  return { iv: iv.toString('base64'), tag: c.getAuthTag().toString('base64'), ct: ct.toString('base64') };
+}
+function decrypt(o, aad = 'linkbio') {
+  const d = crypto.createDecipheriv('aes-256-gcm', ENC_KEY, Buffer.from(o.iv, 'base64')); d.setAAD(Buffer.from(aad)); d.setAuthTag(Buffer.from(o.tag, 'base64'));
+  return Buffer.concat([d.update(Buffer.from(o.ct, 'base64')), d.final()]);
+}
+const encV = (k, v) => { v = String(v); if (!isEncKey(k) || !v) return v; const e = encrypt(Buffer.from(v), 'set:' + k); return `enc:v1:${e.iv}:${e.tag}:${e.ct}`; };
+const decV = (k, v) => { if (typeof v !== 'string' || !v.startsWith('enc:v1:')) return v; const [, , iv, tag, ct] = v.split(':'); try { return decrypt({ iv, tag, ct }, 'set:' + k).toString(); } catch { console.error('decrypt failed', k); return ''; } };
 let cache = null;
 async function getSettings() {
   if (cache) return cache;
   const r = await pool.query(`SELECT k,v FROM settings`);
-  const s = { ...DEFAULTS }; r.rows.forEach(x => { s[x.k] = x.v; });
+  const s = { ...DEFAULTS }; r.rows.forEach(x => { s[x.k] = decV(x.k, x.v); });
   const im = await pool.query(`SELECT k,ver FROM images`);
   s.img = {}; im.rows.forEach(x => { s.img[x.k] = x.ver; });
   return (cache = s);
@@ -88,13 +103,13 @@ async function setSettings(obj) {
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
-    for (const [k, v] of Object.entries(obj)) await c.query(`INSERT INTO settings (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v`, [k, String(v)]);
+    for (const [k, v] of Object.entries(obj)) await c.query(`INSERT INTO settings (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v`, [k, encV(k, v)]);
     await c.query(`UPDATE settings SET v=(COALESCE(NULLIF(v,''),'0')::bigint+1)::text WHERE k='ver'`);
     await c.query('COMMIT');
   } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); cache = null; }
 }
 let bcache = null;
-const getButtons = async () => bcache || (bcache = (await pool.query(`SELECT id,label,url,emoji,pos,enabled,newtab,start_at,end_at,brand FROM buttons ORDER BY pos, id`)).rows);
+const getButtons = async () => bcache || (bcache = (await pool.query(`SELECT id,label,url,emoji,pos,enabled,newtab,start_at,end_at,brand,section FROM buttons ORDER BY pos, id`)).rows);
 const bq = async (q, a) => { try { return await pool.query(q, a); } finally { bcache = null; } };
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"'`=\/]/g, c => '&#' + c.charCodeAt(0) + ';');
@@ -270,7 +285,7 @@ admin.post('/logout', csrf, (req, res) => { writeSess(res, { auth: false, csrf: 
 const MSGS = { ok: 'Uložené.', badslug: 'Neplatný slug (a-z, 0-9, pomlčka, 1–30 znakov, nie rezervované slovo).', badurl: 'Neplatná URL (povolené len http/https).', badlabel: 'Chýba názov tlačidla.',
   badimg: 'Neplatný obrázok – povolené len PNG, JPG alebo WebP (SVG nie).', big: 'Obrázok je príliš veľký (max 2 MB).', noimg: 'Nevybrali ste súbor.', badsoc: 'Neplatná adresa sociálnej siete.',
   badtime: 'Neplatný dátum/čas.', badwin: 'Koniec musí byť po začiatku.', badcode: 'Neplatný alebo rezervovaný kód.', dupcode: 'Kód už existuje.', rate: 'Príliš veľa nových odkazov. Skúste neskôr.',
-  badjson: 'Neplatný súbor zálohy.', bigjson: 'Záloha je príliš veľká (max 10 MB).', noconfirm: 'Potvrďte obnovu zaškrtnutím.', restored: 'Záloha bola obnovená.',
+  badlist: 'Neplatné údaje položky (skontrolujte povinné polia a URL).', badjson: 'Neplatný súbor zálohy.', bigjson: 'Záloha je príliš veľká (max 10 MB).', noconfirm: 'Potvrďte obnovu zaškrtnutím.', restored: 'Záloha bola obnovená.',
   badpw: 'Aktuálne heslo nie je správne.', shortpw: 'Nové heslo musí mať aspoň 12 znakov.', pwmismatch: 'Nové heslá sa nezhodujú.', pwok: 'Heslo bolo zmenené.', lock: 'Príliš veľa pokusov. Skúste neskôr.' };
 const sel = (name, opts, cur) => `<select name="${name}">${Object.entries(opts).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
 
@@ -322,6 +337,14 @@ ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<
 <label>Kód (voliteľné, a-z 0-9 pomlčka; prázdne = náhodný 7 znakov)</label><input name="code" pattern="[a-z0-9-]{1,40}" maxlength="40">
 <label>Cieľová URL</label><input name="target_url" type="url" maxlength="2000" required placeholder="https://">
 <label>Platnosť do (Europe/Zurich, voliteľné)</label><input type="datetime-local" name="expires_at">${chk('active', true, 'Aktívny')}<button>Vytvoriť</button></form>
+${listAdmin(req, 'nav', await getList('nav'))}
+<form method="post" action="/admin/texts" class="card" id="texts">${hid(req)}<h2>Texty stránok</h2>
+<label>O nás</label><textarea name="about_text" rows="5" maxlength="5000">${esc(s.about_text)}</textarea>
+<label>Kontakt – doplňujúci text</label><textarea name="contact_text" rows="3" maxlength="5000">${esc(s.contact_text)}</textarea>
+<label>Platby – úvodný text</label><textarea name="pay_text" rows="3" maxlength="5000">${esc(s.pay_text)}</textarea>
+<label>URL platobnej brány (checkout)</label><input name="checkout_url" type="url" maxlength="2000" value="${esc(s.checkout_url)}"><button>Uložiť texty</button></form>
+${listAdmin(req, 'faq', await getList('faq'))}
+${listAdmin(req, 'channels', await getList('channels'))}
 <form method="post" action="/admin/social" class="card">${hid(req)}<h2>Sociálne siete (voliteľné)</h2><p class="hint">Prázdne pole = nezobrazí sa.</p>
 ${SOCIALS.map(([k, n, e]) => `<label>${e} ${n}</label><input name="${k}" value="${esc(s['soc_' + k])}" maxlength="${k === 'email' ? 254 : 2000}" ${k === 'email' ? 'type="email" placeholder="meno@domena.sk"' : 'type="url" placeholder="https://"'}>`).join('')}<button>Uložiť</button></form>
 <div class="card"><h2>Záloha a obnova</h2><p><a class="btnl" href="/admin/export.json">⬇ Stiahnuť zálohu (JSON)</a></p>
@@ -396,17 +419,17 @@ function btnInput(req) {
   if (start_at === undefined || end_at === undefined) return { err: 'badtime' };
   if (start_at && end_at && end_at <= start_at) return { err: 'badwin' };
   const brand = Object.prototype.hasOwnProperty.call(BRANDS, req.body.brand) ? String(req.body.brand) : '';
-  return { label, url, emoji, enabled: req.body.enabled === '1', newtab: req.body.newtab === '1', start_at, end_at, brand };
+  return { label, url, emoji, enabled: req.body.enabled === '1', newtab: req.body.newtab === '1', start_at, end_at, brand, section: req.body.section === 'pay' ? 'pay' : 'home' };
 }
 admin.post('/buttons', needAuth, csrf, wrap(async (req, res) => {
   const b = btnInput(req); if (b.err) return ok(res, b.err);
-  await bq(`INSERT INTO buttons (label,url,emoji,enabled,newtab,start_at,end_at,brand,pos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,(SELECT COALESCE(MAX(pos),0)+1 FROM buttons))`, [b.label, b.url, b.emoji, b.enabled, b.newtab, b.start_at, b.end_at, b.brand]);
+  await bq(`INSERT INTO buttons (label,url,emoji,enabled,newtab,start_at,end_at,brand,section,pos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,(SELECT COALESCE(MAX(pos),0)+1 FROM buttons))`, [b.label, b.url, b.emoji, b.enabled, b.newtab, b.start_at, b.end_at, b.brand, b.section]);
   ok(res);
 }));
 const idOf = req => { const n = Number(req.params.id); return Number.isInteger(n) && n > 0 ? n : 0; };
 admin.post('/buttons/:id/edit', needAuth, csrf, wrap(async (req, res) => {
   const b = btnInput(req); if (b.err) return ok(res, b.err);
-  await bq(`UPDATE buttons SET label=$1,url=$2,emoji=$3,enabled=$4,newtab=$5,start_at=$6,end_at=$7,brand=$8 WHERE id=$9`, [b.label, b.url, b.emoji, b.enabled, b.newtab, b.start_at, b.end_at, b.brand, idOf(req)]);
+  await bq(`UPDATE buttons SET label=$1,url=$2,emoji=$3,enabled=$4,newtab=$5,start_at=$6,end_at=$7,brand=$8,section=$9 WHERE id=$10`, [b.label, b.url, b.emoji, b.enabled, b.newtab, b.start_at, b.end_at, b.brand, b.section, idOf(req)]);
   ok(res);
 }));
 admin.post('/buttons/:id/toggle', needAuth, csrf, wrap(async (req, res) => {
@@ -428,7 +451,7 @@ admin.post('/buttons/:id/move', needAuth, csrf, wrap(async (req, res) => {
 }));
 // ---- buttons: brand + time window fields ----
 function btnExtra(b) {
-  return `<label>Štýl značky (voliteľné)</label>${sel('brand', BRANDS, b.brand || '')}
+  return `<label>Sekcia</label>${sel('section', { home: 'Domov', pay: 'Platby (stránka Platby)' }, b.section || 'home')}<label>Štýl značky (voliteľné)</label>${sel('brand', BRANDS, b.brand || '')}
 <div class="grid2"><div><label>Zobraziť od (Europe/Zurich, voliteľné)</label><input type="datetime-local" name="start_at" value="${esc(dateToZurich(b.start_at))}"></div>
 <div><label>Zobraziť do (Europe/Zurich, voliteľné)</label><input type="datetime-local" name="end_at" value="${esc(dateToZurich(b.end_at))}"></div></div>`;
 }
@@ -489,25 +512,29 @@ admin.get('/qr/b/:id.svg', needAuth, wrap(async (req, res, next) => {
 const SKIP_KEYS = new Set(['pwhash', 'pwver', 'ver', 'seeded']);
 const isMigr = k => /^migr_/.test(k);
 admin.get('/export.json', needAuth, wrap(async (req, res) => {
-  const st = (await pool.query(`SELECT k,v FROM settings ORDER BY k`)).rows.filter(r => !SKIP_KEYS.has(r.k) && !isMigr(r.k));
-  const bs = (await pool.query(`SELECT label,url,emoji,pos,enabled,newtab,start_at,end_at,brand FROM buttons ORDER BY pos,id`)).rows;
+  const st = (await pool.query(`SELECT k,v FROM settings ORDER BY k`)).rows.filter(r => !SKIP_KEYS.has(r.k) && !isMigr(r.k)).map(r => ({ k: r.k, v: decV(r.k, r.v) }));
+  const bs = (await pool.query(`SELECT label,url,emoji,pos,enabled,newtab,start_at,end_at,brand,section FROM buttons ORDER BY pos,id`)).rows;
   const sl = (await pool.query(`SELECT code,target_url,expires_at,active FROM short_links ORDER BY created_at`)).rows;
   const im = (await pool.query(`SELECT k,mime,data FROM images ORDER BY k`)).rows;
   const out = { format: 'linkbio-backup', version: 1, exported_at: new Date().toISOString(),
     settings: Object.fromEntries(st.map(r => [r.k, r.v])),
     buttons: bs.map(b => ({ ...b, start_at: b.start_at && b.start_at.toISOString(), end_at: b.end_at && b.end_at.toISOString() })),
     short_links: sl.map(l => ({ ...l, expires_at: l.expires_at && l.expires_at.toISOString() })),
-    images: Object.fromEntries(im.map(i => [i.k, { mime: i.mime, data: i.data.toString('base64') }])) };
+    images: Object.fromEntries(im.map(i => [i.k, { mime: i.mime, data: i.data.toString('base64') }])),
+    lists: Object.fromEntries(await Promise.all(Object.keys(LISTS).map(async t => [t, (await pool.query(`SELECT * FROM l_${t} ORDER BY pos,id`)).rows.map(({ id, pos, ...r }) => r)]))) };
+  // encrypted + authenticated (AES-256-GCM) backup file; only this server (DATA_ENC_KEY) can restore it
+  const e = encrypt(Buffer.from(JSON.stringify(out)), 'backup');
+  const file = { format: 'linkbio-backup-enc', version: 1, alg: 'AES-256-GCM', exported_at: out.exported_at, ...e };
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="linkbio-backup-${new Date().toISOString().slice(0, 10)}.json"`);
   res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
-  res.send(JSON.stringify(out, null, 1));
+  res.send(JSON.stringify(file));
 }));
 const SETTING_KEYS = new Set([...Object.keys(DEFAULTS).filter(k => !SKIP_KEYS.has(k)), 'layout']);
 const isoOrNull = v => { if (v === null) return null; if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(v)) throw 0; const d = new Date(v); if (isNaN(d)) throw 0; return d; };
 const exactKeys = (o, req, opt = []) => { if (!o || typeof o !== 'object' || Array.isArray(o)) throw 0; for (const k of Object.keys(o)) if (!req.includes(k) && !opt.includes(k)) throw 0; for (const k of req) if (!(k in o)) throw 0; };
 function validateBackup(j) {
-  exactKeys(j, ['format', 'version', 'settings', 'buttons', 'short_links', 'images'], ['exported_at']);
+  exactKeys(j, ['format', 'version', 'settings', 'buttons', 'short_links', 'images', 'lists'], ['exported_at']);
   if (j.format !== 'linkbio-backup' || j.version !== 1) throw 0;
   exactKeys(j.settings, [], [...SETTING_KEYS]);
   const st = {};
@@ -524,10 +551,10 @@ function validateBackup(j) {
   }
   if (!Array.isArray(j.buttons) || j.buttons.length > 200) throw 0;
   const bs = j.buttons.map(b => {
-    exactKeys(b, ['label', 'url', 'emoji', 'pos', 'enabled', 'newtab', 'start_at', 'end_at', 'brand']);
+    exactKeys(b, ['label', 'url', 'emoji', 'pos', 'enabled', 'newtab', 'start_at', 'end_at', 'brand', 'section']); if (!['home', 'pay'].includes(b.section)) throw 0;
     if (typeof b.label !== 'string' || !clean(b.label, 80) || typeof b.emoji !== 'string' || typeof b.url !== 'string' || !safeUrl(b.url)) throw 0;
     if (!Number.isInteger(b.pos) || typeof b.enabled !== 'boolean' || typeof b.newtab !== 'boolean' || typeof b.brand !== 'string' || !Object.prototype.hasOwnProperty.call(BRANDS, b.brand)) throw 0;
-    return { label: clean(b.label, 80), url: safeUrl(b.url), emoji: clean(b.emoji, 16), pos: b.pos, enabled: b.enabled, newtab: b.newtab, start_at: isoOrNull(b.start_at), end_at: isoOrNull(b.end_at), brand: b.brand };
+    return { label: clean(b.label, 80), url: safeUrl(b.url), emoji: clean(b.emoji, 16), pos: b.pos, enabled: b.enabled, newtab: b.newtab, start_at: isoOrNull(b.start_at), end_at: isoOrNull(b.end_at), brand: b.brand, section: b.section };
   });
   if (!Array.isArray(j.short_links) || j.short_links.length > 5000) throw 0;
   const seen = new Set();
@@ -545,7 +572,14 @@ function validateBackup(j) {
     if (!mime || mime !== v.mime || buf.length > 2 * 1024 * 1024) throw 0;
     return { k, mime, buf, ver: crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12) };
   });
-  return { st, bs, sl, im };
+  exactKeys(j.lists, Object.keys(LISTS));
+  const ls = {};
+  for (const t of Object.keys(LISTS)) {
+    if (!Array.isArray(j.lists[t]) || j.lists[t].length > 20000) throw 0;
+    const names = LISTS[t].fields.map(f => f[0]);
+    ls[t] = j.lists[t].map(o => { exactKeys(o, names); const r = listInput(t, o); if (!r) throw 0; return r; });
+  }
+  return { st, bs, sl, im, ls };
 }
 const restoreUp = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 5, fieldSize: 1024 } }).single('backup');
 admin.post('/restore', needAuth, (req, res, next) => restoreUp(req, res, e => {
@@ -554,23 +588,119 @@ admin.post('/restore', needAuth, (req, res, next) => restoreUp(req, res, e => {
 }), csrf, wrap(async (req, res) => {
   if (req.body.confirm !== '1') return ok(res, 'noconfirm');
   if (!req.file || !req.file.buffer.length) return ok(res, 'badjson');
-  let d; try { d = validateBackup(JSON.parse(req.file.buffer.toString('utf8'))); } catch { return ok(res, 'badjson'); }
+  let d; try {
+    const f = JSON.parse(req.file.buffer.toString('utf8'));
+    exactKeys(f, ['format', 'version', 'alg', 'iv', 'tag', 'ct'], ['exported_at']);
+    if (f.format !== 'linkbio-backup-enc' || f.version !== 1 || f.alg !== 'AES-256-GCM') throw 0;
+    d = validateBackup(JSON.parse(decrypt(f, 'backup').toString('utf8')));
+  } catch { return ok(res, 'badjson'); }
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
     await c.query(`DELETE FROM settings WHERE k <> ALL($1::text[]) AND k NOT LIKE 'migr\\_%'`, [[...SKIP_KEYS]]);
-    for (const [k, v] of Object.entries({ ...Object.fromEntries([...SETTING_KEYS].map(k => [k, DEFAULTS[k] ?? ''])), ...d.st })) await c.query(`INSERT INTO settings (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v`, [k, String(v)]);
+    for (const [k, v] of Object.entries({ ...Object.fromEntries([...SETTING_KEYS].map(k => [k, DEFAULTS[k] ?? ''])), ...d.st })) await c.query(`INSERT INTO settings (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v`, [k, encV(k, v)]);
     await c.query(`UPDATE settings SET v=(COALESCE(NULLIF(v,''),'0')::bigint+1)::text WHERE k='ver'`);
     await c.query(`DELETE FROM buttons`);
-    for (const b of d.bs) await c.query(`INSERT INTO buttons (label,url,emoji,pos,enabled,newtab,start_at,end_at,brand) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [b.label, b.url, b.emoji, b.pos, b.enabled, b.newtab, b.start_at, b.end_at, b.brand]);
+    for (const b of d.bs) await c.query(`INSERT INTO buttons (label,url,emoji,pos,enabled,newtab,start_at,end_at,brand,section) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [b.label, b.url, b.emoji, b.pos, b.enabled, b.newtab, b.start_at, b.end_at, b.brand, b.section]);
     await c.query(`DELETE FROM short_links`);
     for (const l of d.sl) await c.query(`INSERT INTO short_links (code,target_url,expires_at,active) VALUES ($1,$2,$3,$4)`, [l.code, l.target_url, l.expires_at, l.active]);
     await c.query(`DELETE FROM images`);
     for (const i of d.im) await c.query(`INSERT INTO images (k,mime,data,ver) VALUES ($1,$2,$3,$4)`, [i.k, i.mime, i.buf, i.ver]);
+    for (const [t, rows] of Object.entries(d.ls)) {
+      await c.query(`DELETE FROM l_${t}`);
+      let i = 1; for (const r of rows) { const ks = Object.keys(r); await c.query(`INSERT INTO l_${t} (${ks.join(',')},pos) VALUES (${ks.map((_, j) => '$' + (j + 1)).join(',')},$${ks.length + 1})`, [...Object.values(r), i++]); }
+    }
     await c.query('COMMIT');
-  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); cache = null; bcache = null; }
+  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); cache = null; bcache = null; Object.keys(LISTS).forEach(dropList); }
   ok(res, 'restored');
 }));
+// ---- generic admin-managed lists (FAQ, channels, nav) ----
+const PAGES = { home: ['Domov', ''], channels: ['Kanály', '/kanaly'], payments: ['Platby', '/platby'], contact: ['Kontakt', '/kontakt'], faq: ['FAQ', '/faq'], about: ['O nás', '/o-nas'] };
+const NAV_ICONS = { home: '🏠', channels: '📺', payments: '💳', contact: '✉️', faq: '❓', about: 'ℹ️' };
+const LISTS = {
+  faq: { title: 'FAQ', fields: [['q', 'Otázka', 'text', 200, true], ['a', 'Odpoveď', 'area', 2000, true]] },
+  channels: { title: 'Kanály (katalóg)', fields: [['name', 'Názov', 'text', 80, true], ['region', 'Región', 'text', 40, true], ['category', 'Kategória', 'text', 40, true], ['note', 'Popis', 'area', 500, false]] },
+  nav: { title: 'Navigácia', fields: [['label', 'Názov', 'text', 40, true], ['page', 'Interná stránka (ak nie je URL)', 'sel', 0, false], ['url', 'Externá URL (voliteľné, prepíše stránku)', 'url', 2000, false], ['visible', 'Zobraziť v menu', 'bool'], ['newtab', 'Otvoriť v novej karte', 'bool']] },
+};
+const NAV_PAGES = { '': '—', ...Object.fromEntries(Object.entries(PAGES).map(([k, v]) => [k, v[0]])) };
+function listInput(t, o) {
+  const r = {};
+  for (const [k, , type, max, req] of LISTS[t].fields) {
+    const v = o[k];
+    if (type === 'bool') { r[k] = v === true || v === '1'; continue; }
+    if (v != null && typeof v !== 'string') return null;
+    if (type === 'sel') { r[k] = NAV_PAGES[v || ''] ? (v || '') : null; if (r[k] === null) return null; continue; }
+    if (type === 'url') { const s = String(v || '').trim(); if (!s) { r[k] = ''; continue; } r[k] = safeUrl(s); if (!r[k]) return null; continue; }
+    r[k] = type === 'area' ? clean(String(v || '').replace(/\r/g, ''), max) : clean(v, max);
+    if (req && !r[k]) return null;
+  }
+  if (t === 'nav' && !r.url && !r.page) return null;
+  return r;
+}
+const lcache = {};
+const getList = async t => lcache[t] || (lcache[t] = (await pool.query(`SELECT * FROM l_${t} ORDER BY pos, id`)).rows);
+const dropList = t => { delete lcache[t]; };
+async function initLists() {
+  const pl = (await pool.query(`SELECT k,v FROM settings WHERE (k LIKE 'soc\\_%' OR k='contact_text') AND v<>'' AND v NOT LIKE 'enc:v1:%'`)).rows;
+  for (const r of pl) await pool.query(`UPDATE settings SET v=$2 WHERE k=$1`, [r.k, encV(r.k, r.v)]);
+  if (pl.length) cache = null;
+  await pool.query(`CREATE TABLE IF NOT EXISTS l_faq (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, q TEXT NOT NULL, a TEXT NOT NULL)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS l_channels (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, name TEXT NOT NULL, region TEXT NOT NULL, category TEXT NOT NULL, note TEXT NOT NULL DEFAULT '')`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS l_channels_rc ON l_channels (region, category)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS l_nav (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, label TEXT NOT NULL, page TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', visible BOOLEAN NOT NULL DEFAULT TRUE, newtab BOOLEAN NOT NULL DEFAULT FALSE)`);
+  await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'home'`);
+  const m = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_nav','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  if (m.rowCount) {
+    let i = 1; for (const [k, [n]] of Object.entries(PAGES)) await pool.query(`INSERT INTO l_nav (pos,label,page) VALUES ($1,$2,$3)`, [i++, n, k]);
+    await pool.query(`INSERT INTO l_faq (pos,q,a) VALUES (1,$1,$2),(2,$3,$4),(3,$5,$6)`, ['Ako prebieha inštalácia?', 'Po objednávke dostanete návod krok za krokom. Inštalácia na Android TV box alebo Smart TV trvá pár minút.',
+      'Aké platby prijímate?', 'Platbu kartou aj kryptomenami cez zabezpečenú platobnú bránu. Viac na stránke Platby.', 'Poskytujete podporu?', 'Áno, ozvite sa nám cez Kontakt – odpovedáme spravidla do 24 hodín.']);
+  }
+}
+const sectionOf = v => v === 'pay' ? 'pay' : 'home';
+admin.post('/l/:t(faq|channels|nav)', needAuth, csrf, wrap(async (req, res) => {
+  const t = req.params.t, r = listInput(t, req.body); if (!r) return ok(res, 'badlist', 'l-' + t);
+  const ks = Object.keys(r);
+  await pool.query(`INSERT INTO l_${t} (${ks.join(',')},pos) VALUES (${ks.map((_, i) => '$' + (i + 1)).join(',')},(SELECT COALESCE(MAX(pos),0)+1 FROM l_${t}))`, Object.values(r));
+  dropList(t); ok(res, 'ok', 'l-' + t);
+}));
+admin.post('/l/:t(faq|channels|nav)/:id/edit', needAuth, csrf, wrap(async (req, res) => {
+  const t = req.params.t, r = listInput(t, req.body); if (!r) return ok(res, 'badlist', 'l-' + t);
+  const ks = Object.keys(r);
+  await pool.query(`UPDATE l_${t} SET ${ks.map((k, i) => k + '=$' + (i + 1)).join(',')} WHERE id=$${ks.length + 1}`, [...Object.values(r), idOf(req)]);
+  dropList(t); ok(res, 'ok', 'l-' + t);
+}));
+admin.post('/l/:t(faq|channels|nav)/:id/delete', needAuth, csrf, wrap(async (req, res) => {
+  await pool.query(`DELETE FROM l_${req.params.t} WHERE id=$1`, [idOf(req)]); dropList(req.params.t); ok(res, 'ok', 'l-' + req.params.t);
+}));
+admin.post('/l/:t(faq|channels|nav)/:id/move', needAuth, csrf, wrap(async (req, res) => {
+  const t = req.params.t, bs = (await getList(t)).slice(), i = bs.findIndex(b => b.id === idOf(req)), j = req.body.dir === 'up' ? i - 1 : i + 1;
+  if (i >= 0 && j >= 0 && j < bs.length) {
+    [bs[i], bs[j]] = [bs[j], bs[i]];
+    const c = await pool.connect();
+    try { await c.query('BEGIN'); for (let k = 0; k < bs.length; k++) await c.query(`UPDATE l_${t} SET pos=$1 WHERE id=$2`, [k + 1, bs[k].id]); await c.query('COMMIT'); }
+    catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); dropList(t); }
+  }
+  ok(res, 'ok', 'l-' + t);
+}));
+admin.post('/texts', needAuth, csrf, wrap(async (req, res) => {
+  const u = String(req.body.checkout_url || '').trim(), cu = u ? safeUrl(u) : '';
+  if (cu === null) return ok(res, 'badurl', 'texts');
+  const t = k => clean(String(req.body[k] || '').replace(/\r/g, ''), 5000);
+  await setSettings({ about_text: t('about_text'), contact_text: t('contact_text'), pay_text: t('pay_text'), checkout_url: cu }); ok(res, 'ok', 'texts');
+}));
+function listAdmin(req, t, rows) {
+  const L = LISTS[t];
+  const fld = (o = {}) => L.fields.map(([k, n, type, max, rq]) => type === 'bool' ? `<label class="ck"><input type="checkbox" name="${k}" value="1"${(o.id ? o[k] : k !== 'newtab') ? ' checked' : ''}> ${n}</label>`
+    : type === 'sel' ? `<label>${n}</label>${sel(k, NAV_PAGES, o[k] || '')}`
+    : type === 'area' ? `<label>${n}</label><textarea name="${k}" maxlength="${max}" rows="3"${rq ? ' required' : ''}>${esc(o[k] || '')}</textarea>`
+    : `<label>${n}</label><input name="${k}"${type === 'url' ? ' type="url" placeholder="https://"' : ''} maxlength="${max}" value="${esc(o[k] || '')}"${rq ? ' required' : ''}>`).join('');
+  const body = rows.map((o, i) => `<details class="card${o.visible === false ? ' off' : ''}"><summary>${esc(o.label || o.q || o.name)}${o.region ? ` <span class="hint">${esc(o.region)} › ${esc(o.category)}</span>` : ''}</summary>
+<form method="post" action="/admin/l/${t}/${o.id}/edit">${hid(req)}${fld(o)}<button>Uložiť</button></form><div class="row">
+${i > 0 ? `<form method="post" action="/admin/l/${t}/${o.id}/move">${hid(req)}<input type="hidden" name="dir" value="up"><button class="g">↑</button></form>` : ''}
+${i < rows.length - 1 ? `<form method="post" action="/admin/l/${t}/${o.id}/move">${hid(req)}<input type="hidden" name="dir" value="down"><button class="g">↓</button></form>` : ''}
+<form method="post" action="/admin/l/${t}/${o.id}/delete">${hid(req)}<button class="d">Zmazať</button></form></div></details>`).join('');
+  return `<h2 id="l-${t}">${L.title}</h2>${body || '<p class="hint">Prázdne.</p>'}<details class="card"><summary>➕ Pridať</summary><form method="post" action="/admin/l/${t}">${hid(req)}${fld()}<button>Pridať</button></form></details>`;
+}
 app.use('/admin', admin);
 
 // ---- short links ----
@@ -584,26 +714,105 @@ app.get('/s/:code', wrap(async (req, res) => {
   res.redirect(302, u);
 }));
 
-// ---- public page ----
-app.get('/:slug', wrap(async (req, res, next) => {
-  const s = await getSettings();
-  if (req.params.slug !== s.slug) return next();
-  const now = Date.now(); const bs = (await getButtons()).filter(b => b.enabled && inWindow(b, now));
-  const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => {
-    const href = k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k];
-    return `<a href="${esc(href)}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`;
+// ---- public site ----
+const PER_PAGE = 24;
+const enc = encodeURIComponent;
+const ARROW = '<span class="chev">›</span>';
+async function shell(req, res, s, active, title, content, sub = '') {
+  const nav = (await getList('nav')).filter(n => n.visible);
+  const items = nav.map(n => {
+    const href = n.url || ('/' + s.slug + PAGES[n.page][1]);
+    const on = !n.url && n.page === active;
+    return `<li><a href="${esc(href)}"${on ? ' class="on" aria-current="page"' : ''}${n.url ? ' rel="noopener noreferrer nofollow"' + (n.newtab ? ' target="_blank"' : '') : ''}><span class="ni">${n.url ? '🔗' : NAV_ICONS[n.page]}</span>${esc(n.label)}</a>${on && sub ? sub : ''}</li>`;
   }).join('');
   const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
+  const brand = `<a class="brand" href="/${esc(s.slug)}">${s.img.logo ? `<img src="/img/logo?v=${esc(s.img.logo)}" alt="" width="32" height="32">` : '<span class="bl">▶</span>'}${esc(s.title)}</a>`;
   res.setHeader('Cache-Control', 'public, max-age=60');
-  res.setHeader('Vary', 'Accept-Encoding');
-  res.send(page(s.meta_title || s.title, `${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(s.title)}</h1>${s.bio ? `<p class="bio">${esc(s.bio)}</p>` : ''}
-${s.layout === 'tv' ? '<div class="tvbar"><span class="live">● LIVE</span><span>▶ Stream</span><span>📺 TV</span><span>⚙ Software</span></div>' : ''}${bs.map(b => `<a class="b${BRANDS[b.brand] && b.brand ? ' br br-' + b.brand : ''}" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`).join('\n')}
-${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}`, 'pub' + (s.layout === 'tv' ? ' tv' : ''), s.meta_desc || s.bio, extra));
+  res.send(`<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(s.meta_desc || s.bio)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head>
+<body class="site${s.layout === 'tv' ? ' tv' : ''}"><input type="checkbox" id="nt" class="nt" aria-hidden="true"><header class="top">${brand}<label for="nt" class="burger" aria-label="Menu">☰</label></header>
+<aside class="side"><div class="sb">${brand}</div><nav aria-label="Hlavné menu"><ul>${items}</ul></nav></aside><label for="nt" class="scrim" aria-hidden="true"></label>
+<main class="w pub${s.layout === 'tv' ? ' tv' : ''}">${content}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}</main></body></html>`);
+}
+const crumbs = (s, parts) => `<nav class="crumbs" aria-label="Omrvinky">${parts.map(([n, h], i) => i < parts.length - 1 ? `<a href="${esc(h)}">${esc(n)}</a>${ARROW}` : `<span>${esc(n)}</span>`).join('')}</nav>`;
+const para = t => esc(t).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
+const btnHtml = b => `<a class="b${b.brand ? ' br br-' + b.brand : ''}" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`;
+const SOC_BRAND = { telegram: 'telegram', instagram: 'instagram', facebook: 'facebook', x: 'x', tiktok: 'tiktok', email: 'email', whatsapp: 'whatsapp', signal: 'signal', youtube: 'youtube' };
+const pubBtns = async sec => { const now = Date.now(); return (await getButtons()).filter(b => b.enabled && (b.section || 'home') === sec && inWindow(b, now)); };
+const slugOk = async (req) => { const s = await getSettings(); return req.params.slug === s.slug ? s : null; };
+// channel catalogue tree (cached, invalidated with list cache)
+async function chTree() {
+  const rows = await getList('channels');
+  if (rows._tree) return rows._tree;
+  const t = new Map();
+  for (const c of rows) { if (!t.has(c.region)) t.set(c.region, new Map()); const m = t.get(c.region); if (!m.has(c.category)) m.set(c.category, []); m.get(c.category).push(c); }
+  return (rows._tree = t);
+}
+const chBase = s => '/' + s.slug + '/kanaly';
+
+app.get('/:slug', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const bs = await pubBtns('home');
+  const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => `<a href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
+  await shell(req, res, s, 'home', s.meta_title || s.title, `<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(s.title)}</h1>${s.bio ? `<p class="bio">${esc(s.bio)}</p>` : ''}
+${s.layout === 'tv' ? '<div class="tvbar"><span class="live">● LIVE</span><span>▶ Stream</span><span>📺 TV</span><span>⚙ Software</span></div>' : ''}</section>
+${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}`);
+}));
+app.get('/:slug/kanaly', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const t = await chTree(), b = chBase(s);
+  const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
+  const sub = regs.length ? `<ul class="subnav">${regs.map(([r]) => `<li><a href="${b}/${enc(r)}">${esc(r)}</a></li>`).join('')}</ul>` : '';
+  await shell(req, res, s, 'channels', 'Kanály – ' + s.title, `${crumbs(s, [['Kanály']])}<h1 class="ph">Kanály</h1><p class="lead">Vyberte región.</p>
+<div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} kategórií • ${n} položiek</span></a>`).join('') || '<p class="hint">Katalóg je zatiaľ prázdny.</p>'}</div>`, sub);
+}));
+app.get('/:slug/kanaly/:reg', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const t = await chTree(), b = chBase(s), r = req.params.reg, m = t.get(r); if (!m) return next();
+  const sub = `<ul class="subnav"><li><a class="on" href="${b}/${enc(r)}">${esc(r)}</a><ul>${[...m.keys()].map(c => `<li><a href="${b}/${enc(r)}/${enc(c)}">${esc(c)}</a></li>`).join('')}</ul></li></ul>`;
+  await shell(req, res, s, 'channels', r + ' – Kanály', `${crumbs(s, [['Kanály', b], [r]])}<h1 class="ph">${esc(r)}</h1><p class="lead">Vyberte kategóriu.</p>
+<div class="tiles">${[...m.entries()].map(([c, l]) => `<a class="tile" href="${b}/${enc(r)}/${enc(c)}"><span class="tt">${esc(c)}</span><span class="tm">${l.length} položiek</span></a>`).join('')}</div>`, sub);
+}));
+app.get('/:slug/kanaly/:reg/:cat', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const t = await chTree(), b = chBase(s), r = req.params.reg, c = req.params.cat, m = t.get(r), l = m && m.get(c); if (!l) return next();
+  const pages = Math.max(1, Math.ceil(l.length / PER_PAGE)), p = Math.min(pages, Math.max(1, parseInt(req.query.p, 10) || 1));
+  const base = `${b}/${enc(r)}/${enc(c)}`;
+  const pg = pages > 1 ? `<nav class="pager">${p > 1 ? `<a href="${base}?p=${p - 1}">‹ Predošlá</a>` : ''}<span>${p} / ${pages}</span>${p < pages ? `<a href="${base}?p=${p + 1}">Ďalšia ›</a>` : ''}</nav>` : '';
+  const sub = `<ul class="subnav"><li><a href="${b}/${enc(r)}">${esc(r)}</a><ul>${[...m.keys()].map(x => `<li><a${x === c ? ' class="on"' : ''} href="${b}/${enc(r)}/${enc(x)}">${esc(x)}</a></li>`).join('')}</ul></li></ul>`;
+  await shell(req, res, s, 'channels', c + ' – ' + r, `${crumbs(s, [['Kanály', b], [r, b + '/' + enc(r)], [c]])}<h1 class="ph">${esc(c)}</h1>
+<div class="guide">${l.slice((p - 1) * PER_PAGE, p * PER_PAGE).map((x, i) => `<a class="gi" href="/${esc(s.slug)}/kanal/${x.id}"><span class="gn">${(p - 1) * PER_PAGE + i + 1}</span><span class="gt">${esc(x.name)}</span><span class="gp">▶</span></a>`).join('')}</div>${pg}`, sub);
+}));
+app.get('/:slug/kanal/:id(\\d+)', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const x = (await getList('channels')).find(c => c.id === Number(req.params.id)); if (!x) return next();
+  const b = chBase(s);
+  await shell(req, res, s, 'channels', x.name, `${crumbs(s, [['Kanály', b], [x.region, b + '/' + enc(x.region)], [x.category, b + '/' + enc(x.region) + '/' + enc(x.category)], [x.name]])}
+<article class="card detail"><div class="dh"><span class="bl">▶</span><h1 class="ph">${esc(x.name)}</h1></div><p class="tm">${esc(x.region)} • ${esc(x.category)}</p>${x.note ? para(x.note) : ''}</article>`);
+}));
+app.get('/:slug/platby', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const bs = await pubBtns('pay');
+  await shell(req, res, s, 'payments', 'Platby – ' + s.title, `<h1 class="ph">Platby</h1>${s.pay_text ? `<div class="prose">${para(s.pay_text)}</div>` : ''}
+${s.checkout_url ? `<a class="b br br-platby" href="${esc(s.checkout_url)}" rel="noopener noreferrer nofollow">💳 Prejsť k platbe</a>` : ''}${bs.map(btnHtml).join('\n')}`);
+}));
+app.get('/:slug/kontakt', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow">${e} ${esc(n)}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`).join('');
+  await shell(req, res, s, 'contact', 'Kontakt – ' + s.title, `<h1 class="ph">Kontakt</h1>${s.contact_text ? `<div class="prose">${para(s.contact_text)}</div>` : ''}${soc || '<p class="hint">Kontakty zatiaľ nie sú vyplnené.</p>'}`);
+}));
+app.get('/:slug/faq', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const f = await getList('faq');
+  await shell(req, res, s, 'faq', 'FAQ – ' + s.title, `<h1 class="ph">Časté otázky</h1>${f.map(x => `<details class="qa"><summary>${esc(x.q)}</summary>${para(x.a)}</details>`).join('') || '<p class="hint">Zatiaľ žiadne otázky.</p>'}`);
+}));
+app.get('/:slug/o-nas', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  await shell(req, res, s, 'about', 'O nás – ' + s.title, `<h1 class="ph">O nás</h1><div class="prose">${para(s.about_text || '')}</div>`);
 }));
 app.use((req, res) => res.status(404).send(page('404', '<h1>404</h1><p class="bio">Stránka neexistuje.</p>')));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
 
-init().then(() => {
+init().then(initLists).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // keep-awake self-ping through the public Render URL every 10 min
   // + cross-ping the checkout service so waking one wakes the other
