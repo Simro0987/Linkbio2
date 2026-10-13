@@ -807,7 +807,7 @@ admin.post('/trash/:id(\\d+)/restore', needAuth, csrf, wrap(async (req, res) => 
     await c.query('BEGIN');
     const x = (await c.query(`DELETE FROM l_trash WHERE id=$1 RETURNING t,data`, [idOf(req)])).rows[0];
     if (x) {
-      t = x.t; if (t === 'tvch' || t === 'tvch_bulk') { await features.tvchRestore(c, x); await c.query('COMMIT'); ok(res, 'restored', 'trash'); return; }
+      t = x.t; if (/^tvch(_bulk|_logos)?$/.test(t)) { await features.tvchRestore(c, x); await c.query('COMMIT'); ok(res, 'restored', 'trash'); return; }
       const tbl = t === 'monitors' ? 'monitors' : LISTS[t] ? 'l_' + t : null; if (!tbl) throw new Error('bad trash type');
       const cols = (await c.query(`SELECT column_name FROM information_schema.columns WHERE table_name=$1`, [tbl])).rows.map(r => r.column_name).filter(k => k !== 'id' && k in x.data);
       const vals = cols.map(k => (x.data[k] !== null && typeof x.data[k] === 'object') ? JSON.stringify(x.data[k]) : x.data[k]);
@@ -824,7 +824,7 @@ admin.post('/trash/:id(\\d+)/purge', needAuth, csrf, wrap(async (req, res) => {
 }));
 async function trashAdmin(req) {
   const rows = (await pool.query(`SELECT id,t,label,deleted_at FROM l_trash ORDER BY deleted_at DESC LIMIT 200`)).rows;
-  const TN = { nav: 'Sekcia menu', faq: 'FAQ', channels: 'Kanál (katalóg)', plans: 'Plán', monitors: 'Stav služieb', tvch: 'Kanál (katalóg kanálov)', tvch_bulk: 'Katalóg kanálov (hromadne)' };
+  const TN = { nav: 'Sekcia menu', faq: 'FAQ', channels: 'Kanál (katalóg)', plans: 'Plán', monitors: 'Stav služieb', tvch: 'Kanál (katalóg kanálov)', tvch_bulk: 'Katalóg kanálov (hromadne)', tvch_logos: 'Logá kanálov' };
   return `<h2 id="trash">🗑️ Kôš (obnoviť zmazané)</h2>${rows.map(r => `<div class="card"><p><b>${esc(r.label || '—')}</b> <span class="hint">${esc(TN[r.t] || r.t)} · zmazané ${esc(new Date(r.deleted_at).toLocaleString('sk-SK', { timeZone: 'Europe/Zurich' }))}</span></p><div class="row">
 <form method="post" action="/admin/trash/${r.id}/restore">${hid(req)}<button class="g">↩ Obnoviť</button></form>
 <form method="post" action="/admin/trash/${r.id}/purge">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> natrvalo</label><button class="d">Vymazať natrvalo</button></form></div></div>`).join('') || '<p class="hint">Kôš je prázdny.</p>'}`;
