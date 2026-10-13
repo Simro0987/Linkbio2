@@ -1,6 +1,8 @@
 'use strict';
 const express = require('express');
 const helmet = require('helmet');
+const compression = require('compression');
+const fs = require('fs');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const path = require('path');
@@ -12,16 +14,20 @@ const SECRET = process.env.SESSION_SECRET || '';
 const PROD = process.env.NODE_ENV === 'production';
 if (!HASH || SECRET.length < 32 || !process.env.DATABASE_URL) { console.error('Missing ADMIN_PASSWORD_HASH / SESSION_SECRET / DATABASE_URL'); process.exit(1); }
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: true }, max: 5 });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: true }, max: 5, keepAlive: true, idleTimeoutMillis: 300000 });
+pool.on('error', e => console.error('pg pool', e.message));
 const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt']);
 const SLUG_RE = /^[a-z0-9-]{1,30}$/;
 
 async function init() {
   await pool.query(`CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT NOT NULL)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS buttons (id SERIAL PRIMARY KEY, label TEXT NOT NULL, url TEXT NOT NULL, emoji TEXT NOT NULL DEFAULT '', pos INT NOT NULL DEFAULT 0)`);
-  const defs = { slug: 'ryan', title: 'Ryan', bio: '' };
+  const defs = { slug: 'kava', title: 'Káva v Linku', bio: 'Malá kaviareň s veľkou chuťou ☕ Dobrá káva, pokojná chvíľa.' };
   for (const [k, v] of Object.entries(defs)) await pool.query(`INSERT INTO settings (k,v) VALUES ($1,$2) ON CONFLICT (k) DO NOTHING`, [k, v]);
   const r = await pool.query(`INSERT INTO settings (k,v) VALUES ('seeded','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  // one-time migration: drop personal name, generic coffee profile
+  const m = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_kava','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  if (m.rowCount) for (const [k, v] of Object.entries(defs)) await pool.query(`UPDATE settings SET v=$2 WHERE k=$1`, [k, v]);
   if (r.rowCount) await pool.query(`INSERT INTO buttons (label,url,emoji,pos) VALUES ($1,$2,$3,1)`, ['Platby', 'https://chain2pay-checkout-gl.onrender.com', '💳']);
 }
 let cache = null;
@@ -32,7 +38,9 @@ async function getSettings() {
   return (cache = s);
 }
 const setSetting = (k, v) => pool.query(`UPDATE settings SET v=$2 WHERE k=$1`, [k, v]).then(() => { cache = null; });
-const getButtons = async () => (await pool.query(`SELECT id,label,url,emoji,pos FROM buttons ORDER BY pos, id`)).rows;
+let bcache = null;
+const getButtons = async () => bcache || (bcache = (await pool.query(`SELECT id,label,url,emoji,pos FROM buttons ORDER BY pos, id`)).rows);
+const bq = async (q, a) => { try { return await pool.query(q, a); } finally { bcache = null; } };
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"'`=\/]/g, c => '&#' + c.charCodeAt(0) + ';');
 function safeUrl(u) {
@@ -94,6 +102,7 @@ setInterval(() => { const now = Date.now(); for (const [k, v] of fails) if (v.un
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+app.use(compression({ threshold: 0 }));
 app.use(helmet({
   contentSecurityPolicy: { useDefaults: false, directives: {
     defaultSrc: ["'none'"], styleSrc: ["'self'"], imgSrc: ["'self'"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
@@ -103,13 +112,14 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'same-origin' },
 }));
 app.use((req, res, next) => { res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()'); next(); });
-app.use('/static', express.static(path.join(__dirname, 'static'), { maxAge: '7d', index: false }));
+const CSS_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 's.css'))).digest('hex').slice(0, 10);
+app.use('/static', express.static(path.join(__dirname, 'static'), { maxAge: '365d', immutable: true, etag: true, index: false }));
 app.use(express.urlencoded({ extended: false, limit: '20kb' }));
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
 app.get('/robots.txt', (req, res) => res.type('text').send('User-agent: *\nDisallow: /admin\n'));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-const page = (title, body, cls = '') => `<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css"></head><body><main class="w ${cls}">${body}</main></body></html>`;
+const page = (title, body, cls = '', desc = '') => `<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(desc || title)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}"></head><body><main class="w ${cls}">${body}</main></body></html>`;
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
 app.get('/', wrap(async (req, res) => { const s = await getSettings(); res.redirect(302, '/' + s.slug); }));
@@ -173,17 +183,17 @@ function btnInput(req) {
 }
 admin.post('/buttons', needAuth, csrf, wrap(async (req, res) => {
   const b = btnInput(req); if (b.err) return res.redirect(303, '/admin?m=' + b.err);
-  await pool.query(`INSERT INTO buttons (label,url,emoji,pos) VALUES ($1,$2,$3,(SELECT COALESCE(MAX(pos),0)+1 FROM buttons))`, [b.label, b.url, b.emoji]);
+  await bq(`INSERT INTO buttons (label,url,emoji,pos) VALUES ($1,$2,$3,(SELECT COALESCE(MAX(pos),0)+1 FROM buttons))`, [b.label, b.url, b.emoji]);
   res.redirect(303, '/admin?m=ok');
 }));
 const idOf = req => { const n = Number(req.params.id); return Number.isInteger(n) && n > 0 ? n : 0; };
 admin.post('/buttons/:id/edit', needAuth, csrf, wrap(async (req, res) => {
   const b = btnInput(req); if (b.err) return res.redirect(303, '/admin?m=' + b.err);
-  await pool.query(`UPDATE buttons SET label=$1,url=$2,emoji=$3 WHERE id=$4`, [b.label, b.url, b.emoji, idOf(req)]);
+  await bq(`UPDATE buttons SET label=$1,url=$2,emoji=$3 WHERE id=$4`, [b.label, b.url, b.emoji, idOf(req)]);
   res.redirect(303, '/admin?m=ok');
 }));
 admin.post('/buttons/:id/delete', needAuth, csrf, wrap(async (req, res) => {
-  await pool.query(`DELETE FROM buttons WHERE id=$1`, [idOf(req)]); res.redirect(303, '/admin?m=ok');
+  await bq(`DELETE FROM buttons WHERE id=$1`, [idOf(req)]); res.redirect(303, '/admin?m=ok');
 }));
 admin.post('/buttons/:id/move', needAuth, csrf, wrap(async (req, res) => {
   const bs = await getButtons(); const i = bs.findIndex(b => b.id === idOf(req));
@@ -192,7 +202,7 @@ admin.post('/buttons/:id/move', needAuth, csrf, wrap(async (req, res) => {
     [bs[i], bs[j]] = [bs[j], bs[i]];
     const c = await pool.connect();
     try { await c.query('BEGIN'); for (let k = 0; k < bs.length; k++) await c.query(`UPDATE buttons SET pos=$1 WHERE id=$2`, [k + 1, bs[k].id]); await c.query('COMMIT'); }
-    catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
+    catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); bcache = null; }
   }
   res.redirect(303, '/admin?m=ok');
 }));
@@ -205,7 +215,7 @@ app.get('/:slug', wrap(async (req, res, next) => {
   const bs = await getButtons();
   res.setHeader('Cache-Control', 'public, max-age=60');
   res.send(page(s.title, `<h1>${esc(s.title)}</h1>${s.bio ? `<p class="bio">${esc(s.bio)}</p>` : ''}
-${bs.map(b => `<a class="b" href="${esc(b.url)}" rel="noopener noreferrer nofollow">${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`).join('\n')}`));
+${bs.map(b => `<a class="b" href="${esc(b.url)}" rel="noopener noreferrer nofollow">${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`).join('\n')}`, '', s.bio));
 }));
 app.use((req, res) => res.status(404).send(page('404', '<h1>404</h1><p class="bio">Stránka neexistuje.</p>')));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
@@ -213,6 +223,9 @@ app.use((err, req, res, next) => { console.error(err && err.message); res.status
 init().then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // keep-awake self-ping through the public Render URL every 10 min
-  const ext = process.env.RENDER_EXTERNAL_URL;
-  if (ext) setInterval(() => fetch(ext + '/healthz').catch(() => {}), 10 * 60e3).unref?.();
+  // + cross-ping the checkout service so waking one wakes the other
+  const targets = [process.env.RENDER_EXTERNAL_URL && process.env.RENDER_EXTERNAL_URL + '/healthz',
+    (process.env.PEER_URL || 'https://chain2pay-checkout-gl.onrender.com') + '/health'].filter(Boolean);
+  const ping = () => targets.forEach(u => fetch(u, { signal: AbortSignal.timeout(60e3) }).catch(() => {}));
+  setTimeout(ping, 30e3).unref(); setInterval(ping, 10 * 60e3).unref();
 }).catch(e => { console.error('init failed', e.message); process.exit(1); });

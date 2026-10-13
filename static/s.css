@@ -1,9 +1,9 @@
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh}
-.w{max-width:520px;margin:0 auto;padding:40px 18px}h1{text-align:center;font-size:1.6rem;margin:0 0 8px}.bio{text-align:center;color:#94a3b8;margin:0 0 28px;white-space:pre-line}
-.b{display:block;text-align:center;padding:16px;margin:0 0 14px;border-radius:14px;background:#1e293b;border:1px solid #334155;color:#f8fafc;text-decoration:none;font-weight:600;font-size:1.05rem}
-.b:hover,.b:focus{background:#334155}.f{text-align:center;color:#475569;font-size:.8rem;margin-top:30px}
-.a{max-width:760px}.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:14px;margin:0 0 14px}
-label{display:block;font-size:.85rem;color:#94a3b8;margin:6px 0 2px}input,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#e2e8f0;font-size:1rem}
-button{padding:9px 14px;border-radius:8px;border:0;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer;margin:8px 6px 0 0}button.d{background:#dc2626}button.g{background:#475569}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#1b120d;color:#f3e6d8;min-height:100vh}
+.w{max-width:520px;margin:0 auto;padding:40px 18px}h1{text-align:center;font-size:1.6rem;margin:0 0 8px}.bio{text-align:center;color:#c8ab8f;margin:0 0 28px;white-space:pre-line}
+.b{display:block;text-align:center;padding:16px;margin:0 0 14px;border-radius:14px;background:#2e1f16;border:1px solid #4a3324;color:#fff7ee;text-decoration:none;font-weight:600;font-size:1.05rem}
+.b:hover,.b:focus{background:#4a3324}.f{text-align:center;color:#8a6a52;font-size:.8rem;margin-top:30px}
+.a{max-width:760px}.card{background:#2e1f16;border:1px solid #4a3324;border-radius:12px;padding:14px;margin:0 0 14px}
+label{display:block;font-size:.85rem;color:#c8ab8f;margin:6px 0 2px}input,textarea{width:100%;padding:10px;border-radius:8px;border:1px solid #8a6a52;background:#1b120d;color:#f3e6d8;font-size:1rem}
+button{padding:9px 14px;border-radius:8px;border:0;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer;margin:8px 6px 0 0}button.d{background:#dc2626}button.g{background:#8a6a52}
 .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.row form{display:inline}.msg{padding:10px;border-radius:8px;background:#14532d;margin-bottom:12px}.err{background:#7f1d1d}
 a{color:#93c5fd}
