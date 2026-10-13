@@ -115,11 +115,14 @@ async function matchAll(chs, onProgress) {
     let url = '', src = '';
     if (POSTER.isVod(c)) { const p = await POSTER.find(c).catch(() => null); if (p && await verify(p.url)) { url = p.url; src = 'poster'; } }
     if (!url) for (const x of allCandidates(idx, c.name, c.category).slice(0, 5)) { url = await verify(x.url); if (url) { src = x.src; break; } }
+    if (!url) { const w = await WEB.find(c.name, webLangs(c)).catch(() => null); if (w && await verify(w.url)) { url = w.url; src = w.src; } }
     done++; if (onProgress) onProgress(done, chs.length); return { ...c, url, src };
   });
 }
-async function suggest(name, category) { const idx = await getIndex(); const cs = allCandidates(idx, name, category).slice(0, 8); if (POSTER.isVod({ name, category })) { const p = await POSTER.find({ name, category }).catch(() => null); if (p) cs.unshift({ url: p.url, country: p.label, src: 'poster' }); } const ok = await pool(cs, 6, (x) => verify(x.url)); return cs.map((x, i) => ({ ...x, url: ok[i] })).filter((x) => x.url); }
+async function suggest(name, category) { const idx = await getIndex(); const cs = allCandidates(idx, name, category).slice(0, 8); const w = await WEB.find(name, webLangs({ name, category })).catch(() => null); if (w) cs.push({ url: w.url, country: w.label, src: w.src }); if (POSTER.isVod({ name, category })) { const p = await POSTER.find({ name, category }).catch(() => null); if (p) cs.unshift({ url: p.url, country: p.label, src: 'poster' }); } const ok = await pool(cs, 6, (x) => verify(x.url)); return cs.map((x, i) => ({ ...x, url: ok[i] })).filter((x) => x.url); }
 const isRepoLogo = (u) => typeof u === 'string' && (u.startsWith(RAW) || u.startsWith(CDN)) && !/\.\.|[?#]/.test(u);
 const short = (u) => u.replace(RAW, 'tv-logos/').replace(CDN, 'tv-logos(cdn)/').replace(PICONS, 'picons/').replace(/^https:\/\//, '').slice(0, 90);
 const POSTER = require('./posters');
-module.exports = { matchAll, suggest, normName, makeIndex, candidates, RAW, CDN, isRepoLogo, short, status: () => ({ ...st }), getIndex, allCandidates, SRC_LABEL: { ...SRC_LABEL, poster: 'Wikidata plagát' }, loadExtra };
+const WEB = require('./logoweb');
+function webLangs(c) { const { cc } = normName(c.name); const f = cc || (CAT_CC.find(([re]) => re.test(c.category || '')) || [])[1]; return f === 'slovakia' ? ['sk', 'cs', 'en'] : f === 'czech-republic' ? ['cs', 'sk', 'en'] : f === 'hungary' ? ['hu', 'en'] : f === 'germany' || f === 'austria' ? ['de', 'en'] : ['en', 'de', 'sk', 'cs', 'hu']; }
+module.exports = { matchAll, suggest, normName, makeIndex, candidates, RAW, CDN, isRepoLogo, short, status: () => ({ ...st }), getIndex, allCandidates, SRC_LABEL: { ...SRC_LABEL, poster: 'Wikipédia plagát', wikipedia: 'Wikipédia (logo z článku)', favicon: 'favicon oficiálneho webu' }, loadExtra };

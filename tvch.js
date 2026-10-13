@@ -162,7 +162,7 @@ module.exports = function install(ctx) {
   };
   // ---------- logo proxy/cache: /tvlogo/:id → normalized 200px PNG ----------
   const lhash = (u) => crypto.createHash('sha1').update(String(u)).digest('hex').slice(0, 10);
-  const lsrc = (r) => `/tvlogo/${r.id}?v=${lhash(r.logo)}`;
+  const lsrc = (r, broken) => `/tvlogo/${r.id}?v=${r.logo && !(broken && broken.has(r.id)) ? lhash(r.logo) : 'b' + lhash(r.name + '|' + r.category)}`;
   const inflight = new Map(); let active = 0; const waiters = [];
   const slot = () => new Promise((ok) => { if (active < 6) { active++; ok(); } else waiters.push(ok); });
   const free = () => { const w = waiters.shift(); if (w) w(); else active--; };
@@ -184,14 +184,27 @@ module.exports = function install(ctx) {
   }
   let brokenCache = null;
   const brokenIds = async () => brokenCache || (brokenCache = new Set((await pool.query('SELECT c.channel_id FROM tv_logo_cache c JOIN tv_channels t ON t.id=c.channel_id AND t.logo=c.src WHERE NOT c.ok')).rows.map((r) => r.channel_id)));
+  // generated badge (TV Software look, color from category) for channels without a working logo
+  const xe = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
+  function badge(name, cat) {
+    const hue = parseInt(crypto.createHash('md5').update(String(cat || '')).digest('hex').slice(0, 4), 16) % 360;
+    const words = String(name).replace(/\s+/g, ' ').trim().split(' '); const lines = []; let cur = '';
+    for (const w of words) { if ((cur + ' ' + w).trim().length <= 11 || !cur) cur = (cur + ' ' + w).trim(); else { lines.push(cur); cur = w; } } if (cur) lines.push(cur);
+    const L = lines.slice(0, 3); if (lines.length > 3) L[2] = L[2].slice(0, 10) + '…';
+    const longest = Math.max(...L.map((l) => l.length), 1), fs = Math.max(20, Math.min(54, Math.floor(300 / longest), L.length === 1 ? 54 : L.length === 2 ? 40 : 32));
+    const y0 = 108 - ((L.length - 1) * fs * 1.1) / 2 + fs * 0.35;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue},55%,26%)"/><stop offset="1" stop-color="#0d0d10"/></linearGradient></defs><rect width="200" height="200" rx="28" fill="url(#g)"/><rect x="1.5" y="1.5" width="197" height="197" rx="27" fill="none" stroke="hsl(${hue},70%,55%)" stroke-opacity=".45" stroke-width="3"/><path d="M18 18 L34 27 L18 36 Z" fill="#e50914"/><rect x="18" y="170" width="${Math.min(164, 30 + String(cat || '').length * 7)}" height="4" rx="2" fill="hsl(${hue},75%,55%)"/>${L.map((l, i) => `<text x="100" y="${(y0 + i * fs * 1.1).toFixed(1)}" text-anchor="middle" font-family="Inter,Segoe UI,Roboto,Arial,Helvetica,sans-serif" font-weight="800" font-size="${fs}" fill="#fff">${xe(l)}</text>`).join('')}</svg>`;
+  }
+  const sendBadge = (res, ch) => { res.set({ 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" }); res.send(badge(ch.name, ch.category)); };
   app.get('/tvlogo/:id(\\d+)', wrap(async (req, res) => {
     const ch = (await all()).find((r) => r.id === +req.params.id);
-    if (!ch || !ch.logo) return res.status(404).end();
+    if (!ch) return res.status(404).end();
+    if (!ch.logo) return sendBadge(res, ch);
     const r = await ensureLogo(ch);
-    if (!r.ok || !r.png) { res.setHeader('Cache-Control', 'public, max-age=600'); return res.status(404).end(); }
+    if (!r.ok || !r.png) return sendBadge(res, ch);
     res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" }); res.send(r.png);
   }));
-  const logoImg = (r, sz, broken) => r.logo && !(broken && broken.has(r.id)) ? `<img class="tlg" src="${esc(lsrc(r))}" alt="" loading="lazy" decoding="async" width="${sz}" height="${sz}" data-l="${esc([...r.name][0].toUpperCase())}">` : `<span class="tli">${esc([...r.name][0].toUpperCase())}</span>`;
+  const logoImg = (r, sz, broken) => `<img class="tlg" src="${esc(lsrc(r, broken))}" alt="" loading="lazy" decoding="async" width="${sz}" height="${sz}" data-l="${esc([...r.name][0].toUpperCase())}">`;
   ctx.tvchPublic = async (req) => {
     const en = req.lang === 'en';
     const rows = (await all()).filter((r) => r.visible); if (!rows.length) return '';
@@ -279,7 +292,7 @@ ${rs.map((r) => `<div class="card"><p><b>${esc(r.channel_name)}</b> <span class=
 <div class="card"><p>Kanálov bez loga: <b>${m.length}</b> · nájdené (overené obrázky): <b>${hit.length}</b> · nenájdené: <b>${no.length}</b></p><p class="hint">Podľa zdroja: ${Object.entries(hit.reduce((a, x) => (a[x.src] = (a[x.src] || 0) + 1, a), {})).map(([k, n]) => esc(LOGOS.SRC_LABEL[k] || k) + ' ' + n).join(' · ')}</p><p class="hint">Zdroje v poradí: GitHub tv-logo/tv-logos (záložne cdn.jsdelivr.net) → iptv-org (len logá) → picons/picons → Wikidata/Commons; pre filmy/seriály/VOD plagát z Wikipédie (titul + rok). Plagáty z Wikipédie môžu byť chránené autorským právom. Každé logo bolo overené (HTTP 200, obrázok). Uložia sa len kanálom, ktoré stále nemajú logo; akcia sa dá vrátiť z Koša.</p>${src}</div>
 ${hit.length ? `<div class="card"><h2>Ukážka</h2>${hit.slice(0, 24).map((x) => `<p><img src="${esc(x.url)}" alt="" width="40" height="40" loading="lazy" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <b>${esc(x.name)}</b> <span class="hint">${esc(x.category)} · ${esc(LOGOS.SRC_LABEL[x.src] || x.src)} · ${esc(LOGOS.short(x.url))}</span></p>`).join('')}</div>
 <form method="post" action="/admin/tvch/logos/confirm" class="card">${hid(req)}<input type="hidden" name="tok" value="${tok}"><label class="ck"><input type="checkbox" name="confirm" value="1" required> Uložiť ${hit.length} log</label><button>Uložiť logá</button></form>` : ''}
-${no.length ? `<details class="card"><summary>Nenájdené (${no.length})</summary><p class="hint">${no.slice(0, 1000).map((x) => esc(x.name)).join(', ')}</p></details>` : ''}`, 'adm'));
+${no.length ? `<details class="card"><summary>Nenájdené (${no.length}) – zobrazí sa im automaticky generované logo s názvom</summary><p>${no.slice(0, 6).map((x) => `<img src="/tvlogo/${x.id}?v=b" alt="" width="64" height="64"> `).join('')}</p><p class="hint">${no.slice(0, 1000).map((x) => esc(x.name)).join(', ')}</p></details>` : ''}`, 'adm'));
   }));
   admin.post('/tvch/logos/confirm', needAuth, csrf, wrap(async (req, res) => {
     if (req.body.confirm !== '1') return back(res, 'needconfirm');
@@ -362,7 +375,7 @@ ${j.bad.length ? `<div class="card"><h2>Nefunkčné</h2>${j.bad.slice(0, 500).ma
 <input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><button>Náhľad importu</button></form>
 ${await reportsAdmin(req)}<h2>Kanály (${rows.length})</h2>
 ${[...g].map(([c, l]) => `<details class="card"><summary><b>${esc(c)}</b> <span class="hint">${l.length} kanálov${l.some((r) => rc[r.id] && rc[r.id].o) ? ' · ⚠ ' + l.reduce((a, r) => a + ((rc[r.id] || {}).o || 0), 0) + ' hlásení' : ''}${l.some((r) => !r.visible) ? ` · ${l.filter((r) => !r.visible).length} skrytých` : ''}</span></summary>
-${l.map((r, i) => `<div class="card"><form method="post" action="/admin/tvch/${r.id}/edit">${hid(req)}<p>${r.logo ? logoImg(r, 28, broken) + ' ' : ''}<b>${esc(r.name)}</b>${r.visible ? '' : ' <span class="hint">(skrytý)</span>'}${rcs(r.id)}</p>
+${l.map((r, i) => `<div class="card"><form method="post" action="/admin/tvch/${r.id}/edit">${hid(req)}<p>${logoImg(r, 28, broken)}${r.logo ? '' : ' <span class="hint">(generované)</span>'} <b>${esc(r.name)}</b>${r.visible ? '' : ' <span class="hint">(skrytý)</span>'}${rcs(r.id)}</p>
 <label>Názov</label><input name="name" maxlength="120" value="${esc(r.name)}" required><label>Kategória</label>${catSel(cats, c, 'category')}<input name="newcat" maxlength="80" placeholder="alebo nová kategória">
 <label>Logo (https) · <a href="/admin/tvch/${r.id}/logo">🔎 Nájsť logo</a></label><input name="logo" type="url" maxlength="500" value="${esc(r.logo)}"><label class="ck"><input type="checkbox" name="visible" value="1"${r.visible ? ' checked' : ''}> Viditeľný</label><button>Uložiť</button></form>
 <div class="row">${i > 0 ? `<form method="post" action="/admin/tvch/${r.id}/move">${hid(req)}<input type="hidden" name="dir" value="up"><button>▲</button></form>` : ''}${i < l.length - 1 ? `<form method="post" action="/admin/tvch/${r.id}/move">${hid(req)}<input type="hidden" name="dir" value="down"><button>▼</button></form>` : ''}
