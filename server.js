@@ -261,7 +261,7 @@ app.get('/theme.css', wrap(async (req, res) => {
   res.send(themeCss(s));
 }));
 
-const page = (title, body, cls = '', desc = '', extra = '') => `<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(desc || title)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head><body><main class="w ${cls}">${body}</main></body></html>`;
+const page = (title, body, cls = '', desc = '', extra = '') => `<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(desc || title)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head><body${/\badm\b/.test(cls) ? ' class="adm"' : ''}>${/\badm\b/.test(cls) ? '<header class="ah"><span class="bl">▶</span><b>TV Software</b><span class="at">Admin</span></header>' : ''}<main class="w ${cls}">${body}</main></body></html>`;
 
 const CHAT_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 'chat.js')) + fs.readFileSync(path.join(__dirname, 'static', 'chat.css'))).digest('hex').slice(0, 10);
 // short one-word payment link
@@ -291,7 +291,7 @@ const ok = (res, m = 'ok', a = '') => res.redirect(303, '/admin?m=' + m + (a ? '
 admin.get('/login', (req, res) => {
   if (req.sess.auth) return res.redirect(303, '/admin');
   const e = req.query.e === '1' ? '<div class="msg err">Nesprávne heslo.</div>' : req.query.e === 'l' ? '<div class="msg err">Príliš veľa pokusov. Skúste neskôr.</div>' : '';
-  res.send(page('Prihlásenie', `<h1>Admin</h1>${e}<form method="post" action="/admin/login" class="card">${hid(req)}<label for="p">Heslo</label><input id="p" type="password" name="password" autocomplete="current-password" required maxlength="200"><button>Prihlásiť</button></form>`));
+  res.send(page('Prihlásenie', `<h1>Admin</h1>${e}<form method="post" action="/admin/login" class="card">${hid(req)}<label for="p">Heslo</label><input id="p" type="password" name="password" autocomplete="current-password" required maxlength="200"><button>Prihlásiť</button></form>`, 'adm login'));
 });
 admin.post('/login', csrf, wrap(async (req, res) => {
   const ip = req.ip;
@@ -377,7 +377,7 @@ ${chk('confirm', false, 'Rozumiem, že obnova prepíše všetky nastavenia, tla�
 <label>Aktuálne heslo</label><input type="password" name="current" autocomplete="current-password" required maxlength="200">
 <label>Nové heslo (min. 12 znakov)</label><input type="password" name="new1" autocomplete="new-password" required minlength="12" maxlength="200">
 <label>Nové heslo znova</label><input type="password" name="new2" autocomplete="new-password" required minlength="12" maxlength="200"><button>Zmeniť heslo</button></form>
-<form method="post" action="/admin/logout">${hid(req)}<button class="g">Odhlásiť</button></form>`, 'a'));
+<form method="post" action="/admin/logout">${hid(req)}<button class="g">Odhlásiť</button></form>`, 'a adm'));
 }));
 admin.post('/settings', needAuth, csrf, wrap(async (req, res) => {
   const slug = String(req.body.slug || '').trim();

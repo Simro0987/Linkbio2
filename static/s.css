@@ -63,3 +63,18 @@ input[type=checkbox]{width:auto;margin-right:6px}.ck{display:flex;align-items:ce
 .detail{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1)}.dh{display:flex;align-items:center;gap:12px}.dh .ph{margin:0}
 .qa{border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 16px;margin:0 0 10px;background:rgba(255,255,255,.04)}.qa summary{cursor:pointer;font-weight:700}
 details.card summary{cursor:pointer;font-weight:600}
+/* admin – TV Software theme */
+body.adm{background:radial-gradient(1000px 420px at 50% -10%,rgba(229,9,20,.22),transparent 60%),radial-gradient(800px 420px at 100% 100%,rgba(37,99,235,.2),transparent 60%),linear-gradient(180deg,#0b0d18,#07080f);background-attachment:fixed;color:#e6e9f5}
+.adm .ah{display:flex;align-items:center;gap:10px;padding:12px 18px;background:rgba(11,13,24,.85);border-bottom:1px solid #263052;position:sticky;top:0;z-index:5}
+.adm .ah .at{margin-left:auto;font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#e50914;border:1px solid #e5091466;border-radius:999px;padding:3px 10px}
+.adm .w{padding-top:24px}.adm.login .w,.adm .login{max-width:380px}
+.adm h1{background:linear-gradient(90deg,#fff,#c9d4ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.adm h2{color:#f5f7ff;font-size:1.05rem;border-left:3px solid #e50914;padding-left:8px}
+.adm .card{background:linear-gradient(180deg,#141a2e,#0f1424);border:1px solid #263052;box-shadow:0 6px 20px #0006}
+.adm label{color:#9aa3c7}.adm .hint{color:#7480a8}
+.adm input,.adm textarea,.adm select{background:#07080f;border:1px solid #2c3760;color:#e6e9f5}
+.adm input:focus,.adm textarea:focus,.adm select:focus{outline:none;border-color:#e50914;box-shadow:0 0 0 3px #e5091433}
+.adm input[type=checkbox]{width:auto;accent-color:#e50914;margin-right:8px}
+.adm button{background:linear-gradient(135deg,#e50914,#b20710);box-shadow:0 3px 12px #e5091440}
+.adm button:hover{filter:brightness(1.12)}.adm button.g{background:#263052;box-shadow:none}.adm button.d{background:#7f1d1d;box-shadow:none}
+.adm .btnl{background:#1d4ed8}.adm a{color:#7fb0ff}.adm .msg{background:#0f3d2e;border:1px solid #166534}.adm .err{background:#4c0d12;border-color:#e50914}
