@@ -261,12 +261,18 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
     const ms = (await getMon()).filter((m) => m.channel && m.channel === ref);
     return ms.map((m) => { const p = pubItem(m, lang); return `<span class="tbadge"><span class="dot ${esc(p.cls)}"></span>${esc(p.msg)}</span>`; }).join('');
   };
+  ctx.dropMon = () => { mcache = null; };
+  // channel list for the public 'Kanály' section – single source of truth = monitors (Stav služieb)
+  ctx.monitorChannels = async (lang) => {
+    const L = { sk: { up: 'Funguje', slow: 'Pomalé', down: 'Výpadok', '': 'Kontroluje sa' }, en: { up: 'Up', slow: 'Slow', down: 'Down', '': 'Checking' } }[lang === 'en' ? 'en' : 'sk'];
+    return (await getMon()).map((m) => ({ name: m.name, cls: m.status || '', label: L[m.status || ''] || L[''] }));
+  };
   ctx.monitorPage = async (lang) => {
     const ms = await getMon();
     return `<ul class="stl">${ms.map((m) => { const p = pubItem(m, lang); return `<li><span class="dot ${esc(p.cls)}"></span><span class="sm">${esc(p.msg)}</span><span class="st">${lang === 'en' ? 'Last check' : 'Posledná kontrola'}: ${esc(fmtT(p.at, lang))}</span></li>`; }).join('') || `<li>${lang === 'en' ? 'No services are monitored yet.' : 'Zatiaľ nie sú sledované žiadne služby.'}</li>`}</ul>`;
   };
 
-  const MM = { ok: 'Uložené.', badurl: 'Neplatná URL (len http/https, verejná adresa – súkromné/lokálne IP sú zakázané).', badname: 'Chýba názov.', checked: 'Kontrola dokončená.' };
+  const MM = { ok: 'Uložené.', badurl: 'Neplatná URL (len http/https, verejná adresa – súkromné/lokálne IP sú zakázané).', badname: 'Chýba názov.', checked: 'Kontrola dokončená.', needconfirm: 'Zmazanie treba potvrdiť zaškrtnutím.' };
   async function monInput(req) {
     const name = String(req.body.name || '').trim().slice(0, 60); if (!name) return { err: 'badname' };
     const url = safeUrl(req.body.url); if (!url) return { err: 'badurl' };
@@ -288,8 +294,8 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
 <label>Text – výpadok (prázdne = „❌ … má výpadok“)</label><input name="msg_down" value="${esc(m.msg_down || '')}" maxlength="120">`;
     const m0 = MM[req.query.m] ? `<div class="msg${/^(ok|checked)$/.test(req.query.m) ? '' : ' err'}">${esc(MM[req.query.m])}</div>` : '';
     const rows = ms.map((m) => `<details class="card"><summary><span class="dot ${esc(m.status || '')}"></span>${esc(msgFor(m, 'sk'))} <span class="hint">${m.ms != null ? m.ms + ' ms · ' : ''}${esc(fmtT(m.checked_at))}</span></summary>
-<form method="post" action="/admin/stav/${m.id}/edit">${hid(req)}${form(m)}<button>Uložiť</button></form><div class="row"><form method="post" action="/admin/stav/${m.id}/delete">${hid(req)}<button class="d">Zmazať</button></form></div></details>`).join('');
-    res.send(page('Stav služieb', `<h1>Stav služieb</h1>${nav}${m0}
+<form method="post" action="/admin/stav/${m.id}/edit">${hid(req)}${form(m)}<button>Uložiť</button></form><div class="row"><form method="post" action="/admin/stav/${m.id}/delete">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> Potvrdiť zmazanie</label><button class="d">Zmazať (do koša)</button></form></div></details>`).join('');
+    res.send(page('Stav služieb', `<h1>Stav služieb</h1>${nav}${m0}<p class="hint">📺 Tento zoznam je zdrojom pre verejnú sekciu „Kanály“ (zobrazí sa každá služba s jej stavom). Zmazané položky idú do <a href="/admin#trash">koša</a>.</p>
 <form method="post" action="/admin/stav/nav" class="card">${hid(req)}<label class="ck"><input type="checkbox" name="on" value="1"${s.stav_nav === '1' ? ' checked' : ''}> Zobraziť stránku „Stav služieb“ v menu</label><p class="hint">Verejná stránka: <a href="/${esc(s.slug)}/stav" target="_blank" rel="noopener">/${esc(s.slug)}/stav</a> (bez URL adries)</p><button>Uložiť</button></form>
 <form method="post" action="/admin/stav/check">${hid(req)}<button class="g">↻ Skontrolovať teraz</button></form>
 ${rows || '<p class="hint">Žiadne sledované služby.</p>'}<details class="card"><summary>➕ Pridať službu</summary><form method="post" action="/admin/stav">${hid(req)}${form()}<button>Pridať</button></form></details>
@@ -308,7 +314,9 @@ ${rows || '<p class="hint">Žiadne sledované služby.</p>'}<details class="card
     mcache = null; res.redirect(303, '/admin/stav?m=ok');
   }));
   admin.post('/stav/:id(\\d+)/delete', needAuth, csrf, wrap(async (req, res) => {
-    await pool.query(`DELETE FROM monitors WHERE id=$1`, [Number(req.params.id)]); mcache = null; await audit(req, 'monitor_delete', req.params.id); res.redirect(303, '/admin/stav?m=ok');
+    if (req.body.confirm !== '1') return res.redirect(303, '/admin/stav?m=needconfirm');
+    const r = (await pool.query(`DELETE FROM monitors WHERE id=$1 RETURNING *`, [Number(req.params.id)])).rows[0]; mcache = null;
+    if (r) await pool.query(`INSERT INTO l_trash (t,data,label) VALUES ('monitors',$1::jsonb,$2)`, [JSON.stringify(r), r.name]).catch((e) => console.error('trash', e.message)); await audit(req, 'monitor_delete', req.params.id); res.redirect(303, '/admin/stav?m=ok');
   }));
   admin.post('/stav/nav', needAuth, csrf, wrap(async (req, res) => { await setSettings({ stav_nav: req.body.on === '1' ? '1' : '0' }); res.redirect(303, '/admin/stav?m=ok'); }));
   admin.post('/stav/check', needAuth, csrf, wrap(async (req, res) => { await checkAll(); res.redirect(303, '/admin/stav?m=checked'); }));

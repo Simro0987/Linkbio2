@@ -51,7 +51,7 @@ const SHORT_PAY = LNK_PUBLIC + '/platby';
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
   meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
-  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: SHORT_PAY, chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
+  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: SHORT_PAY, chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', kan_intro: '', kan_intro_en: '', kan_status: '1', kan_catalog: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
 };
 
 async function init() {
@@ -341,7 +341,7 @@ admin.post('/login', csrf, wrap(async (req, res) => {
 }));
 admin.post('/logout', csrf, (req, res) => { writeSess(res, { auth: false, csrf: crypto.randomBytes(24).toString('base64url') }); res.redirect(303, '/admin/login'); });
 
-const MSGS = { ok: 'Uložené.', badslug: 'Neplatný slug (a-z, 0-9, pomlčka, 1–30 znakov, nie rezervované slovo).', badurl: 'Neplatná URL (povolené len http/https).', badlabel: 'Chýba názov tlačidla.',
+const MSGS = { ok: 'Uložené.', needconfirm: 'Zmazanie treba potvrdiť zaškrtnutím.', trashed: 'Presunuté do koša – dá sa obnoviť dole v sekcii Kôš.', restored: 'Obnovené z koša.', badslug: 'Neplatný slug (a-z, 0-9, pomlčka, 1–30 znakov, nie rezervované slovo).', badurl: 'Neplatná URL (povolené len http/https).', badlabel: 'Chýba názov tlačidla.',
   badimg: 'Neplatný obrázok – povolené len PNG, JPG alebo WebP (SVG nie).', big: 'Obrázok je príliš veľký (max 2 MB).', noimg: 'Nevybrali ste súbor.', badsoc: 'Neplatná adresa sociálnej siete.',
   badtime: 'Neplatný dátum/čas.', badwin: 'Koniec musí byť po začiatku.', badcode: 'Neplatný alebo rezervovaný kód.', dupcode: 'Kód už existuje.', rate: 'Príliš veľa nových odkazov. Skúste neskôr.',
   badlist: 'Neplatné údaje položky (skontrolujte povinné polia a URL).', badjson: 'Neplatný súbor zálohy.', bigjson: 'Záloha je príliš veľká (max 10 MB).', noconfirm: 'Potvrďte obnovu zaškrtnutím.', restored: 'Záloha bola obnovená.',
@@ -372,7 +372,7 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>
@@ -409,7 +409,13 @@ ${listAdmin(req, 'nav', await getList('nav'))}
 <label>Platby (EN)</label><textarea name="pay_text_en" rows="2" maxlength="5000">${esc(s.pay_text_en)}</textarea></details>
 <label>URL platobnej brány (checkout)</label><input name="checkout_url" type="url" maxlength="2000" value="${esc(s.checkout_url)}">${chk('chat_enabled', s.chat_enabled !== '0', '💬 Zobraziť AI chatbota podpory na verejných stránkach')}<button>Uložiť texty</button></form>
 ${listAdmin(req, 'faq', await getList('faq'))}
+<form method="post" action="/admin/kanaly" class="card" id="kanaly">${hid(req)}<h2>📺 Sekcia „Kanály“</h2>
+<p class="hint">Zoznam kanálov sa načítava automaticky zo <a href="/admin/stav">📡 Stav služieb</a> (jediný zdroj – kanály pridávajte/upravujte len tam). Názov, zobrazenie v menu a poradie nastavíte v <a href="#l-nav">Navigácii</a> (položka so stránkou „Kanály“).</p>
+<label>Úvodný text (SK)</label><textarea name="kan_intro" rows="2" maxlength="1000">${esc(s.kan_intro)}</textarea>
+<label>Úvodný text (EN)</label><textarea name="kan_intro_en" rows="2" maxlength="1000">${esc(s.kan_intro_en)}</textarea>
+${chk('kan_status', s.kan_status !== '0', 'Zobraziť stav pri každom kanáli')}${chk('kan_catalog', s.kan_catalog === '1', 'Zobraziť aj starý katalóg (regióny/kategórie) pod zoznamom')}<button>Uložiť</button></form>
 ${listAdmin(req, 'channels', await getList('channels'))}
+${await trashAdmin(req)}
 <form method="post" action="/admin/social" class="card">${hid(req)}<h2>Sociálne siete (voliteľné)</h2><p class="hint">Prázdne pole = nezobrazí sa.</p>
 ${SOCIALS.map(([k, n, e]) => `<label>${e} ${n}</label><input name="${k}" value="${esc(s['soc_' + k])}" maxlength="${k === 'email' ? 254 : 2000}" ${k === 'email' ? 'type="email" placeholder="meno@domena.sk"' : 'type="url" placeholder="https://"'}>`).join('')}<button>Uložiť</button></form>
 <div class="card"><h2>Záloha a obnova</h2><p><a class="btnl" href="/admin/export.json">⬇ Stiahnuť zálohu (JSON)</a></p>
@@ -739,6 +745,8 @@ async function initLists() {
       [i++, n, ne, pr, per, pop, bd, bde, [dev > 1 ? '2 zariadenia súčasne' : '1 zariadenie', ...FSK].join('\n'), [dev > 1 ? '2 devices at the same time' : '1 device', ...FEN].join('\n'), '', '']);
   }
   await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'home'`);
+  // trash (soft delete) for sections/list items – deleted rows can be restored from admin
+  await pool.query(`CREATE TABLE IF NOT EXISTS l_trash (id SERIAL PRIMARY KEY, t TEXT NOT NULL, data JSONB NOT NULL, label TEXT NOT NULL DEFAULT '', deleted_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   const m2 = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_nav2','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
   if (m2.rowCount) {
     const mx = (await pool.query(`SELECT COALESCE(MAX(pos),0) AS p FROM l_nav`)).rows[0].p;
@@ -750,6 +758,18 @@ async function initLists() {
     let i = 1; for (const [k, [n]] of Object.entries(PAGES)) await pool.query(`INSERT INTO l_nav (pos,label,page) VALUES ($1,$2,$3)`, [i++, n, k]);
     await pool.query(`INSERT INTO l_faq (pos,q,a) VALUES (1,$1,$2),(2,$3,$4),(3,$5,$6)`, ['Ako prebieha inštalácia?', 'Po objednávke dostanete návod krok za krokom. Inštalácia na Android TV box alebo Smart TV trvá pár minút.',
       'Aké platby prijímate?', 'Platbu kartou aj kryptomenami cez zabezpečenú platobnú bránu. Viac na stránke Platby.', 'Poskytujete podporu?', 'Áno, ozvite sa nám cez Kontakt – odpovedáme spravidla do 24 hodín.']);
+  }
+  // restore the accidentally deleted 'Kanály' menu section (only if it is missing)
+  const m4 = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_kanaly_restore','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  if (m4.rowCount) {
+    const has = (await pool.query(`SELECT 1 FROM l_nav WHERE page='channels' LIMIT 1`)).rowCount;
+    if (!has) {
+      const hp = (await pool.query(`SELECT pos FROM l_nav WHERE page='home' ORDER BY pos LIMIT 1`)).rows[0];
+      const at = hp ? hp.pos + 1 : 1;
+      await pool.query(`UPDATE l_nav SET pos=pos+1 WHERE pos>=$1`, [at]);
+      await pool.query(`INSERT INTO l_nav (pos,label,page,visible) VALUES ($1,'Kanály','channels',TRUE)`, [at]);
+      console.log('MIGR kanaly section restored at pos', at);
+    }
   }
 }
 const lok = (res, t, m) => (t === 'plans' ? res.redirect(303, '/admin/cennik?m=' + m) : ok(res, m, 'l-' + t));
@@ -767,8 +787,44 @@ admin.post('/l/:t(faq|channels|nav|plans)/:id/edit', needAuth, csrf, wrap(async 
   dropList(t); lok(res, t, 'ok');
 }));
 admin.post('/l/:t(faq|channels|nav|plans)/:id/delete', needAuth, csrf, wrap(async (req, res) => {
-  await pool.query(`DELETE FROM l_${req.params.t} WHERE id=$1`, [idOf(req)]); dropList(req.params.t); lok(res, req.params.t, 'ok');
+  const t = req.params.t; if (req.body.confirm !== '1') return lok(res, t, 'needconfirm');
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    const r = (await c.query(`DELETE FROM l_${t} WHERE id=$1 RETURNING *`, [idOf(req)])).rows[0];
+    if (r) await c.query(`INSERT INTO l_trash (t,data,label) VALUES ($1,$2::jsonb,$3)`, [t, JSON.stringify(r), String(r.label || r.q || r.name || '').slice(0, 200)]);
+    await c.query('COMMIT');
+  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); dropList(t); }
+  lok(res, t, 'trashed');
 }));
+// restore from trash (sections, list items, monitors)
+admin.post('/trash/:id(\\d+)/restore', needAuth, csrf, wrap(async (req, res) => {
+  const c = await pool.connect(); let t = null;
+  try {
+    await c.query('BEGIN');
+    const x = (await c.query(`DELETE FROM l_trash WHERE id=$1 RETURNING t,data`, [idOf(req)])).rows[0];
+    if (x) {
+      t = x.t; const tbl = t === 'monitors' ? 'monitors' : LISTS[t] ? 'l_' + t : null; if (!tbl) throw new Error('bad trash type');
+      const cols = (await c.query(`SELECT column_name FROM information_schema.columns WHERE table_name=$1`, [tbl])).rows.map(r => r.column_name).filter(k => k !== 'id' && k in x.data);
+      const vals = cols.map(k => (x.data[k] !== null && typeof x.data[k] === 'object') ? JSON.stringify(x.data[k]) : x.data[k]);
+      await c.query(`INSERT INTO ${tbl} (${cols.join(',')}) VALUES (${cols.map((_, i) => '$' + (i + 1)).join(',')})`, vals);
+    }
+    await c.query('COMMIT');
+  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); }
+  if (t && LISTS[t]) dropList(t); if (t === 'monitors' && features.dropMon) features.dropMon();
+  ok(res, 'restored', 'trash');
+}));
+admin.post('/trash/:id(\\d+)/purge', needAuth, csrf, wrap(async (req, res) => {
+  if (req.body.confirm !== '1') return ok(res, 'needconfirm', 'trash');
+  await pool.query(`DELETE FROM l_trash WHERE id=$1`, [idOf(req)]); ok(res, 'ok', 'trash');
+}));
+async function trashAdmin(req) {
+  const rows = (await pool.query(`SELECT id,t,label,deleted_at FROM l_trash ORDER BY deleted_at DESC LIMIT 200`)).rows;
+  const TN = { nav: 'Sekcia menu', faq: 'FAQ', channels: 'Kanál (katalóg)', plans: 'Plán', monitors: 'Stav služieb' };
+  return `<h2 id="trash">🗑️ Kôš (obnoviť zmazané)</h2>${rows.map(r => `<div class="card"><p><b>${esc(r.label || '—')}</b> <span class="hint">${esc(TN[r.t] || r.t)} · zmazané ${esc(new Date(r.deleted_at).toLocaleString('sk-SK', { timeZone: 'Europe/Zurich' }))}</span></p><div class="row">
+<form method="post" action="/admin/trash/${r.id}/restore">${hid(req)}<button class="g">↩ Obnoviť</button></form>
+<form method="post" action="/admin/trash/${r.id}/purge">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> natrvalo</label><button class="d">Vymazať natrvalo</button></form></div></div>`).join('') || '<p class="hint">Kôš je prázdny.</p>'}`;
+}
 admin.post('/l/:t(faq|channels|nav|plans)/:id/move', needAuth, csrf, wrap(async (req, res) => {
   const t = req.params.t, bs = (await getList(t)).slice(), i = bs.findIndex(b => b.id === idOf(req)), j = req.body.dir === 'up' ? i - 1 : i + 1;
   if (i >= 0 && j >= 0 && j < bs.length) {
@@ -778,6 +834,10 @@ admin.post('/l/:t(faq|channels|nav|plans)/:id/move', needAuth, csrf, wrap(async 
     catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); dropList(t); }
   }
   lok(res, t, 'ok');
+}));
+admin.post('/kanaly', needAuth, csrf, wrap(async (req, res) => {
+  const t = k => clean(String(req.body[k] || '').replace(/\r/g, ''), 1000);
+  await setSettings({ kan_intro: t('kan_intro'), kan_intro_en: t('kan_intro_en'), kan_status: req.body.kan_status ? '1' : '0', kan_catalog: req.body.kan_catalog ? '1' : '0' }); ok(res, 'ok', 'kanaly');
 }));
 admin.post('/texts', needAuth, csrf, wrap(async (req, res) => {
   const u = String(req.body.checkout_url || '').trim(), cu = u ? safeUrl(u) : '';
@@ -795,7 +855,7 @@ function listAdmin(req, t, rows) {
 <form method="post" action="/admin/l/${t}/${o.id}/edit">${hid(req)}${fld(o)}<button>Uložiť</button></form><div class="row">
 ${i > 0 ? `<form method="post" action="/admin/l/${t}/${o.id}/move">${hid(req)}<input type="hidden" name="dir" value="up"><button class="g">↑</button></form>` : ''}
 ${i < rows.length - 1 ? `<form method="post" action="/admin/l/${t}/${o.id}/move">${hid(req)}<input type="hidden" name="dir" value="down"><button class="g">↓</button></form>` : ''}
-<form method="post" action="/admin/l/${t}/${o.id}/delete">${hid(req)}<button class="d">Zmazať</button></form></div></details>`).join('');
+<form method="post" action="/admin/l/${t}/${o.id}/delete">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> Potvrdiť zmazanie</label><button class="d">Zmazať (do koša)</button></form></div></details>`).join('');
   return `<h2 id="l-${t}">${L.title}</h2>${body || '<p class="hint">Prázdne.</p>'}<details class="card"><summary>➕ Pridať</summary><form method="post" action="/admin/l/${t}">${hid(req)}${fld()}<button>Pridať</button></form></details>`;
 }
 const PM = { ok: 'Uložené.', badlist: 'Neplatné údaje (cena napr. 9,99; obdobie celé číslo mesiacov; odkaz https://…).' };
@@ -894,6 +954,24 @@ app.get('/:slug/cennik', wrap(async (req, res, next) => {
   await shell(req, res, s, 'cennik', T(req, 'Cenník') + ' – ' + loc(req, s, 'title'), h || `<h1 class="ph">${T(req, 'Cenník')}</h1><p class="hint">${req.lang === 'en' ? 'Pricing coming soon.' : 'Cenník pripravujeme.'}</p>`);
 }));
 app.get('/:slug/kanaly', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const en = req.lang === 'en';
+  const ni = (await getList('nav')).find(n => n.page === 'channels' && !n.url);
+  const title = ni && ni.label !== PAGES.channels[0] ? ni.label : T(req, 'Kanály');
+  const chs = await features.monitorChannels(req.lang).catch(() => []);
+  const intro = (en && s.kan_intro_en) || s.kan_intro;
+  const showSt = s.kan_status !== '0';
+  const list = chs.length ? `<div class="guide">${chs.map((c, i) => `<div class="gi"><span class="gn">${i + 1}</span><span class="gt">${esc(c.name)}</span>${showSt ? `<span class="tbadge"><span class="dot ${esc(c.cls)}"></span>${esc(c.label)}</span>` : '<span class="gp">▶</span>'}</div>`).join('')}</div>`
+    : `<p class="hint">${en ? 'No channels yet.' : 'Zatiaľ žiadne kanály.'}</p>`;
+  let cat = '';
+  if (s.kan_catalog === '1') {
+    const t = await chTree(), b = chBase(s);
+    const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
+    if (regs.length) cat = `<h2 class="ph">${en ? 'Catalogue' : 'Katalóg'}</h2><div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} ${T(req, 'kategórií')} • ${n} ${T(req, 'položiek')}</span></a>`).join('')}</div>`;
+  }
+  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${cat}`);
+}));
+app.get('/:slug/kanaly-katalog', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const t = await chTree(), b = chBase(s);
   const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
