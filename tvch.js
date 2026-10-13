@@ -132,6 +132,7 @@ module.exports = function install(ctx) {
   const MS = { ok: 'Uložené.', added: 'Kanál pridaný.', trashed: 'Presunuté do koša – obnoviť v Admin › Kôš.', bad: 'Neplatný názov alebo kategória (nesmie obsahovať URL).', badlogo: 'Logo musí byť https odkaz na obrázok (bez portu, nie stream/playlist).', needconfirm: 'Akciu treba potvrdiť zaškrtnutím.', nofile: 'Chýba súbor.', big: 'Súbor je väčší ako 5 MB.', badfile: 'Súbor sa nepodarilo prečítať (CSV alebo .xlsx).', many: 'Príliš veľa riadkov (max 5000).', expired: 'Náhľad vypršal – nahrajte súbor znova.', imported: 'Import dokončený.', dupe: 'Kanál s týmto názvom už v kategórii existuje.' };
 
   ctx.tvchInit = async () => {
+    await pool.query(`CREATE TABLE IF NOT EXISTS tv_channel_reports (id SERIAL PRIMARY KEY, channel_id INT, channel_name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', type TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '', resolved BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS tv_channels (id SERIAL PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Ostatné', logo TEXT NOT NULL DEFAULT '', ord INT NOT NULL DEFAULT 0, visible BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   };
   // restore from l_trash (called by server restore route inside its transaction)
@@ -145,13 +146,65 @@ module.exports = function install(ctx) {
     const en = req.lang === 'en';
     const rows = (await all()).filter((r) => r.visible); if (!rows.length) return '';
     const g = groups(rows);
-    return `<section class="tvcat"><h2 class="ph">${esc(tx(en, 'Zoznam kanálov', 'Channel list'))}</h2><p class="lead">${esc(tx(en, 'Kanály podľa kategórií. Kliknite na kategóriu pre rozbalenie.', 'Channels by category. Click a category to expand.'))}</p>
+    const rm = req.query.rep === 'ok' ? `<div class="msg">${esc(tx(en, 'Ďakujeme, problém bol nahlásený. Pozrieme sa na to.', 'Thank you, the problem was reported. We will look into it.'))}</div>` : '';
+    return `<section class="tvcat" id="katalog">${rm}<h2 class="ph">${esc(tx(en, 'Zoznam kanálov', 'Channel list'))}</h2><p class="lead">${esc(tx(en, 'Kanály podľa kategórií. Kliknite na kategóriu pre rozbalenie.', 'Channels by category. Click a category to expand.'))}</p>
 <input type="search" id="tvq" class="tvq" placeholder="${esc(tx(en, '🔎 Hľadať kanál…', '🔎 Search channel…'))}" aria-label="${esc(tx(en, 'Hľadať kanál', 'Search channel'))}" autocomplete="off">
 <p class="hint" id="tvnone" hidden>${esc(tx(en, 'Žiadny kanál nezodpovedá hľadaniu.', 'No channel matches your search.'))}</p>
-${[...g].map(([c, l]) => `<details class="tvg"><summary><span class="tt">${esc(c)}</span><span class="tm">${l.length} ${esc(tx(en, 'kanálov', 'channels'))}</span></summary><ul class="tvl">${l.map((r) => `<li class="tch" data-n="${esc((r.name + ' ' + c).toLowerCase())}">${r.logo ? `<img src="${esc(r.logo)}" alt="" loading="lazy" decoding="async" width="40" height="40" referrerpolicy="no-referrer">` : `<span class="tli">${esc([...r.name][0].toUpperCase())}</span>`}<span>${esc(r.name)}</span></li>`).join('')}</ul></details>`).join('')}
+${[...g].map(([c, l]) => `<details class="tvg"><summary><span class="tt">${esc(c)}</span><span class="tm">${l.length} ${esc(tx(en, 'kanálov', 'channels'))}</span></summary><ul class="tvl">${l.map((r) => `<li class="tch" data-n="${esc((r.name + ' ' + c).toLowerCase())}">${r.logo ? `<img src="${esc(r.logo)}" alt="" loading="lazy" decoding="async" width="40" height="40" referrerpolicy="no-referrer">` : `<span class="tli">${esc([...r.name][0].toUpperCase())}</span>`}<span class="tcn">${esc(r.name)}</span><a class="trb" href="/${esc(req.params.slug)}/kanal-nahlasit/${r.id}${en ? '?lang=en' : ''}" rel="nofollow" title="${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}">⚠<span> ${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}</span></a></li>`).join('')}</ul></details>`).join('')}
 <p class="hint">${rows.length} ${esc(tx(en, 'kanálov celkom', 'channels in total'))}</p></section><script src="/static/tvch.js?v=1" defer></script>`;
   };
 
+  // ---------- user problem reports ----------
+  const RTYPES = ['nefunguje', 'seka', 'logo', 'ine'];
+  const rtLabel = (en, t) => ({ nefunguje: tx(en, 'Nefunguje', 'Not working'), seka: tx(en, 'Seká / zamŕza', 'Buffering / freezing'), logo: tx(en, 'Zlé logo alebo názov', 'Wrong logo or name'), ine: tx(en, 'Iné', 'Other') })[t] || t;
+  const SECRET = String(process.env.SESSION_SECRET || 'x');
+  const rTok = () => { const t = Date.now().toString(36); return t + '.' + crypto.createHmac('sha256', SECRET).update('tvrep:' + t).digest('base64url').slice(0, 22); };
+  const rTokOk = (v) => { const [t, sig] = String(v || '').split('.'); if (!t || !sig) return false; const want = crypto.createHmac('sha256', SECRET).update('tvrep:' + t).digest('base64url').slice(0, 22), age = Date.now() - parseInt(t, 36); return sig.length === want.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(want)) && age > 2000 && age < 3600e3; };
+  const hits = new Map();
+  const over = (k, n, ms) => { const now = Date.now(), a = (hits.get(k) || []).filter((t) => now - t < ms); hits.set(k, a); return a.length >= n; };
+  const hit = (...ks) => ks.forEach((k) => hits.get(k).push(Date.now()));
+  setInterval(() => { const now = Date.now(); for (const [k, a] of hits) if (!a.some((t) => now - t < 3600e3)) hits.delete(k); }, 600e3).unref();
+  const HASLINK = /(https?|ftp|rtmp|rtsp|udp):\/\/|www\.|\.m3u8?\b|\b[a-z0-9-]+\.(com|net|org|sk|cz|eu|io|tv|me|ru|info|xyz|top|link|ly|to|be|co|app|site|online|de|uk)\b(\/|\s|$)|t\.me\//i;
+  const reportPage = async (req, res, s, ch, err) => {
+    const en = req.lang === 'en';
+    res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Robots-Tag', 'noindex');
+    await ctx.shell(req, res, s, 'channels', tx(en, 'Nahlásiť problém', 'Report a problem') + ' – ' + ch.name, `<h1 class="ph">⚠ ${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}</h1>
+<p class="lead"><b>${esc(ch.name)}</b> · ${esc(ch.category)}</p>${err ? `<div class="msg err">${esc(err)}</div>` : ''}
+<form method="post" action="/${esc(s.slug)}/kanal-nahlasit/${ch.id}${en ? '?lang=en' : ''}" class="card idea"><input type="hidden" name="t" value="${esc(rTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
+<label>${esc(tx(en, 'Typ problému', 'Problem type'))}</label>${RTYPES.map((t, i) => `<label class="ck"><input type="radio" name="type" value="${t}"${i ? '' : ' checked'}> ${esc(rtLabel(en, t))}</label>`).join('')}
+<label for="rn">${esc(tx(en, 'Poznámka (voliteľné, bez odkazov)', 'Note (optional, no links)'))}</label><textarea id="rn" name="note" maxlength="500" rows="3"></textarea>
+<label for="rc">${esc(tx(en, 'Kontakt (voliteľné – e-mail alebo Telegram)', 'Contact (optional – e-mail or Telegram)'))}</label><input id="rc" name="contact" maxlength="120">
+<button class="b">${esc(tx(en, 'Odoslať hlásenie', 'Send report'))}</button></form><p><a href="/${esc(s.slug)}/kanaly${en ? '?lang=en' : ''}">← ${esc(tx(en, 'Späť na kanály', 'Back to channels'))}</a></p>`);
+  };
+  const chById = async (id) => (await all()).find((r) => r.id === +id && r.visible);
+  app.get('/:slug/kanal-nahlasit/:id(\\d+)', wrap(async (req, res, next) => {
+    const s = await ctx.slugOk(req); if (!s) return next(); const ch = await chById(req.params.id); if (!ch) return next();
+    await reportPage(req, res, s, ch);
+  }));
+  app.post('/:slug/kanal-nahlasit/:id(\\d+)', wrap(async (req, res, next) => {
+    const s = await ctx.slugOk(req); if (!s) return next(); const ch = await chById(req.params.id); if (!ch) return next();
+    const en = req.lang === 'en', b = req.body || {};
+    if (b.web || !rTokOk(b.t)) return reportPage(req, res.status(400), s, ch, tx(en, 'Formulár vypršal, skúste znova.', 'The form expired, please try again.'));
+    const kIp = 'ip:' + req.ip, kCh = 'ch:' + req.ip + ':' + ch.id;
+    if (over(kIp, 3, 600e3) || over(kCh, 1, 1800e3) || over('global', 60, 3600e3)) return reportPage(req, res.status(429), s, ch, tx(en, 'Príliš veľa hlásení. Skúste neskôr.', 'Too many reports. Please try later.'));
+    const type = RTYPES.includes(b.type) ? b.type : 'ine';
+    const note = cleanTxt(String(b.note || ''), 500), contact = cleanTxt(String(b.contact || ''), 120);
+    if (HASLINK.test(note) || /(https?|ftp):\/\/|www\./i.test(contact)) return reportPage(req, res.status(400), s, ch, tx(en, 'Poznámka ani kontakt nesmú obsahovať odkazy.', 'The note and contact must not contain links.'));
+    hit(kIp, kCh, 'global');
+    const r = (await pool.query('INSERT INTO tv_channel_reports (channel_id,channel_name,category,type,note,contact,ip) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id', [ch.id, ch.name, ch.category, type, note, contact, String(req.ip || '').slice(0, 64)])).rows[0];
+    const pub = String(process.env.LNKBIO_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '');
+    const sent = ctx.notify ? await ctx.notify('admin', `📺⚠ Nahlásený problém s kanálom #${r.id}\nKanál: ${ch.name} (${ch.category})\nProblém: ${rtLabel(false, type)}${note ? '\nPoznámka: ' + note : ''}${contact ? '\nKontakt: ' + contact : ''}\n${pub}/admin/kanaly-katalog#reports`).catch(() => false) : false;
+    if (!sent) console.error('tvrep notify failed', r.id);
+    res.redirect(303, `/${s.slug}/kanaly?rep=ok${en ? '&lang=en' : ''}#katalog`);
+  }));
+  admin.post('/tvch/rep/:id(\\d+)/resolve', needAuth, csrf, wrap(async (req, res) => { await pool.query('UPDATE tv_channel_reports SET resolved=NOT resolved WHERE id=$1', [+req.params.id]); back(res, 'ok', 'reports'); }));
+  admin.post('/tvch/rep/:id(\\d+)/delete', needAuth, csrf, wrap(async (req, res) => { if (req.body.confirm !== '1') return back(res, 'needconfirm', 'reports'); await pool.query('DELETE FROM tv_channel_reports WHERE id=$1', [+req.params.id]); back(res, 'ok', 'reports'); }));
+  const reportsAdmin = async (req) => {
+    const rs = (await pool.query('SELECT * FROM tv_channel_reports ORDER BY resolved, created_at DESC LIMIT 300')).rows, open = rs.filter((r) => !r.resolved).length;
+    return `<div class="card" id="reports"><h2>⚠ Hlásenia problémov (${open} otvorených)</h2><p class="hint">Hlásenia od návštevníkov (tlačidlo „Nahlásiť problém“ pri kanáli). Každé nové príde aj ako Telegram správa.</p>
+${rs.map((r) => `<div class="card"><p><b>${esc(r.channel_name)}</b> <span class="hint">${esc(r.category)} · ${esc(rtLabel(false, r.type))} · ${esc(new Date(r.created_at).toLocaleString('sk-SK', { timeZone: 'Europe/Zurich' }))}${r.resolved ? ' · ✅ vyriešené' : ''}</span></p>${r.note ? `<p>${esc(r.note)}</p>` : ''}${r.contact ? `<p class="hint">Kontakt: ${esc(r.contact)}</p>` : ''}
+<div class="row"><form method="post" action="/admin/tvch/rep/${r.id}/resolve">${hid(req)}<button class="g">${r.resolved ? '↩ Znovu otvoriť' : '✅ Vyriešené'}</button></form><form method="post" action="/admin/tvch/rep/${r.id}/delete">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> potvrdiť</label><button class="d">🗑 Zmazať</button></form></div></div>`).join('') || '<p class="hint">Žiadne hlásenia.</p>'}</div>`;
+  };
   const catSel = (cats, cur, nm) => `<select name="${nm}">${cats.map((c) => `<option${c === cur ? ' selected' : ''}>${esc(c)}</option>`).join('')}<option value="">➕ nová kategória…</option></select>`;
   const input = (b) => {
     const name = cleanTxt(b.name, 120), category = cleanTxt(b.newcat, 80) || cleanTxt(b.category, 80) || 'Ostatné';
@@ -161,6 +214,8 @@ ${[...g].map(([c, l]) => `<details class="tvg"><summary><span class="tt">${esc(c
   };
   admin.get('/kanaly-katalog', needAuth, wrap(async (req, res) => {
     const rows = await all(), g = groups(rows), cats = [...g.keys()];
+    const rc = Object.fromEntries((await pool.query('SELECT channel_id, COUNT(*) FILTER (WHERE NOT resolved)::int AS o, COUNT(*)::int AS n FROM tv_channel_reports GROUP BY channel_id')).rows.map((r) => [r.channel_id, r]));
+    const rcs = (id) => rc[id] ? ` <span class="hint">⚠ ${rc[id].o} otvorených / ${rc[id].n} hlásení</span>` : '';
     const m = MS[req.query.m] ? `<p class="${/^(ok|added|trashed|imported)$/.test(req.query.m) ? 'ok' : 'err'}">${esc(MS[req.query.m])}</p>` : '';
     res.send(page('Katalóg kanálov', `<h1>📺 Katalóg kanálov</h1>${m}<p><a href="/admin">← Admin</a> · <a href="/admin#kanaly">nastavenia sekcie</a> · <a href="/admin#trash">🗑️ Kôš</a></p>
 <p class="hint">Ukladajú sa iba <b>názvy, kategórie a logá</b>. Stream URL, M3U/Xtream údaje ani playlist odkazy sa neprijímajú. Verejne sa zobrazuje na stránke Kanály (zoskupené podľa kategórií, s vyhľadávaním). Texty na verejnej stránke upravíte v <a href="/admin/texty">✏️ Texty</a>.</p>
@@ -171,9 +226,9 @@ ${[...g].map(([c, l]) => `<details class="tvg"><summary><span class="tt">${esc(c
 <form method="post" action="/admin/tvch/import" enctype="multipart/form-data" class="card" id="import">${hid(req)}<h2>⬆ Import z CSV / Excel (.xlsx)</h2>
 <p class="hint">Stĺpce: <b>name/názov</b>, <b>category/kategória</b>, <b>logo</b> (voliteľné). Hlavička a oddeľovač (, ; tab) sa zistia automaticky, UTF-8 s diakritikou. Max 5 MB, 5000 riadkov. Stĺpce s URL streamov/playlistov sa ignorujú. Pred uložením uvidíte náhľad. <a href="/admin/tvch/sablona.csv">⬇ Stiahnuť šablónu CSV</a></p>
 <input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><button>Náhľad importu</button></form>
-<h2>Kanály (${rows.length})</h2>
-${[...g].map(([c, l]) => `<details class="card"><summary><b>${esc(c)}</b> <span class="hint">${l.length} kanálov${l.some((r) => !r.visible) ? ` · ${l.filter((r) => !r.visible).length} skrytých` : ''}</span></summary>
-${l.map((r, i) => `<div class="card"><form method="post" action="/admin/tvch/${r.id}/edit">${hid(req)}<p>${r.logo ? `<img src="${esc(r.logo)}" alt="" width="28" height="28" loading="lazy" referrerpolicy="no-referrer"> ` : ''}<b>${esc(r.name)}</b>${r.visible ? '' : ' <span class="hint">(skrytý)</span>'}</p>
+${await reportsAdmin(req)}<h2>Kanály (${rows.length})</h2>
+${[...g].map(([c, l]) => `<details class="card"><summary><b>${esc(c)}</b> <span class="hint">${l.length} kanálov${l.some((r) => rc[r.id] && rc[r.id].o) ? ' · ⚠ ' + l.reduce((a, r) => a + ((rc[r.id] || {}).o || 0), 0) + ' hlásení' : ''}${l.some((r) => !r.visible) ? ` · ${l.filter((r) => !r.visible).length} skrytých` : ''}</span></summary>
+${l.map((r, i) => `<div class="card"><form method="post" action="/admin/tvch/${r.id}/edit">${hid(req)}<p>${r.logo ? `<img src="${esc(r.logo)}" alt="" width="28" height="28" loading="lazy" referrerpolicy="no-referrer"> ` : ''}<b>${esc(r.name)}</b>${r.visible ? '' : ' <span class="hint">(skrytý)</span>'}${rcs(r.id)}</p>
 <label>Názov</label><input name="name" maxlength="120" value="${esc(r.name)}" required><label>Kategória</label>${catSel(cats, c, 'category')}<input name="newcat" maxlength="80" placeholder="alebo nová kategória">
 <label>Logo (https)</label><input name="logo" type="url" maxlength="500" value="${esc(r.logo)}"><label class="ck"><input type="checkbox" name="visible" value="1"${r.visible ? ' checked' : ''}> Viditeľný</label><button>Uložiť</button></form>
 <div class="row">${i > 0 ? `<form method="post" action="/admin/tvch/${r.id}/move">${hid(req)}<input type="hidden" name="dir" value="up"><button>▲</button></form>` : ''}${i < l.length - 1 ? `<form method="post" action="/admin/tvch/${r.id}/move">${hid(req)}<input type="hidden" name="dir" value="down"><button>▼</button></form>` : ''}
