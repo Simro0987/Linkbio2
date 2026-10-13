@@ -158,7 +158,7 @@ ${ds.length ? `<h2>${en ? 'Pick your device' : 'Vyberte zariadenie'}</h2><div cl
   }));
   // admin
   const gUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 8, fieldSize: 4096 } }).single('image');
-  const anav = `<p class="row"><a class="btnl" href="/admin">← Admin</a><a class="btnl" href="/admin/navody">📘 Návody</a><a class="btnl" href="/admin/azteco">₿ Azteco</a><a class="btnl" href="/admin/agent">🤖 Agent / uptime</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a></p>`;
+  const anav = `<p class="row"><a class="btnl" href="/admin">← Admin</a><a class="btnl" href="/admin/navody">📘 Návody</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/azteco">₿ Azteco</a><a class="btnl" href="/admin/agent">🤖 Agent / uptime</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a></p>`;
   const GM = { ok: 'Uložené.', bad: 'Neplatné údaje.', big: 'Obrázok je príliš veľký (max 2 MB).', badimg: 'Povolené len PNG, JPEG, WebP.' };
   const gmsg = (q) => (GM[q] ? `<div class="msg${q === 'ok' ? '' : ' err'}">${esc(GM[q])}</div>` : '');
   admin.get('/navody', needAuth, wrap(async (req, res) => {

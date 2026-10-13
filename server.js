@@ -50,7 +50,7 @@ const SHORT_PAY = 'https://lnkbio.onrender.com/platby';
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
   meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
-  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: 'https://lnkbio.onrender.com/platby', chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', stav_nav: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
+  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: 'https://lnkbio.onrender.com/platby', chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
 };
 
 async function init() {
@@ -234,7 +234,7 @@ app.use((req, res, next) => {
   else { const m = String(req.headers.cookie || '').match(/(?:^|;\s*)lang=(sk|en)\b/); req.lang = m ? m[1] : 'sk'; }
   next();
 });
-const EN = { 'Domov': 'Home', 'Kanály': 'Channels', 'Platby': 'Payments', 'Kontakt': 'Contact', 'FAQ': 'FAQ', 'O nás': 'About us', 'Stav služieb': 'Service status', 'Návody': 'Guides', 'Návrhy': 'Suggestions',
+const EN = { 'Cenník': 'Pricing', 'Domov': 'Home', 'Kanály': 'Channels', 'Platby': 'Payments', 'Kontakt': 'Contact', 'FAQ': 'FAQ', 'O nás': 'About us', 'Stav služieb': 'Service status', 'Návody': 'Guides', 'Návrhy': 'Suggestions',
   'Vyberte región.': 'Choose a region.', 'Vyberte kategóriu.': 'Choose a category.', 'kategórií': 'categories', 'položiek': 'items', '‹ Predošlá': '‹ Previous', 'Ďalšia ›': 'Next ›',
   'Katalóg je zatiaľ prázdny.': 'The catalogue is empty for now.', '💳 Prejsť k platbe': '💳 Go to payment', 'Kontakty zatiaľ nie sú vyplnené.': 'No contacts yet.',
   'Časté otázky': 'Frequently asked questions', 'Zatiaľ žiadne otázky.': 'No questions yet.', 'Hlavné menu': 'Main menu', 'Omrvinky': 'Breadcrumbs', 'Menu': 'Menu',
@@ -283,7 +283,14 @@ const page = (title, body, cls = '', desc = '', extra = '') => `<!doctype html><
 
 const CHAT_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 'chat.js')) + fs.readFileSync(path.join(__dirname, 'static', 'chat.css'))).digest('hex').slice(0, 10);
 // short one-word payment link
-app.get('/platby', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, CHECKOUT_ORIGIN); });
+app.get('/platby', (req, res) => { res.setHeader('Cache-Control', 'no-store'); const pid = /^\d{1,9}$/.test(String(req.query.plan || '')) ? String(req.query.plan) : ''; res.redirect(302, CHECKOUT_ORIGIN + (pid ? '/?plan=' + pid : '')); });
+// public plan lookup for the checkout (server-side price verification by id)
+app.get('/api/plans/:id(\\d{1,9})', wrap(async (req, res) => {
+  const p = (await getList('plans')).find(x => x.id === Number(req.params.id));
+  res.setHeader('Cache-Control', 'no-store');
+  if (!p || !p.active) return res.status(404).json({ error: 'not found' });
+  res.json({ id: p.id, name: p.name, name_en: p.name_en, amount: Number(p.price), currency: 'EUR', period: Number(p.period) || 1, active: true });
+}));
 // public site info for the support chatbot knowledge base (only data already shown on public pages)
 app.get('/api/site-info', wrap(async (req, res) => {
   const s = await getSettings(), base = 'https://lnkbio.onrender.com/' + s.slug;
@@ -293,6 +300,7 @@ app.get('/api/site-info', wrap(async (req, res) => {
     pages: Object.fromEntries(Object.entries(PAGES).map(([k, [n, u]]) => [n, base + u])),
     about: s.about_text, payments: s.pay_text, contact: s.contact_text,
     contacts: Object.fromEntries(SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n]) => [n, s['soc_' + k]])),
+    pricing: { intro: s.pricing_intro, footnote: s.pricing_note, page: base + '/cennik', plans: (await getList('plans')).filter(p => p.active).map(p => ({ name: p.name, price: fmtEur(p.price), old_price: p.old_price ? fmtEur(p.old_price) : '', period: perLabel(p.period, false), popular: p.popular, badge: p.badge, includes: p.features.split('\n').filter(Boolean), note: p.note, link: p.btn_url || planUrl(p) })) },
     faq: (await getList('faq')).map(x => ({ q: x.q, a: x.a })),
     channels: [...t.entries()].map(([r, m]) => ({ region: r, categories: [...m.entries()].map(([c, l]) => ({ name: c, items: l.slice(0, 40).map(x => x.name) })) })) });
 }));
@@ -359,7 +367,7 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>
@@ -595,7 +603,7 @@ function validateBackup(j) {
   exactKeys(j.settings, [], [...SETTING_KEYS]);
   const st = {};
   for (const [k, v] of Object.entries(j.settings)) {
-    const LONG = /^(about_text|contact_text|pay_text)(_en)?$/.test(k);
+    const LONG = /^(about_text|contact_text|pay_text|pricing_intro|pricing_note)(_en)?$/.test(k);
     if (typeof v !== 'string' || v.length > (LONG ? 5000 : 2000)) throw 0;
     if (k === 'slug' && (!SLUG_RE.test(v) || RESERVED.has(v))) throw 0;
     if (/^c_/.test(k) && !HEX_RE.test(v)) throw 0;
@@ -629,9 +637,10 @@ function validateBackup(j) {
     if (!mime || mime !== v.mime || buf.length > 2 * 1024 * 1024) throw 0;
     return { k, mime, buf, ver: crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12) };
   });
-  exactKeys(j.lists, Object.keys(LISTS));
+  exactKeys(j.lists, [], Object.keys(LISTS));
   const ls = {};
   for (const t of Object.keys(LISTS)) {
+    if (!(t in j.lists)) continue;
     if (!Array.isArray(j.lists[t]) || j.lists[t].length > 20000) throw 0;
     const names = LISTS[t].fields.map(f => f[0]);
     ls[t] = j.lists[t].map(o => { exactKeys(o, names.filter(n => !/_en$/.test(n)), names); const r = listInput(t, o); if (!r) throw 0; return r; });
@@ -672,11 +681,15 @@ admin.post('/restore', needAuth, (req, res, next) => restoreUp(req, res, e => {
   ok(res, 'restored');
 }));
 // ---- generic admin-managed lists (FAQ, channels, nav) ----
-const PAGES = { home: ['Domov', ''], channels: ['Kanály', '/kanaly'], payments: ['Platby', '/platby'], contact: ['Kontakt', '/kontakt'], faq: ['FAQ', '/faq'], about: ['O nás', '/o-nas'], navody: ['Návody', '/navody'], navrhy: ['Návrhy', '/navrhy'] };
-const NAV_ICONS = { home: '🏠', channels: '📺', payments: '💳', contact: '✉️', faq: '❓', about: 'ℹ️', navody: '📘', navrhy: '💡' };
+const PAGES = { home: ['Domov', ''], channels: ['Kanály', '/kanaly'], payments: ['Platby', '/platby'], contact: ['Kontakt', '/kontakt'], faq: ['FAQ', '/faq'], about: ['O nás', '/o-nas'], navody: ['Návody', '/navody'], navrhy: ['Návrhy', '/navrhy'], cennik: ['Cenník', '/cennik'] };
+const NAV_ICONS = { home: '🏠', channels: '📺', payments: '💳', contact: '✉️', faq: '❓', about: 'ℹ️', navody: '📘', navrhy: '💡', cennik: '🏷️' };
 const LISTS = {
   faq: { title: 'FAQ', fields: [['q', 'Otázka', 'text', 200, true], ['a', 'Odpoveď', 'area', 2000, true], ['q_en', 'Otázka (EN, voliteľné)', 'text', 200, false], ['a_en', 'Odpoveď (EN, voliteľné)', 'area', 2000, false]] },
   channels: { title: 'Kanály (katalóg)', fields: [['name', 'Názov', 'text', 80, true], ['region', 'Región', 'text', 40, true], ['category', 'Kategória', 'text', 40, true], ['note', 'Popis', 'area', 500, false]] },
+  plans: { title: 'Cenník – plány', fields: [['name', 'Názov plánu', 'text', 60, true], ['name_en', 'Názov (EN)', 'text', 60, false], ['price', 'Cena v EUR (napr. 9,99)', 'eur', 0, true], ['old_price', 'Pôvodná cena EUR (voliteľné, prečiarknutá)', 'eur', 0, false],
+    ['period', 'Obdobie v mesiacoch (1, 3, 6, 12…)', 'int', 0, true], ['badge', 'Odznak / zľava (voliteľné, napr. −20 %)', 'text', 30, false], ['badge_en', 'Odznak (EN)', 'text', 30, false], ['popular', 'Najobľúbenejší (zvýrazniť)', 'bool'],
+    ['features', 'Čo obsahuje – jedna položka na riadok', 'area', 2000, false], ['features_en', 'Čo obsahuje (EN) – jedna na riadok', 'area', 2000, false], ['note', 'Poznámka (voliteľné)', 'text', 200, false], ['note_en', 'Poznámka (EN)', 'text', 200, false],
+    ['btn', 'Text tlačidla', 'text', 40, false], ['btn_en', 'Text tlačidla (EN)', 'text', 40, false], ['btn_url', 'Odkaz tlačidla (prázdne = platobná stránka s týmto plánom a sumou – odporúčané)', 'url', 2000, false], ['active', 'Aktívny (zobraziť)', 'bool']] },
   nav: { title: 'Navigácia', fields: [['label', 'Názov', 'text', 40, true], ['page', 'Interná stránka (ak nie je URL)', 'sel', 0, false], ['url', 'Externá URL (voliteľné, prepíše stránku)', 'url', 2000, false], ['visible', 'Zobraziť v menu', 'bool'], ['newtab', 'Otvoriť v novej karte', 'bool']] },
 };
 const NAV_PAGES = { '': '—', ...Object.fromEntries(Object.entries(PAGES).map(([k, v]) => [k, v[0]])) };
@@ -687,6 +700,8 @@ function listInput(t, o) {
     if (type === 'bool') { r[k] = v === true || v === '1'; continue; }
     if (v != null && typeof v !== 'string') return null;
     if (type === 'sel') { r[k] = NAV_PAGES[v || ''] ? (v || '') : null; if (r[k] === null) return null; continue; }
+    if (type === 'eur') { const s = String(v || '').trim().replace(/\s|€/g, ''); if (!s) { if (req) return null; r[k] = ''; continue; } if (!/^\d{1,5}([.,]\d{1,2})?$/.test(s)) return null; r[k] = Number(s.replace(',', '.')).toFixed(2); continue; }
+    if (type === 'int') { const s = String(v ?? '').trim(); if (!/^\d{1,3}$/.test(s) || +s < 1) return null; r[k] = String(+s); continue; }
     if (type === 'url') { const s = String(v || '').trim(); if (!s) { r[k] = ''; continue; } r[k] = safeUrl(s); if (!r[k]) return null; continue; }
     r[k] = type === 'area' ? clean(String(v || '').replace(/\r/g, ''), max) : clean(v, max);
     if (req && !r[k]) return null;
@@ -707,6 +722,17 @@ async function initLists() {
   await pool.query(`CREATE TABLE IF NOT EXISTS l_channels (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, name TEXT NOT NULL, region TEXT NOT NULL, category TEXT NOT NULL, note TEXT NOT NULL DEFAULT '')`);
   await pool.query(`CREATE INDEX IF NOT EXISTS l_channels_rc ON l_channels (region, category)`);
   await pool.query(`CREATE TABLE IF NOT EXISTS l_nav (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, label TEXT NOT NULL, page TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', visible BOOLEAN NOT NULL DEFAULT TRUE, newtab BOOLEAN NOT NULL DEFAULT FALSE)`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS l_plans (id SERIAL PRIMARY KEY, pos INT NOT NULL DEFAULT 0, name TEXT NOT NULL, name_en TEXT NOT NULL DEFAULT '', price TEXT NOT NULL DEFAULT '0.00', old_price TEXT NOT NULL DEFAULT '', period TEXT NOT NULL DEFAULT '1', badge TEXT NOT NULL DEFAULT '', badge_en TEXT NOT NULL DEFAULT '', popular BOOLEAN NOT NULL DEFAULT FALSE, features TEXT NOT NULL DEFAULT '', features_en TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '', note_en TEXT NOT NULL DEFAULT '', btn TEXT NOT NULL DEFAULT '', btn_en TEXT NOT NULL DEFAULT '', btn_url TEXT NOT NULL DEFAULT '', active BOOLEAN NOT NULL DEFAULT TRUE)`);
+  const m3 = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_plans','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  if (m3.rowCount) {
+    const mx = (await pool.query(`SELECT COALESCE(MAX(pos),0) AS p FROM l_nav`)).rows[0].p;
+    await pool.query(`INSERT INTO l_nav (pos,label,page) SELECT $1,'Cenník','cennik' WHERE NOT EXISTS (SELECT 1 FROM l_nav WHERE page='cennik')`, [mx + 1]);
+    const FSK = ['Všetky kanály z našej ponuky (všetky regióny a kategórie)', 'HD / Full HD kvalita, kde je dostupná', 'Archív / catch-up pri kanáloch, ktoré ho podporujú', 'TV program (EPG)', 'Funguje vo všetkých podporovaných prehrávačoch a zariadeniach – pozri Návod na inštaláciu prehrávača', 'Podpora cez Telegram', 'Aktivácia po potvrdení platby'];
+    const FEN = ['All channels in our offer (all regions and categories)', 'HD / Full HD quality where available', 'Archive / catch-up on channels that support it', 'TV guide (EPG)', 'Works in all supported players and devices – see the Player installation guide', 'Support via Telegram', 'Activation after payment confirmation'];
+    const ex = [['1 mesiac', '1 month', '9.99', '1', false, '', '', 1], ['3 mesiace', '3 months', '24.99', '3', false, '', '', 1], ['6 mesiacov', '6 months', '44.99', '6', true, '', '', 1], ['12 mesiacov', '12 months', '79.99', '12', false, '', '', 1], ['12 mesiacov – 2 zariadenia', '12 months – 2 devices', '129.99', '12', false, 'Rodina', 'Family', 2]];
+    let i = 1; for (const [n, ne, pr, per, pop, bd, bde, dev] of ex) await pool.query(`INSERT INTO l_plans (pos,name,name_en,price,period,popular,badge,badge_en,features,features_en,note,note_en,btn,btn_en) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'Vybrať platbu','Choose payment')`,
+      [i++, n, ne, pr, per, pop, bd, bde, [dev > 1 ? '2 zariadenia súčasne' : '1 zariadenie', ...FSK].join('\n'), [dev > 1 ? '2 devices at the same time' : '1 device', ...FEN].join('\n'), '', '']);
+  }
   await pool.query(`ALTER TABLE buttons ADD COLUMN IF NOT EXISTS section TEXT NOT NULL DEFAULT 'home'`);
   const m2 = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_nav2','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
   if (m2.rowCount) {
@@ -721,23 +747,24 @@ async function initLists() {
       'Aké platby prijímate?', 'Platbu kartou aj kryptomenami cez zabezpečenú platobnú bránu. Viac na stránke Platby.', 'Poskytujete podporu?', 'Áno, ozvite sa nám cez Kontakt – odpovedáme spravidla do 24 hodín.']);
   }
 }
+const lok = (res, t, m) => (t === 'plans' ? res.redirect(303, '/admin/cennik?m=' + m) : ok(res, m, 'l-' + t));
 const sectionOf = v => v === 'pay' ? 'pay' : 'home';
-admin.post('/l/:t(faq|channels|nav)', needAuth, csrf, wrap(async (req, res) => {
-  const t = req.params.t, r = listInput(t, req.body); if (!r) return ok(res, 'badlist', 'l-' + t);
+admin.post('/l/:t(faq|channels|nav|plans)', needAuth, csrf, wrap(async (req, res) => {
+  const t = req.params.t, r = listInput(t, req.body); if (!r) return lok(res, t, 'badlist');
   const ks = Object.keys(r);
   await pool.query(`INSERT INTO l_${t} (${ks.join(',')},pos) VALUES (${ks.map((_, i) => '$' + (i + 1)).join(',')},(SELECT COALESCE(MAX(pos),0)+1 FROM l_${t}))`, Object.values(r));
-  dropList(t); ok(res, 'ok', 'l-' + t);
+  dropList(t); lok(res, t, 'ok');
 }));
-admin.post('/l/:t(faq|channels|nav)/:id/edit', needAuth, csrf, wrap(async (req, res) => {
-  const t = req.params.t, r = listInput(t, req.body); if (!r) return ok(res, 'badlist', 'l-' + t);
+admin.post('/l/:t(faq|channels|nav|plans)/:id/edit', needAuth, csrf, wrap(async (req, res) => {
+  const t = req.params.t, r = listInput(t, req.body); if (!r) return lok(res, t, 'badlist');
   const ks = Object.keys(r);
   await pool.query(`UPDATE l_${t} SET ${ks.map((k, i) => k + '=$' + (i + 1)).join(',')} WHERE id=$${ks.length + 1}`, [...Object.values(r), idOf(req)]);
-  dropList(t); ok(res, 'ok', 'l-' + t);
+  dropList(t); lok(res, t, 'ok');
 }));
-admin.post('/l/:t(faq|channels|nav)/:id/delete', needAuth, csrf, wrap(async (req, res) => {
-  await pool.query(`DELETE FROM l_${req.params.t} WHERE id=$1`, [idOf(req)]); dropList(req.params.t); ok(res, 'ok', 'l-' + req.params.t);
+admin.post('/l/:t(faq|channels|nav|plans)/:id/delete', needAuth, csrf, wrap(async (req, res) => {
+  await pool.query(`DELETE FROM l_${req.params.t} WHERE id=$1`, [idOf(req)]); dropList(req.params.t); lok(res, req.params.t, 'ok');
 }));
-admin.post('/l/:t(faq|channels|nav)/:id/move', needAuth, csrf, wrap(async (req, res) => {
+admin.post('/l/:t(faq|channels|nav|plans)/:id/move', needAuth, csrf, wrap(async (req, res) => {
   const t = req.params.t, bs = (await getList(t)).slice(), i = bs.findIndex(b => b.id === idOf(req)), j = req.body.dir === 'up' ? i - 1 : i + 1;
   if (i >= 0 && j >= 0 && j < bs.length) {
     [bs[i], bs[j]] = [bs[j], bs[i]];
@@ -745,7 +772,7 @@ admin.post('/l/:t(faq|channels|nav)/:id/move', needAuth, csrf, wrap(async (req, 
     try { await c.query('BEGIN'); for (let k = 0; k < bs.length; k++) await c.query(`UPDATE l_${t} SET pos=$1 WHERE id=$2`, [k + 1, bs[k].id]); await c.query('COMMIT'); }
     catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); dropList(t); }
   }
-  ok(res, 'ok', 'l-' + t);
+  lok(res, t, 'ok');
 }));
 admin.post('/texts', needAuth, csrf, wrap(async (req, res) => {
   const u = String(req.body.checkout_url || '').trim(), cu = u ? safeUrl(u) : '';
@@ -755,17 +782,31 @@ admin.post('/texts', needAuth, csrf, wrap(async (req, res) => {
 }));
 function listAdmin(req, t, rows) {
   const L = LISTS[t];
-  const fld = (o = {}) => L.fields.map(([k, n, type, max, rq]) => type === 'bool' ? `<label class="ck"><input type="checkbox" name="${k}" value="1"${(o.id ? o[k] : k !== 'newtab') ? ' checked' : ''}> ${n}</label>`
+  const fld = (o = {}) => L.fields.map(([k, n, type, max, rq]) => type === 'bool' ? `<label class="ck"><input type="checkbox" name="${k}" value="1"${(o.id ? o[k] : !['newtab', 'popular'].includes(k)) ? ' checked' : ''}> ${n}</label>`
     : type === 'sel' ? `<label>${n}</label>${sel(k, NAV_PAGES, o[k] || '')}`
     : type === 'area' ? `<label>${n}</label><textarea name="${k}" maxlength="${max}" rows="3"${rq ? ' required' : ''}>${esc(o[k] || '')}</textarea>`
     : `<label>${n}</label><input name="${k}"${type === 'url' ? ' type="url" placeholder="https://"' : ''} maxlength="${max}" value="${esc(o[k] || '')}"${rq ? ' required' : ''}>`).join('');
-  const body = rows.map((o, i) => `<details class="card${o.visible === false ? ' off' : ''}"><summary>${esc(o.label || o.q || o.name)}${o.region ? ` <span class="hint">${esc(o.region)} › ${esc(o.category)}</span>` : ''}</summary>
+  const body = rows.map((o, i) => `<details class="card${o.visible === false || o.active === false ? ' off' : ''}"><summary>${esc(o.label || o.q || o.name)}${o.price ? ` <span class="hint">${esc(fmtEur(o.price))} / ${esc(perLabel(o.period, false))}</span>` : ''}${o.region ? ` <span class="hint">${esc(o.region)} › ${esc(o.category)}</span>` : ''}</summary>
 <form method="post" action="/admin/l/${t}/${o.id}/edit">${hid(req)}${fld(o)}<button>Uložiť</button></form><div class="row">
 ${i > 0 ? `<form method="post" action="/admin/l/${t}/${o.id}/move">${hid(req)}<input type="hidden" name="dir" value="up"><button class="g">↑</button></form>` : ''}
 ${i < rows.length - 1 ? `<form method="post" action="/admin/l/${t}/${o.id}/move">${hid(req)}<input type="hidden" name="dir" value="down"><button class="g">↓</button></form>` : ''}
 <form method="post" action="/admin/l/${t}/${o.id}/delete">${hid(req)}<button class="d">Zmazať</button></form></div></details>`).join('');
   return `<h2 id="l-${t}">${L.title}</h2>${body || '<p class="hint">Prázdne.</p>'}<details class="card"><summary>➕ Pridať</summary><form method="post" action="/admin/l/${t}">${hid(req)}${fld()}<button>Pridať</button></form></details>`;
 }
+const PM = { ok: 'Uložené.', badlist: 'Neplatné údaje (cena napr. 9,99; obdobie celé číslo mesiacov; odkaz https://…).' };
+admin.get('/cennik', needAuth, wrap(async (req, res) => {
+  const s = await getSettings(), m = PM[req.query.m];
+  res.send(page('Cenník', `<h1>🏷️ Cenník</h1><p class="row"><a class="btnl" href="/admin">← Admin</a><a class="btnl" href="/${esc(s.slug)}/cennik" target="_blank" rel="noopener">Verejne: /${esc(s.slug)}/cennik</a></p>${m ? `<div class="msg${req.query.m === 'ok' ? '' : ' err'}">${esc(m)}</div>` : ''}
+<form method="post" action="/admin/cennik/texts" class="card">${hid(req)}<h2>Texty</h2><label>Úvod (SK)</label><textarea name="pricing_intro" rows="3" maxlength="5000">${esc(s.pricing_intro)}</textarea><label>Úvod (EN)</label><textarea name="pricing_intro_en" rows="3" maxlength="5000">${esc(s.pricing_intro_en)}</textarea>
+<label>Poznámka pod cenníkom – čo je zahrnuté, platby, vrátenie peňazí, podmienky (SK)</label><textarea name="pricing_note" rows="4" maxlength="5000">${esc(s.pricing_note)}</textarea><label>Poznámka (EN)</label><textarea name="pricing_note_en" rows="4" maxlength="5000">${esc(s.pricing_note_en)}</textarea><button>Uložiť texty</button></form>
+<p class="hint">Plány sa zobrazujú na úvodnej stránke aj na /cennik v poradí nižšie. Ceny v EUR sa formátujú ako „9,99 €“. Príkladové plány (cena 0) upravte alebo zmažte.</p>
+${listAdmin(req, 'plans', await getList('plans'))}`, 'a adm'));
+}));
+admin.post('/cennik/texts', needAuth, csrf, wrap(async (req, res) => {
+  const t = k => clean(String(req.body[k] || '').replace(/\r/g, ''), 5000);
+  await setSettings({ pricing_intro: t('pricing_intro'), pricing_intro_en: t('pricing_intro_en'), pricing_note: t('pricing_note'), pricing_note_en: t('pricing_note_en') });
+  res.redirect(303, '/admin/cennik?m=ok');
+}));
 const features = require('./features')({ app, admin, pool, getSettings, setSettings, page, esc, hid, csrf, needAuth, lockedFor, recordFail, fails, currentHash, encV, decV, wrap, writeSess,
   dropCache: () => { cache = null; }, buildExport, safeUrl, chTree: (...a) => chTree(...a), PROD });
 require('./extras')(Object.assign(features, { sniff, shell: (...a) => shell(...a), slugOk: (r) => slugOk(r), T, clean }));
@@ -805,6 +846,19 @@ async function shell(req, res, s, active, title, content, sub = '') {
 <main class="w pub${s.layout === 'tv' ? ' tv' : ''}">${content}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}</main></body></html>`);
 }
 const crumbs = (s, parts) => `<nav class="crumbs" aria-label="Breadcrumbs">${parts.map(([n, h], i) => i < parts.length - 1 ? `<a href="${esc(h)}">${esc(n)}</a>${ARROW}` : `<span>${esc(n)}</span>`).join('')}</nav>`;
+const DEF_PLAN_URL = 'https://lnkbio.onrender.com/platby';
+const planUrl = p => DEF_PLAN_URL + '?plan=' + p.id;
+function fmtEur(v) { const n = Number(v); return (isFinite(n) ? n : 0).toLocaleString('sk-SK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '\u00a0€'; }
+function perLabel(p, en) { const n = +p || 1; return en ? `${n} ${n === 1 ? 'month' : 'months'}` : `${n} ${n === 1 ? 'mesiac' : n < 5 ? 'mesiace' : 'mesiacov'}`; }
+async function pricingHtml(req, s, h = 'h2') {
+  const en = req.lang === 'en', L = (o, k) => (en && o[k + '_en']) || o[k];
+  const ps = (await getList('plans')).filter(p => p.active); if (!ps.length) return '';
+  const cards = ps.map(p => { const f = L(p, 'features').split('\n').map(x => x.trim()).filter(Boolean), mo = (+p.period || 1);
+    return `<div class="plan${p.popular ? ' pop' : ''}">${p.popular ? `<span class="pbadge">⭐ ${en ? 'Most popular' : 'Najobľúbenejší'}</span>` : ''}${L(p, 'badge') ? `<span class="pdisc">${esc(L(p, 'badge'))}</span>` : ''}
+<h3>${esc(L(p, 'name'))}</h3><p class="pprice">${p.old_price ? `<s>${esc(fmtEur(p.old_price))}</s> ` : ''}<b>${esc(fmtEur(p.price))}</b><span> / ${esc(perLabel(p.period, en))}</span></p>${mo > 1 && +p.price > 0 ? `<p class="hint">≈ ${esc(fmtEur(p.price / mo))} / ${en ? 'month' : 'mesiac'}</p>` : ''}
+${f.length ? `<ul class="pfeat">${f.map(x => `<li>${esc(x).replace(/(Návod na inštaláciu prehrávača|Player installation guide)/, `<a href="/${esc(s.slug)}/navody">$1</a>`)}</li>`).join('')}</ul>` : ''}${L(p, 'note') ? `<p class="hint">${esc(L(p, 'note'))}</p>` : ''}<a class="btn pbtn" href="${esc(p.btn_url || planUrl(p))}" rel="noopener">${esc(L(p, 'btn') || (en ? 'Choose payment' : 'Vybrať platbu'))}</a></div>`; }).join('');
+  return `<section class="pricing" id="cennik"><${h} class="ph">${T(req, 'Cenník')}</${h}>${loc(req, s, 'pricing_intro') ? `<div class="prose">${para(loc(req, s, 'pricing_intro'))}</div>` : ''}<div class="plans">${cards}</div>${loc(req, s, 'pricing_note') ? `<div class="prose hint pnote">${para(loc(req, s, 'pricing_note'))}</div>` : ''}</section>`;
+}
 const para = t => esc(t).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 const btnHtml = b => `<a class="b${b.brand ? ' br br-' + b.brand : ''}" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`;
 const SOC_BRAND = { telegram: 'telegram', instagram: 'instagram', facebook: 'facebook', x: 'x', tiktok: 'tiktok', email: 'email', whatsapp: 'whatsapp', signal: 'signal', youtube: 'youtube' };
@@ -827,7 +881,12 @@ app.get('/:slug', wrap(async (req, res, next) => {
   const banner = await features.monitorBanner(req.lang).catch(() => '');
   await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
 ${s.layout === 'tv' ? '<div class="tvbar"><span class="live">● LIVE</span><span>▶ Stream</span><span>📺 TV</span><span>⚙ Software</span></div>' : ''}</section>
-${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}`);
+${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${await pricingHtml(req, s)}`);
+}));
+app.get('/:slug/cennik', wrap(async (req, res, next) => {
+  const s = await slugOk(req); if (!s) return next();
+  const h = await pricingHtml(req, s, 'h1');
+  await shell(req, res, s, 'cennik', T(req, 'Cenník') + ' – ' + loc(req, s, 'title'), h || `<h1 class="ph">${T(req, 'Cenník')}</h1><p class="hint">${req.lang === 'en' ? 'Pricing coming soon.' : 'Cenník pripravujeme.'}</p>`);
 }));
 app.get('/:slug/kanaly', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();

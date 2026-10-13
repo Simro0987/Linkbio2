@@ -112,3 +112,15 @@ body.adm{background:radial-gradient(1000px 420px at 50% -10%,rgba(229,9,20,.22),
 .dl{margin:10px 0 0}.badge img{height:48px;width:auto}.badge img.bgp{height:70px;margin:-11px -10px}
 .ph .sub{font-weight:400;opacity:.7;font-size:.7em}
 .picon{border-radius:22%;vertical-align:middle;margin-right:8px;object-fit:contain}
+.pricing{margin-top:28px}
+.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:14px 0}
+.plan{position:relative;display:flex;flex-direction:column;padding:20px 18px;border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12)}
+.plan.pop{border:2px solid #e50914;background:rgba(229,9,20,.08)}
+.plan h3{margin:4px 0 6px;font-size:1.1rem}
+.pprice{margin:0}.pprice b{font-size:1.8rem}.pprice s{opacity:.6;margin-right:4px}.pprice span{opacity:.75}
+.pbadge{position:absolute;top:-11px;left:16px;background:#e50914;color:#fff;font-size:.72rem;font-weight:700;padding:3px 10px;border-radius:999px}
+.pdisc{align-self:flex-start;background:#14532d;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px}
+.pfeat{list-style:none;padding:0;margin:12px 0;flex:1}.pfeat li{padding:4px 0 4px 22px;position:relative}.pfeat li::before{content:'✓';position:absolute;left:0;color:#22c55e;font-weight:700}
+.pbtn{margin-top:auto;text-align:center}
+.pnote{font-size:.85rem}
+.pbtn{display:block;padding:12px;border-radius:12px;background:#e50914;color:#fff;font-weight:700;text-decoration:none}.pbtn:hover{filter:brightness(1.1)}.plan:not(.pop) .pbtn{background:#2563eb}
