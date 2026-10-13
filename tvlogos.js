@@ -42,7 +42,29 @@ function candidates(idx, name, category) {
 const CDN = `https://cdn.jsdelivr.net/gh/${REPO}@${BR}/`;
 const UA = { 'user-agent': 'lnkbio-logo-matcher/1.0 (+https://lnkbio.onrender.com)' };
 const st = { source: '', at: '', lastErr: '', refreshing: false, refreshedAt: 0 };
-let tree = null;
+let tree = null, extra = null;
+const PICONS = 'https://raw.githubusercontent.com/picons/picons/master/build-source/logos/';
+const FOLDER_CC = Object.fromEntries(Object.entries(NAME_CC).map(([k, v]) => [v, k])); FOLDER_CC['united-kingdom'] = 'gb';
+function loadExtra() {
+  const j = JSON.parse(require('zlib').gunzipSync(require('fs').readFileSync(require('path').join(__dirname, 'tvlogos-extra.json.gz'))).toString('utf8'));
+  extra = { at: j.at, src: {} };
+  for (const s of ['iptv', 'picons', 'wd']) { const m = new Map(); for (const [k, cc, u] of j[s]) { if (!m.has(k)) m.set(k, []); m.get(k).push({ cc, url: s === 'picons' ? PICONS + u : u }); } extra.src[s] = m; }
+}
+const SRC_LABEL = { tvlogo: 'tv-logo/tv-logos', iptv: 'iptv-org (logos)', picons: 'picons/picons', wd: 'Wikidata/Commons' };
+// all candidates, priority: tv-logo/tv-logos → iptv-org → picons → Wikidata
+function allCandidates(idx, name, category) {
+  if (!extra) loadExtra();
+  const out = candidates(idx, name, category).map((x) => ({ ...x, src: 'tvlogo' }));
+  const { key, cc } = normName(name); if (!key) return out;
+  const wantF = cc || (CAT_CC.find(([re]) => re.test(category || '')) || [])[1] || null, want = wantF ? (FOLDER_CC[wantF] || '') : '';
+  for (const s of ['iptv', 'picons', 'wd']) {
+    const m = extra.src[s]; const hits = m.get(key) || m.get(key.replace(/tv$/, '')) || m.get(key + 'tv') || [];
+    const ord = hits.slice().sort((a, b) => (b.cc === want) - (a.cc === want) || (b.cc === 'sk' || b.cc === 'cz') - (a.cc === 'sk' || a.cc === 'cz'));
+    if (want && ord.length && ord[0].cc && ord[0].cc !== want && s !== 'picons' && ord.every((h) => h.cc !== want) && hits.length > 1) { /* ambiguous foreign-only matches: keep but after others */ }
+    for (const h of ord.slice(0, 2)) out.push({ url: h.url, country: h.cc || '', src: s });
+  }
+  const seen = new Set(); return out.filter((x) => !seen.has(x.url) && seen.add(x.url));
+}
 function loadSnapshot() {
   const j = JSON.parse(require('zlib').gunzipSync(require('fs').readFileSync(require('path').join(__dirname, 'tvlogos-tree.json.gz'))).toString('utf8'));
   tree = makeIndex(j.paths); st.source = 'snapshot'; st.at = j.at;
@@ -71,26 +93,33 @@ function refresh() {
 async function getIndex() { if (!tree) loadSnapshot(); refresh(); return tree; }
 const okCache = new Map();
 async function head(url) {
-  try { const r = await fetch(url, { method: 'HEAD', redirect: 'error', headers: UA, signal: AbortSignal.timeout(6000) }); if (r.status === 200 && /^image\//i.test(r.headers.get('content-type') || '')) return ''; return 'HTTP ' + r.status; }
-  catch (e) { return (e.cause && e.cause.code) || e.name || e.message; }
+  const good = (r) => r.status >= 200 && r.status < 300 && /^image\//i.test(r.headers.get('content-type') || '') && r.url.startsWith('https://');
+  try {
+    const r = await fetch(url, { method: 'HEAD', redirect: 'follow', headers: UA, signal: AbortSignal.timeout(6000) }); if (good(r)) return '';
+    if (r.status === 404 || r.status === 410) return 'HTTP ' + r.status;
+    const g = await fetch(url, { headers: { ...UA, range: 'bytes=0-1023' }, redirect: 'follow', signal: AbortSignal.timeout(6000) }); g.body && g.body.cancel().catch(() => {}); return good(g) ? '' : 'HTTP ' + g.status;
+  } catch (e) { return (e.cause && e.cause.code) || e.name || e.message; }
 }
 // returns a working URL (raw.githubusercontent, else jsDelivr CDN) or ''
 async function verify(url) {
-  if (!url.startsWith(RAW)) return '';
+  if (!/^https:\/\//.test(url)) return '';
   if (okCache.has(url)) return okCache.get(url);
   let ok = '', e1 = await head(url);
-  if (!e1) ok = url; else { const alt = CDN + url.slice(RAW.length), e2 = await head(alt); if (!e2) ok = alt; else st.lastErr = `image check: raw ${e1}, cdn ${e2}`; }
+  if (!e1) ok = url; else if (!url.startsWith(RAW)) { okCache.set(url, ''); return ''; } else { const alt = CDN + url.slice(RAW.length), e2 = await head(alt); if (!e2) ok = alt; else st.lastErr = `image check: raw ${e1}, cdn ${e2}`; }
   okCache.set(url, ok); return ok;
 }
 async function pool(items, n, fn) { const out = new Array(items.length); let i = 0; await Promise.all(Array.from({ length: n }, async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); } })); return out; }
 async function matchAll(chs, onProgress) {
   const idx = await getIndex(); let done = 0;
   return pool(chs, 12, async (c) => {
-    let url = ''; for (const x of candidates(idx, c.name, c.category).slice(0, 3)) { url = await verify(x.url); if (url) break; }
-    done++; if (onProgress) onProgress(done, chs.length); return { ...c, url };
+    let url = '', src = '';
+    if (POSTER.isVod(c)) { const p = await POSTER.find(c).catch(() => null); if (p && await verify(p.url)) { url = p.url; src = 'poster'; } }
+    if (!url) for (const x of allCandidates(idx, c.name, c.category).slice(0, 5)) { url = await verify(x.url); if (url) { src = x.src; break; } }
+    done++; if (onProgress) onProgress(done, chs.length); return { ...c, url, src };
   });
 }
-async function suggest(name, category) { const idx = await getIndex(); const cs = candidates(idx, name, category).slice(0, 6); const ok = await pool(cs, 6, (x) => verify(x.url)); return cs.map((x, i) => ({ ...x, url: ok[i] })).filter((x) => x.url); }
+async function suggest(name, category) { const idx = await getIndex(); const cs = allCandidates(idx, name, category).slice(0, 8); if (POSTER.isVod({ name, category })) { const p = await POSTER.find({ name, category }).catch(() => null); if (p) cs.unshift({ url: p.url, country: p.label, src: 'poster' }); } const ok = await pool(cs, 6, (x) => verify(x.url)); return cs.map((x, i) => ({ ...x, url: ok[i] })).filter((x) => x.url); }
 const isRepoLogo = (u) => typeof u === 'string' && (u.startsWith(RAW) || u.startsWith(CDN)) && !/\.\.|[?#]/.test(u);
-const short = (u) => u.replace(RAW, '').replace(CDN, '');
-module.exports = { matchAll, suggest, normName, makeIndex, candidates, RAW, CDN, isRepoLogo, short, status: () => ({ ...st }), getIndex };
+const short = (u) => u.replace(RAW, 'tv-logos/').replace(CDN, 'tv-logos(cdn)/').replace(PICONS, 'picons/').replace(/^https:\/\//, '').slice(0, 90);
+const POSTER = require('./posters');
+module.exports = { matchAll, suggest, normName, makeIndex, candidates, RAW, CDN, isRepoLogo, short, status: () => ({ ...st }), getIndex, allCandidates, SRC_LABEL: { ...SRC_LABEL, poster: 'Wikidata plagát' }, loadExtra };

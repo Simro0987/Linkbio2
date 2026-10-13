@@ -242,8 +242,8 @@ ${rs.map((r) => `<div class="card"><p><b>${esc(r.channel_name)}</b> <span class=
     const tok = crypto.randomBytes(18).toString('hex'); pending.set(tok, { logos: hit.map((x) => ({ id: x.id, url: x.url })), exp: Date.now() + 30 * 60e3 });
     res.setHeader('Cache-Control', 'no-store');
     res.send(page('Doplniť logá', `<h1>🖼 Doplniť chýbajúce logá – náhľad</h1><p><a href="/admin/kanaly-katalog">← Späť</a></p>
-<div class="card"><p>Kanálov bez loga: <b>${m.length}</b> · nájdené (overené obrázky): <b>${hit.length}</b> · nenájdené: <b>${no.length}</b></p><p class="hint">Zdroj: verejný repozitár GitHub <b>tv-logo/tv-logos</b> (obrázky z raw.githubusercontent.com, záložne cdn.jsdelivr.net). Každé logo bolo overené (HTTP 200, obrázok). Uložia sa len kanálom, ktoré stále nemajú logo; akcia sa dá vrátiť z Koša.</p>${src}</div>
-${hit.length ? `<div class="card"><h2>Ukážka</h2>${hit.slice(0, 24).map((x) => `<p><img src="${esc(x.url)}" alt="" width="40" height="40" loading="lazy" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <b>${esc(x.name)}</b> <span class="hint">${esc(x.category)} · ${esc(LOGOS.short(x.url))}</span></p>`).join('')}</div>
+<div class="card"><p>Kanálov bez loga: <b>${m.length}</b> · nájdené (overené obrázky): <b>${hit.length}</b> · nenájdené: <b>${no.length}</b></p><p class="hint">Podľa zdroja: ${Object.entries(hit.reduce((a, x) => (a[x.src] = (a[x.src] || 0) + 1, a), {})).map(([k, n]) => esc(LOGOS.SRC_LABEL[k] || k) + ' ' + n).join(' · ')}</p><p class="hint">Zdroje v poradí: GitHub tv-logo/tv-logos (záložne cdn.jsdelivr.net) → iptv-org (len logá) → picons/picons → Wikidata/Commons; pre filmy/seriály/VOD plagát z Wikipédie (titul + rok). Plagáty z Wikipédie môžu byť chránené autorským právom. Každé logo bolo overené (HTTP 200, obrázok). Uložia sa len kanálom, ktoré stále nemajú logo; akcia sa dá vrátiť z Koša.</p>${src}</div>
+${hit.length ? `<div class="card"><h2>Ukážka</h2>${hit.slice(0, 24).map((x) => `<p><img src="${esc(x.url)}" alt="" width="40" height="40" loading="lazy" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <b>${esc(x.name)}</b> <span class="hint">${esc(x.category)} · ${esc(LOGOS.SRC_LABEL[x.src] || x.src)} · ${esc(LOGOS.short(x.url))}</span></p>`).join('')}</div>
 <form method="post" action="/admin/tvch/logos/confirm" class="card">${hid(req)}<input type="hidden" name="tok" value="${tok}"><label class="ck"><input type="checkbox" name="confirm" value="1" required> Uložiť ${hit.length} log</label><button>Uložiť logá</button></form>` : ''}
 ${no.length ? `<details class="card"><summary>Nenájdené (${no.length})</summary><p class="hint">${no.slice(0, 1000).map((x) => esc(x.name)).join(', ')}</p></details>` : ''}`, 'adm'));
   }));
@@ -253,7 +253,7 @@ ${no.length ? `<details class="card"><summary>Nenájdené (${no.length})</summar
     const c = await pool.connect(); const ch = [];
     try {
       await c.query('BEGIN');
-      for (const x of pd.logos) if (LOGOS.isRepoLogo(x.url) && (await c.query(`UPDATE tv_channels SET logo=$1 WHERE id=$2 AND logo='' RETURNING id`, [x.url, x.id])).rowCount) ch.push({ id: x.id, old: '', url: x.url });
+      for (const x of pd.logos) if (safeLogo(x.url) === x.url && (await c.query(`UPDATE tv_channels SET logo=$1 WHERE id=$2 AND logo='' RETURNING id`, [x.url, x.id])).rowCount) ch.push({ id: x.id, old: '', url: x.url });
       await logoTrash(c, ch, `Doplnené logá – ${ch.length} kanálov (obnoviť = vrátiť späť)`);
       await c.query('COMMIT');
     } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); drop(); }
@@ -264,10 +264,10 @@ ${no.length ? `<details class="card"><summary>Nenájdené (${no.length})</summar
     let sg = [], err = ''; try { sg = await LOGOS.suggest(r.name, r.category); } catch (e) { err = e.message; console.error('tvlogos suggest failed:', e.message); } if (!sg.length && LOGOS.status().lastErr) err = err || LOGOS.status().lastErr;
     res.send(page('Nájsť logo', `<h1>🔎 Logo pre „${esc(r.name)}“</h1><p><a href="/admin/kanaly-katalog">← Späť</a></p>${err ? `<p class="err">Problém so zdrojom log: ${esc(err)}</p>` : ''}
 ${r.logo ? `<p>Aktuálne: <img src="${esc(r.logo)}" alt="" width="48" height="48" referrerpolicy="no-referrer"></p>` : ''}
-${sg.map((x) => `<form method="post" action="/admin/tvch/${r.id}/setlogo" class="card">${hid(req)}<input type="hidden" name="logo" value="${esc(x.url)}"><p><img src="${esc(x.url)}" alt="" width="64" height="64" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <span class="hint">${esc(x.country)} · ${esc(LOGOS.short(x.url))}</span></p><button>Použiť toto logo</button></form>`).join('') || (err ? '' : '<p class="hint">Nenašlo sa žiadne logo. Môžete zadať vlastnú https URL v úprave kanála.</p>')}`, 'adm'));
+${sg.map((x) => `<form method="post" action="/admin/tvch/${r.id}/setlogo" class="card">${hid(req)}<input type="hidden" name="logo" value="${esc(x.url)}"><p><img src="${esc(x.url)}" alt="" width="64" height="64" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <span class="hint">${esc(LOGOS.SRC_LABEL[x.src] || x.src)}${x.country ? ' · ' + esc(x.country) : ''} · ${esc(LOGOS.short(x.url))}</span></p><button>Použiť toto logo</button></form>`).join('') || (err ? '' : '<p class="hint">Nenašlo sa žiadne logo. Môžete zadať vlastnú https URL v úprave kanála.</p>')}`, 'adm'));
   }));
   admin.post('/tvch/:id(\\d+)/setlogo', needAuth, csrf, wrap(async (req, res) => {
-    const url = String(req.body.logo || ''); if (!LOGOS.isRepoLogo(url) || safeLogo(url) !== url) return back(res, 'badlogo');
+    const url = String(req.body.logo || ''); if (!url || safeLogo(url) !== url) return back(res, 'badlogo');
     const c = await pool.connect();
     try { await c.query('BEGIN'); const o = (await c.query('SELECT name,logo FROM tv_channels WHERE id=$1 FOR UPDATE', [+req.params.id])).rows[0];
       if (o) { await c.query('UPDATE tv_channels SET logo=$1 WHERE id=$2', [url, +req.params.id]); await logoTrash(c, [{ id: +req.params.id, old: o.logo, url }], `Zmena loga – ${o.name} (obnoviť = vrátiť späť)`); }
