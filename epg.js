@@ -7,12 +7,13 @@ const fs = require('fs');
 const path = require('path');
 const { tx } = require('./uitext');
 const C = require('./epgcore');
-const POSTER = require('./posters');
+const POSTER = require('./wdposter');
 
 const TZ = 'Europe/Bratislava';
 const FEED_URL = (f) => `https://epgshare01.online/epgshare01/epg_ripper_${f}.xml.gz`;
-const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'RO1', 'HR1', 'RS1'];
-const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '8', dnes_kinds: 'film,sport,show', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV' };
+const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1', 'RO1', 'RS1', 'GR1', 'BG1', 'LV1', 'IE1'];
+const FEEDS_V2 = ['BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1']; // added 2026-10: Deluxe/ANIXE+/Red Bull, MDR, Arena Sport 3, My Hits, Россия 24, TSN, Fox Sports; RAKUTEN1: Red Bull TV
+const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV' };
 const UA = { 'user-agent': 'lnkbio-epg/1.0 (+https://lnkbio.onrender.com)' };
 const ASSET_V = (() => { try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static/epg.js')) + fs.readFileSync(path.join(__dirname, 'static/epg.css'))).digest('hex').slice(0, 8); } catch { return '1'; } })();
 const ADULT = /pre dospelých|pro dospělé|erotic|erotik|\bxxx\b|\badult\b|18\+/i;
@@ -34,14 +35,15 @@ function toLocal(ms) { const p = parts(ms); const z = (n) => String(n).padStart(
 module.exports = function install(ctx) {
   const { app, admin, pool, page, esc, hid, csrf, needAuth, wrap, getSettings, setSettings } = ctx;
   const cfg = (s) => { const o = {}; for (const k of Object.keys(D)) o[k] = s[k] == null || s[k] === '' && !/^(epg_skip)$/.test(k) ? D[k] : String(s[k]); return o; };
-  const feedsOf = (c) => [...new Set(String(c.epg_feeds || '').toUpperCase().split(/[\s,;]+/).filter((f) => /^[A-Z]{2,12}\d{1,2}$/.test(f)))].slice(0, 20);
+  const feedsOf = (c) => [...new Set(String(c.epg_feeds || '').toUpperCase().split(/[\s,;]+/).filter((f) => /^[A-Z]{2,12}\d{1,2}$/.test(f)))].slice(0, 30);
   const skipOf = (c) => String(c.epg_skip || '').split(/\r?\n/).map((x) => x.trim().toLowerCase()).filter((x) => x && x !== '-');
   const skipped = (cat, sk) => { const c = String(cat || '').toLowerCase(); return sk.some((x) => c.includes(x)); };
   const kv = { get: async (k) => ((await pool.query('SELECT v FROM epg_kv WHERE k=$1', [k])).rows[0] || {}).v, set: (k, v) => pool.query('INSERT INTO epg_kv (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=$2', [k, String(v)]) };
   let mapCache = null, nowCache = null, dnesCache = null; const dayCache = new Map();
-  const dropCaches = () => { mapCache = null; nowCache = null; dnesCache = null; dayCache.clear(); };
+  let sportCache = null;
+  const dropCaches = () => { mapCache = null; nowCache = null; dnesCache = null; sportCache = null; dayCache.clear(); };
   const channels = async () => (ctx.tvchAll ? ctx.tvchAll() : (await pool.query('SELECT id,name,category,logo,ord,visible FROM tv_channels ORDER BY ord,id')).rows);
-  const loadMap = async () => mapCache || (mapCache = new Map((await pool.query('SELECT channel_id,epg_id,manual,score FROM epg_map')).rows.map((r) => [r.channel_id, r])));
+  const loadMap = async () => mapCache || (mapCache = new Map((await pool.query('SELECT channel_id,epg_id,manual,score,shift FROM epg_map')).rows.map((r) => [r.channel_id, r])));
 
   ctx.epgInit = async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS epg_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL DEFAULT '')`);
@@ -52,6 +54,14 @@ module.exports = function install(ctx) {
     await pool.query(`CREATE TABLE IF NOT EXISTS dnes_pin (id SERIAL PRIMARY KEY, channel_id INT NOT NULL, s TIMESTAMPTZ NOT NULL, e TIMESTAMPTZ NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS dnes_hide (k TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS epg_poster (k TEXT PRIMARY KEY, url TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '', at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    await pool.query(`ALTER TABLE epg_map ADD COLUMN IF NOT EXISTS shift INT NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE epg_poster ADD COLUMN IF NOT EXISTS pop INT NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE epg_poster ADD COLUMN IF NOT EXISTS rt INT NOT NULL DEFAULT 0`);
+    if (await kv.get('poster_v2') !== '1') { await pool.query(`DELETE FROM epg_poster`); await kv.set('poster_v2', '1'); }
+    if (await kv.get('feeds_v2') !== '1') { // one-time: add the new feeds to a stored feed list
+      const st = await getSettings(); if (st.epg_feeds) { const cur = feedsOf(st); await setSettings({ epg_feeds: [...new Set([...cur, ...FEEDS_V2])].slice(0, 30).join(',') }); }
+      await kv.set('feeds_v2', '1');
+    }
     schedule();
   };
 
@@ -100,22 +110,29 @@ module.exports = function install(ctx) {
   }
   async function computeMap(c, chans, epgRows) {
     const ix = C.buildIndex(epgRows.map((r) => ({ id: r.id, names: r.names ? r.names.split('\n') : [r.name], feed: r.feed, n: r.n })));
-    const sk = skipOf(c), cur = await loadMap(), res = new Map(), want = new Set();
+    const sk = skipOf(c), cur = await loadMap(), res = new Map(), want = new Set(), byId = new Map(epgRows.map((r) => [r.id, r]));
+    const cands = (name, cat) => C.candidates(ix, name, cat, 6).filter((x) => x.sim >= C.MATCH_MIN && C.allowed(cat, x.id));
     for (const ch of chans) {
       const m = cur.get(ch.id);
       if (m && m.manual) { if (m.epg_id) want.add(m.epg_id); continue; }
-      if (skipped(ch.category, sk)) { res.set(ch.id, { epg_id: '', score: 0 }); continue; }
-      const cand = C.candidates(ix, ch.name, ch.category, 4).filter((x) => x.sim >= C.MATCH_MIN);
+      if (skipped(ch.category, sk)) { res.set(ch.id, { epg_id: '', score: 0, shift: 0 }); continue; }
+      // 1) built-in verified mapping
+      const kn = C.known(ch.name), kr = kn && byId.get(kn.id);
+      if (kr) { want.add(kn.id); if (kr.n !== 0) { res.set(ch.id, { epg_id: kn.id, score: 1, shift: kn.shift }); continue; } }
+      // 2) fuzzy name match
+      const cand = cands(ch.name, ch.category);
       cand.slice(0, 3).forEach((x) => want.add(x.id));
-      const best = cand.find((x) => C.isMatch(x));
-      res.set(ch.id, best ? { epg_id: best.id, score: best.sim } : { epg_id: '', score: cand[0] ? cand[0].sim : 0 });
+      let best = cand.find((x) => C.isMatch(x)), shift = 0;
+      // 3) "+1" timeshift channel without own data → base channel shifted by 60 min
+      if (!best && /\+\s*1\b/.test(ch.name)) { const c2 = cands(ch.name.replace(/\+\s*1\b/, ' '), ch.category); c2.slice(0, 2).forEach((x) => want.add(x.id)); const b2 = c2.find((x) => C.isMatch(x)); if (b2) { best = b2; shift = 60; } }
+      res.set(ch.id, best ? { epg_id: best.id, score: best.sim, shift } : { epg_id: '', score: cand[0] ? cand[0].sim : 0, shift: 0 });
     }
     return { res, want };
   }
   async function saveMap(res) {
     const ids = [...res.keys()]; if (!ids.length) return;
-    await pool.query(`INSERT INTO epg_map (channel_id,epg_id,manual,score,updated_at) SELECT a,b,false,c,now() FROM unnest($1::int[],$2::text[],$3::real[]) AS t(a,b,c)
-      ON CONFLICT (channel_id) DO UPDATE SET epg_id=EXCLUDED.epg_id, score=EXCLUDED.score, updated_at=now() WHERE NOT epg_map.manual`, [ids, ids.map((i) => res.get(i).epg_id), ids.map((i) => res.get(i).score)]);
+    await pool.query(`INSERT INTO epg_map (channel_id,epg_id,manual,score,shift,updated_at) SELECT a,b,false,c,d,now() FROM unnest($1::int[],$2::text[],$3::real[],$4::int[]) AS t(a,b,c,d)
+      ON CONFLICT (channel_id) DO UPDATE SET epg_id=EXCLUDED.epg_id, score=EXCLUDED.score, shift=EXCLUDED.shift, updated_at=now() WHERE NOT epg_map.manual`, [ids, ids.map((i) => res.get(i).epg_id), ids.map((i) => res.get(i).score), ids.map((i) => res.get(i).shift || 0)]);
     mapCache = null;
   }
 
@@ -146,7 +163,7 @@ module.exports = function install(ctx) {
     status.phase = 'párovanie';
     let { want } = await computeMap(c, chans, epgRows);
     // phase 3: programmes, one feed at a time (streamed, only wanted channels within the window)
-    const now = Date.now(), from = Math.min(dayStart(now), now - 3 * 3600e3), to = now + Math.max(12, Math.min(72, +c.epg_ahead || 36)) * 3600e3;
+    const now = Date.now(), from = Math.min(dayStart(now), now - 3 * 3600e3) - 3600e3, to = now + Math.max(12, Math.min(72, +c.epg_ahead || 36)) * 3600e3;
     const byFeed = new Map(); for (const r of epgRows) { if (!byFeed.has(r.feed)) byFeed.set(r.feed, []); byFeed.get(r.feed).push(r.id); }
     status.phase = 'program';
     for (const f of feeds) {
@@ -194,15 +211,15 @@ module.exports = function install(ctx) {
   // ---------- read side ----------
   async function visibleMapped() {
     const c = cfg(await getSettings()), sk = skipOf(c), m = await loadMap();
-    return (await channels()).filter((r) => r.visible && !skipped(r.category, sk) && m.get(r.id) && m.get(r.id).epg_id).map((r) => ({ ...r, epg: m.get(r.id).epg_id }));
+    return (await channels()).filter((r) => r.visible && !skipped(r.category, sk) && m.get(r.id) && m.get(r.id).epg_id).map((r) => ({ ...r, epg: m.get(r.id).epg_id, sh: (m.get(r.id).shift || 0) * 60e3 }));
   }
   async function nowData() {
     if (nowCache && Date.now() - nowCache.t < 60e3) return nowCache.d;
-    const vm = await visibleMapped(); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r.id); }
-    const out = {};
+    const vm = await visibleMapped(); const byEpg = new Map(); let maxSh = 0; for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); maxSh = Math.max(maxSh, r.sh); }
+    const out = {}, nowS = Date.now() / 1000;
     if (byEpg.size) {
-      const q = await pool.query(`SELECT epg_id, s, e, title, kind FROM (SELECT epg_id,s,e,title,kind, row_number() OVER (PARTITION BY epg_id ORDER BY s) AS rn FROM epg_prog WHERE epg_id = ANY($1) AND e > now() AND s < now() + interval '12 hours') x WHERE rn <= 4 ORDER BY epg_id, s`, [[...byEpg.keys()]]);
-      for (const r of q.rows) for (const id of byEpg.get(r.epg_id)) (out[id] = out[id] || []).push([Math.round(+r.s / 1000), Math.round(+r.e / 1000), r.title, r.kind === 'adult' ? '' : r.kind]);
+      const q = await pool.query(`SELECT epg_id, s, e, title, kind FROM (SELECT epg_id,s,e,title,kind, row_number() OVER (PARTITION BY epg_id ORDER BY s) AS rn FROM epg_prog WHERE epg_id = ANY($1) AND e > $2 AND s < now() + interval '12 hours') x WHERE rn <= 6 ORDER BY epg_id, s`, [[...byEpg.keys()], new Date(Date.now() - maxSh)]);
+      for (const r of q.rows) for (const ch of byEpg.get(r.epg_id)) { const e = Math.round((+r.e + ch.sh) / 1000); if (e <= nowS) continue; const l = (out[ch.id] = out[ch.id] || []); if (l.length < 4) l.push([Math.round((+r.s + ch.sh) / 1000), e, r.title, r.kind === 'adult' ? '' : r.kind]); }
     }
     const d = { t: Math.round(Date.now() / 1000), c: out };
     nowCache = { t: Date.now(), d }; return d;
@@ -211,19 +228,82 @@ module.exports = function install(ctx) {
     const hit = dayCache.get(id); if (hit && Date.now() - hit.t < 300e3) return hit.d;
     const vm = (await visibleMapped()).find((r) => r.id === id); if (!vm) return null;
     const ds = dayStart(Date.now());
-    const q = await pool.query(`SELECT s,e,title,sub,cat,kind,descr FROM epg_prog WHERE epg_id=$1 AND e > $2 AND s < $3 ORDER BY s LIMIT 200`, [vm.epg, new Date(ds), new Date(ds + 27 * 3600e3)]);
-    const d = { id, name: vm.name, p: q.rows.map((r) => [Math.round(+r.s / 1000), Math.round(+r.e / 1000), r.title, r.kind === 'adult' ? '' : r.kind, r.sub, r.cat, r.descr]) };
+    const q = await pool.query(`SELECT s,e,title,sub,cat,kind,descr FROM epg_prog WHERE epg_id=$1 AND e > $2 AND s < $3 ORDER BY s LIMIT 200`, [vm.epg, new Date(ds - vm.sh), new Date(ds + 27 * 3600e3 - vm.sh)]);
+    const d = { id, name: vm.name, p: q.rows.map((r) => [Math.round((+r.s + vm.sh) / 1000), Math.round((+r.e + vm.sh) / 1000), r.title, r.kind === 'adult' ? '' : r.kind, r.sub, r.cat, r.descr]) };
     if (dayCache.size > 1000) dayCache.clear(); dayCache.set(id, { t: Date.now(), d }); return d;
   }
   const jsonOut = (res, d, age = 60) => { res.set({ 'Cache-Control': `public, max-age=${age}`, 'X-Content-Type-Options': 'nosniff' }); res.json(d); };
   app.get('/api/epg/now', wrap(async (req, res) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return jsonOut(res, { t: Math.round(Date.now() / 1000), c: {} }); jsonOut(res, await nowData()); }));
   app.get('/api/epg/day/:id(\\d+)', wrap(async (req, res) => { const c = cfg(await getSettings()); const d = c.epg_on === '1' ? await dayData(+req.params.id) : null; if (!d) return res.status(404).json({ p: [] }); jsonOut(res, d, 300); }));
   // assets for the Kanály page (tiles get filled by /static/epg.js)
-  ctx.epgAssets = async (req) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return ''; const en = req.lang === 'en'; return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div id="epgcfg" hidden data-l="${en ? 'en' : 'sk'}" data-now="${esc(tx(en, 'Teraz', 'Now'))}" data-next="${esc(tx(en, 'Potom', 'Next'))}" data-day="${esc(tx(en, 'Celý program dnes', 'Full schedule today'))}" data-min="${esc(tx(en, 'min', 'min'))}" data-none="${esc(tx(en, 'Program nie je k dispozícii.', 'Schedule not available.'))}" data-load="${esc(tx(en, 'Načítavam…', 'Loading…'))}" data-left="${esc(tx(en, 'ešte', 'left'))}"></div><script src="/static/epg.js?v=${ASSET_V}" defer></script><p class="hint epgsrc">${esc(tx(en, 'TV program: epgshare01.online (orientačný, môže sa líšiť).', 'TV schedule: epgshare01.online (indicative, may differ).'))}</p>`; };
+  // ---------- reminders (.ics) and today's sport ----------
+  const icsEsc = (t) => String(t || '').replace(/[\\;,]/g, (m) => '\\' + m).replace(/\r?\n/g, '\\n');
+  const icsT = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const fold = (l) => { const out = []; let cur = '', n = 0; for (const ch of l) { const b = Buffer.byteLength(ch); if (n + b > 73) { out.push(cur); cur = ' '; n = 1; } cur += ch; n += b; } out.push(cur); return out.join('\r\n'); };
+  function icsOut(res, x) {
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//lnkbio//TV program//SK', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT', 'UID:' + x.uid + '@lnkbio.onrender.com', 'DTSTAMP:' + icsT(Date.now()), 'DTSTART:' + icsT(x.s), 'DTEND:' + icsT(x.e),
+      'SUMMARY:' + icsEsc(x.title + ' – ' + x.ch), 'DESCRIPTION:' + icsEsc(`${x.title}\nKanál: ${x.ch}${x.sub ? '\n' + x.sub : ''}\nTV program: epgshare01.online (orientačný)`), 'LOCATION:' + icsEsc(x.ch),
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(x.title + ' – ' + x.ch), 'TRIGGER:-PT15M', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'];
+    const fn = 'tv-' + (tnorm(x.title).replace(/ /g, '-').slice(0, 40) || 'program') + '.ics';
+    res.set({ 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': `attachment; filename="${fn}"`, 'Cache-Control': 'public, max-age=300', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex' });
+    res.send(lines.map(fold).join('\r\n') + '\r\n');
+  }
+  app.get('/api/epg/ics/:id(\\d+)/:s(\\d{9,11})', wrap(async (req, res) => {
+    const vm = (await visibleMapped()).find((r) => r.id === +req.params.id); if (!vm) return res.status(404).type('text').send('Not found');
+    const r = (await pool.query('SELECT s,e,title,sub FROM epg_prog WHERE epg_id=$1 AND s=$2 LIMIT 1', [vm.epg, new Date(+req.params.s * 1000 - vm.sh)])).rows[0];
+    if (!r) return res.status(404).type('text').send('Not found');
+    icsOut(res, { uid: 'tv-' + vm.id + '-' + req.params.s, s: +r.s + vm.sh, e: +r.e + vm.sh, title: r.title, sub: r.sub, ch: vm.name });
+  }));
+  app.get('/api/epg/ics/pin/:id(\\d+)', wrap(async (req, res) => {
+    const p = (await pool.query('SELECT id,channel_id,s,e,title FROM dnes_pin WHERE id=$1', [+req.params.id])).rows[0]; const ch = p && (await channels()).find((r) => r.id === p.channel_id && r.visible);
+    if (!ch) return res.status(404).type('text').send('Not found');
+    icsOut(res, { uid: 'pin-' + p.id, s: +p.s, e: +p.e, title: p.title, ch: ch.name });
+  }));
+  app.get('/api/epg/sport', wrap(async (req, res) => {
+    const c = cfg(await getSettings()); if (c.epg_on !== '1' || c.sport_on !== '1') return jsonOut(res, { l: [], ch: {} });
+    if (!sportCache || Date.now() - sportCache.t > 120e3) {
+      const now = Date.now(), de = dayStart(now) + 26 * 3600e3;
+      const vm = (await visibleMapped()).filter((r) => !r.sh && !ADULT.test(r.category)); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
+      const l = [], chs = {}, seen = new Set();
+      if (byEpg.size) {
+        const q = await pool.query(`SELECT epg_id,s,e,title,fl FROM epg_prog WHERE epg_id = ANY($1) AND kind='sport' AND e > now() AND s < $2 AND e - s >= interval '30 minutes' ORDER BY s LIMIT 1500`, [[...byEpg.keys()], new Date(de)]);
+        for (const p of q.rows) {
+          if (C.NOTLIVE.test(p.title) || JUNK.test(p.title)) continue;
+          for (const ch of byEpg.get(p.epg_id).slice(0, 1)) {
+            const k = tnorm(p.title) + '|' + +p.s + '|' + (skcz(ch) ? 1 : 0); if (seen.has(k)) continue; seen.add(k);
+            const live = C.LIVE.test(p.title) || (p.fl || '').includes('l'), big = BIGSPORT.test(p.title) || NATTEAM.test(p.title);
+            l.push([ch.id, Math.round(+p.s / 1000), Math.round(+p.e / 1000), p.title, live ? 1 : 0, big ? 1 : 0]);
+            if (!chs[ch.id]) chs[ch.id] = [ch.name, ctx.tvchLogoSrc ? ctx.tvchLogoSrc(ch) : '/tvlogo/' + ch.id, skcz(ch) ? 1 : 0];
+          }
+          if (l.length >= 300) break;
+        }
+      }
+      sportCache = { t: Date.now(), d: { t: Math.round(Date.now() / 1000), l, ch: chs } };
+    }
+    jsonOut(res, sportCache.d, 120);
+  }));
+  ctx.epgAssets = async (req) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return ''; const en = req.lang === 'en'; return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div id="epgcfg" hidden data-l="${en ? 'en' : 'sk'}" data-now="${esc(tx(en, 'Teraz', 'Now'))}" data-next="${esc(tx(en, 'Potom', 'Next'))}" data-day="${esc(tx(en, 'Celý program dnes', 'Full schedule today'))}" data-min="${esc(tx(en, 'min', 'min'))}"${c.sport_on === '1' ? ` data-sport="${esc(tx(en, '⚽ Šport dnes', '⚽ Sport today'))}" data-sporth="${esc(tx(en, 'Dnešné športové prenosy na kanáloch (podľa času)', 'Today\'s sport on the channels (by time)'))}" data-sportnone="${esc(tx(en, 'Dnes už žiadne športové prenosy.', 'No more sport today.'))}"` : ''} data-fav="${esc(tx(en, 'Obľúbené', 'Favourites'))}" data-favadd="${esc(tx(en, 'Pridať do obľúbených', 'Add to favourites'))}" data-favdel="${esc(tx(en, 'Odobrať z obľúbených', 'Remove from favourites'))}" data-rem="${esc(tx(en, 'Pripomenúť', 'Remind me'))}" data-load="${esc(tx(en, 'Načítavam…', 'Loading…'))}" data-left="${esc(tx(en, 'ešte', 'left'))}"></div><script src="/static/epg.js?v=${ASSET_V}" defer></script><p class="hint epgsrc">${esc(tx(en, 'TV program: epgshare01.online (orientačný, môže sa líšiť).', 'TV schedule: epgshare01.online (indicative, may differ).'))}</p>`; };
 
   // ---------- Dnes v TV ----------
   const CATW = [[/sloven/i, 12], [/česk|cesk/i, 9], [/filmy a seri/i, 7], [/^šport$|^sport$/i, 6], [/dokument/i, 2]];
   const DOCCH = /doku|docu|nature|history|histor|discovery|planete|national geographic|nat ?geo|animal|explore|travel|crime\b|investigation|viasat (explore|history|nature)|spektrum|da vinci/i;
+  // SK/CZ scene: Slovak/Czech categories, plus thematic channels (sport, film, kids, docs, music…) whose schedule id is .sk/.cz
+  const FOREIGN = /maďar|madar|poľs|pols|nemec|rusk|ukrajin|švajč|svajc|zahrani|khl|dospel|18\+/i;
+  const SKCZCAT = /sloven|česk|cesk|lokáln|lokaln/i;
+  const skcz = (r) => !FOREIGN.test(r.category) && (SKCZCAT.test(r.category) || /\.(sk|cz)$/i.test(r.epg));
+  const BIGSPORT = /liga majstrov|liga mistr|champions league|europa league|konferen[čc]n|conference league|premier league|bundesliga|la ?liga|serie a|ligue 1|nik[eé] lig|chance lig|fortuna lig|tipsport|tipos|extralig|\bnhl\b|\bnba\b|\bnfl\b|majstrovstv|mistrovstv|world cup|\beuro 20|olymp|\bf1\b|formul[ae] 1|grand prix|wimbledon|roland garros|us open|australian open|el cl[aá]sico|fin[aá]le|\bfinal\b|semifin|play-?off|derby|super bowl|\bufc\b|\boktagon/i;
+  const NATTEAM = /\b(slovensk[oa]|česk[oa]|cesk[oa]|slovakia|czechia|czech republic|reprezent)/i;
+  const BIGCLUB = /slovan|sparta|slavia|plze[nň]|real madrid|barcelona|bayern|liverpool|manchester|arsenal|chelsea|juventus|\binter\b|\bmilan\b|\bpsg\b|dortmund|kometa|t[řr]inec|pardubice|ko[šs]ice|\bnitra|zvolen|bystrica|trnava|žilina|zilina/i;
+  // extra points for the day's TOP: big sport, national team, popular/high-rated film (Wikidata), premiere
+  function topBoost(x, info) {
+    let b = 0; const t = x.title + ' ' + (x.cat || '');
+    if (x.kind === 'sport') { if (BIGSPORT.test(t)) b += 20; if (NATTEAM.test(x.title)) b += 28; else if (BIGCLUB.test(x.title)) b += 8; }
+    else if (x.kind === 'film' && info) { b += info.pop >= 30 ? 14 : info.pop >= 15 ? 8 : info.pop >= 8 ? 4 : 0; if (info.rt >= 80) b += 6; }
+    else if (x.kind === 'show' && C.BIGSHOW.test(x.title)) b += 10;
+    if (x.fl && x.fl.includes('p') && !x.fl.includes('r')) b += 6;
+    return b;
+  }
+  const SPEED = [0, 18, 28, 40, 56, 80];
   // pick the public list with variety: each further item of the same kind costs 10 points
   function diverse(list, n) {
     const left = list.slice(), out = [], cnt = {};
@@ -255,7 +335,7 @@ module.exports = function install(ctx) {
     if (!opt.all && dnesCache && Date.now() - dnesCache.t < 120e3) return dnesCache.d;
     const c = cfg(await getSettings()), now = Date.now(), ds = dayStart(now), de = ds + 26 * 3600e3;
     const kinds = String(c.dnes_kinds).split(',').map((x) => x.trim()).filter(Boolean);
-    const vm = (await visibleMapped()).filter((r) => !ADULT.test(r.category)); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
+    const vm = (await visibleMapped()).filter((r) => !ADULT.test(r.category) && !r.sh && (c.dnes_scope === 'all' || skcz(r))); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
     const hidden = new Map((await pool.query('SELECT k,title FROM dnes_hide')).rows.map((r) => [r.k, r.title]));
     let cand = [];
     if (byEpg.size && kinds.length) {
@@ -263,9 +343,11 @@ module.exports = function install(ctx) {
       for (const p of q.rows) {
         const ch = byEpg.get(p.epg_id)[0]; const sc = scoreOf(p, ch, now); if (sc < 34) continue;
         const k = 'p:' + p.epg_id + '|' + +p.s, tk = 't:' + tnorm(p.title);
-        cand.push({ k, tk, s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: p.cat, yr: p.yr, ch, score: sc, hidden: hidden.has(k) || hidden.has(tk) });
+        cand.push({ k, tk, s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '', ch, score: sc, hidden: hidden.has(k) || hidden.has(tk) });
       }
     }
+    const info = await posterInfo(cand);
+    for (const x of cand) { x.boost = topBoost(x, info.get(posterKey(x))); x.score += x.boost; }
     cand.sort((a, b) => b.score - a.score || a.s - b.s);
     // dedupe titles (same film on +1 / HD variants) and cap per channel
     const seen = new Set(), perCh = new Map(), pick = [];
@@ -274,11 +356,24 @@ module.exports = function install(ctx) {
     const all = await channels();
     const pins = (await pool.query('SELECT id,channel_id,s,e,title,kind FROM dnes_pin WHERE e > now() AND s < $1 ORDER BY s', [new Date(de)])).rows
       .map((p) => { const ch = all.find((r) => r.id === p.channel_id && r.visible); return ch ? { k: 'pin:' + p.id, pin: p.id, s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: '', ch, score: 999 } : null; }).filter(Boolean);
-    const out = opt.all ? { pins, auto: pick } : [...pins, ...diverse(pick, Math.max(0, max - pins.length))].sort((a, b) => a.s - b.s);
+    let out;
+    if (opt.all) out = { pins, auto: pick };
+    else {
+      const list = diverse(pick, Math.max(0, max - pins.length)), nTop = Math.max(0, Math.min(6, +c.dnes_top || 0));
+      pins.forEach((x) => { x.top = true; });
+      const best = list.slice().sort((a, b) => b.score - a.score);
+      best.filter((x, i) => i < nTop - pins.length && (x.score >= 84 || (i === 0 && !pins.length))).forEach((x) => { x.top = true; });
+      const byT = (a, b) => a.s - b.s;
+      out = [...pins, ...list.filter((x) => x.top)].sort(byT).concat(list.filter((x) => !x.top).sort(byT));
+    }
     if (!opt.all) dnesCache = { t: Date.now(), d: out };
     return out;
   }
   const posterKey = (x) => tnorm(x.title) + '|' + (x.yr || '');
+  async function posterInfo(items) {
+    const ks = [...new Set(items.filter((x) => x.kind === 'film').map(posterKey))]; if (!ks.length) return new Map();
+    return new Map((await pool.query('SELECT k,pop,rt FROM epg_poster WHERE k = ANY($1)', [ks])).rows.map((r) => [r.k, r]));
+  }
   async function posterMap(items) {
     const ks = [...new Set(items.filter((x) => x.kind === 'film').map(posterKey))]; if (!ks.length) return new Map();
     return new Map((await pool.query('SELECT k,url FROM epg_poster WHERE k = ANY($1) AND url <> \'\'', [ks])).rows.map((r) => [r.k, r.url]));
@@ -288,12 +383,12 @@ module.exports = function install(ctx) {
     if (posterBusy) return; posterBusy = true;
     setTimeout(async () => {
       try {
-        const items = (await dnesItems({ all: true })).auto.filter((x) => x.kind === 'film').slice(0, 25).concat((await dnesItems()).filter((x) => x.kind === 'film'));
+        const items = (await dnesItems({ all: true })).auto.filter((x) => x.kind === 'film').slice(0, 45).concat((await dnesItems()).filter((x) => x.kind === 'film'));
         for (const x of items) {
           const k = posterKey(x); if ((await pool.query('SELECT 1 FROM epg_poster WHERE k=$1 AND (url <> \'\' OR at > now() - interval \'7 days\')', [k])).rowCount) continue;
-          let r = null; try { r = await POSTER.find({ name: x.title + (x.yr ? ' (' + x.yr + ')' : ''), category: 'film' }); } catch { r = null; }
+          let r = null; try { r = await POSTER.find(x.title, x.yr); } catch { r = null; }
           const url = r && /^https:\/\/upload\.wikimedia\.org\//.test(r.url) ? r.url : '';
-          await pool.query('INSERT INTO epg_poster (k,url,label,at) VALUES ($1,$2,$3,now()) ON CONFLICT (k) DO UPDATE SET url=$2,label=$3,at=now()', [k, url, r ? String(r.label || '').slice(0, 200) : '']);
+          await pool.query('INSERT INTO epg_poster (k,url,label,pop,rt,at) VALUES ($1,$2,$3,$4,$5,now()) ON CONFLICT (k) DO UPDATE SET url=$2,label=$3,pop=$4,rt=$5,at=now()', [k, url, r ? String(r.label || '').slice(0, 200) : '', r ? Math.min(999, r.pop | 0) : 0, r ? Math.min(100, r.rt | 0) : 0]);
           await new Promise((ok) => setTimeout(ok, 400));
         }
         dnesCache = null;
@@ -308,25 +403,29 @@ module.exports = function install(ctx) {
       const en = req.lang === 'en', pm = await posterMap(items), now = Date.now();
       const logo = (ch) => (ctx.tvchLogoSrc ? ctx.tvchLogoSrc(ch) : '/tvlogo/' + ch.id);
       const title = (en && c.dnes_title_en) || c.dnes_title || 'Dnes v TV';
-      return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><section class="dnes" aria-label="${esc(title)}"><h2 class="dnh"><span class="dnl">●</span> ${esc(title)}</h2><ul class="dnl-list">${items.map((x) => { const pu = x.kind === 'film' && pm.get(posterKey(x)); return `<li class="dni dk-${esc(x.kind || 'x')}${x.s <= now ? ' live' : ''}" data-s="${Math.round(x.s / 1000)}" data-e="${Math.round(x.e / 1000)}">${pu ? `<img class="dnp" src="${esc(pu)}" alt="" loading="lazy" decoding="async" width="56" height="80" referrerpolicy="no-referrer">` : `<img class="dnp dnc" src="${esc(logo(x.ch))}" alt="" loading="lazy" decoding="async" width="56" height="56">`}<div class="dnb"><div class="dnt"><time datetime="${new Date(x.s).toISOString()}">${esc(hm(x.s))}</time><span class="dnk">${C.KIND_ICON[x.kind] || '📺'} ${esc(KL(en, x.kind))}</span><span class="dnlive">${esc(tx(en, 'práve beží', 'on now'))}</span></div><div class="dnn">${esc(x.title)}</div><div class="dnch"><img src="${esc(logo(x.ch))}" alt="" width="20" height="20" loading="lazy" decoding="async"><span>${esc(x.ch.name)}</span></div><div class="dpb"><i></i></div></div></li>`; }).join('')}</ul><a class="dnm" href="/${esc(s.slug)}/kanaly${en ? '?lang=en' : ''}#katalog">${esc(tx(en, 'Celý TV program pri kanáloch →', 'Full TV schedule by channel →'))}</a></section><script src="/static/epg.js?v=${ASSET_V}" defer></script>`;
+      const sp = SPEED[Math.max(1, Math.min(5, +c.dnes_speed || 3))];
+      const card = (x) => { const pu = x.kind === 'film' && pm.get(posterKey(x)); const ics = x.pin ? '/api/epg/ics/pin/' + x.pin : `/api/epg/ics/${x.ch.id}/${Math.round(x.s / 1000)}`;
+        return `<li class="dni dk-${esc(x.kind || 'x')}${x.top ? ' top' : ''}${x.s <= now ? ' live' : ''}" data-s="${Math.round(x.s / 1000)}" data-e="${Math.round(x.e / 1000)}">${pu ? `<img class="dnp" src="${esc(pu)}" alt="" loading="lazy" decoding="async" width="${x.top ? 84 : 56}" height="${x.top ? 120 : 80}" referrerpolicy="no-referrer">` : `<img class="dnp dnc" src="${esc(logo(x.ch))}" alt="" loading="lazy" decoding="async" width="56" height="56">`}<div class="dnb"><div class="dnt">${x.top ? '<span class="dntop">TOP</span>' : ''}<time datetime="${new Date(x.s).toISOString()}">${esc(hm(x.s))}</time><span class="dnk">${C.KIND_ICON[x.kind] || '📺'} ${esc(KL(en, x.kind))}</span><span class="dnlive">${esc(tx(en, 'práve beží', 'on now'))}</span></div><div class="dnn">${esc(x.title)}</div><div class="dnch"><img src="${esc(logo(x.ch))}" alt="" width="20" height="20" loading="lazy" decoding="async"><span>${esc(x.ch.name)}</span></div><div class="dpb"><i></i></div><a class="dnr" href="${ics}" rel="nofollow" download title="${esc(tx(en, 'Pripomenúť (pridať do kalendára)', 'Remind me (add to calendar)'))}">🔔 ${esc(tx(en, 'Pripomenúť', 'Remind me'))}</a></div></li>`; };
+      return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><section class="dnes" aria-label="${esc(title)}" data-speed="${sp}"><div class="dnhd"><h2 class="dnh"><span class="dnl">●</span> ${esc(title)}</h2><button type="button" class="dnpp" aria-pressed="false" data-pause="${esc(tx(en, '⏸ Zastaviť', '⏸ Pause'))}" data-play="${esc(tx(en, '▶ Spustiť', '▶ Play'))}" hidden>${esc(tx(en, '⏸ Zastaviť', '⏸ Pause'))}</button></div><div class="dnv" tabindex="0" aria-label="${esc(tx(en, 'Pás s reláciami – posúvajte do strán', 'Strip of shows – scroll sideways'))}"><ul class="dnl-list">${items.map(card).join('')}</ul></div><a class="dnm" href="/${esc(s.slug)}/kanaly${en ? '?lang=en' : ''}#katalog">${esc(tx(en, 'Celý TV program pri kanáloch →', 'Full TV schedule by channel →'))}</a></section><script src="/static/epg.js?v=${ASSET_V}" defer></script>`;
     } catch (e) { console.error('dnes', e.message); return ''; }
   };
 
   // ---------- admin: channel edit form hook ----------
+  const mapVal = (m) => (m ? (m.manual && !m.epg_id ? '-' : m.epg_id + (m.epg_id && m.shift ? '@' + (m.shift > 0 ? '+' : '') + m.shift : '')) : '');
   ctx.epgAdminPrep = async () => { const m = await loadMap(); const n = (await pool.query('SELECT COUNT(*)::int AS n FROM epg_chan')).rows[0].n; return { m, n }; };
   ctx.epgAdminField = (prep, r) => {
-    const m = prep.m.get(r.id); const v = m ? (m.manual && !m.epg_id ? '-' : m.epg_id) : '';
-    return `<label>EPG id (TV program) · <a href="/admin/epg/ch/${r.id}">🔎 vybrať</a> <span class="hint">${m ? (m.manual ? 'ručne' : m.epg_id ? 'automaticky ' + Math.round(m.score * 100) + ' %' : 'nenájdené') : 'zatiaľ nepárované'} · prázdne = automaticky, „-“ = bez programu</span></label><input name="epg_id" maxlength="120" value="${esc(v)}" autocomplete="off"><input type="hidden" name="epg_prev" value="${esc(v)}">`;
+    const m = prep.m.get(r.id); const v = mapVal(m);
+    return `<label>EPG id (TV program) · <a href="/admin/epg/ch/${r.id}">🔎 vybrať</a> <span class="hint">${m ? (m.manual ? 'ručne' : m.epg_id ? 'automaticky ' + Math.round(m.score * 100) + ' %' : 'nenájdené') : 'zatiaľ nepárované'} · prázdne = automaticky, „-“ = bez programu, „id@+60“ = posun v minútach (+1 kanály)</span></label><input name="epg_id" maxlength="120" value="${esc(v)}" autocomplete="off"><input type="hidden" name="epg_prev" value="${esc(v)}">`;
   };
   async function setManual(id, v) {
-    v = String(v == null ? '' : v).trim().slice(0, 120);
+    v = String(v == null ? '' : v).trim().slice(0, 130);
+    let eid = v === '-' ? '' : v, sh = 0; const mm = /^(.*?)\s*@\s*([+-]?\d{1,3})$/.exec(eid); if (mm) { eid = mm[1]; sh = Math.max(-720, Math.min(720, +mm[2])); }
     if (v === '') await pool.query('UPDATE epg_map SET manual=false, updated_at=now() WHERE channel_id=$1', [id]);
     else {
-      const eid = v === '-' ? '' : v;
       if (eid && !(await pool.query('SELECT 1 FROM epg_chan WHERE id=$1', [eid])).rowCount) return false;
-      await pool.query(`INSERT INTO epg_map (channel_id,epg_id,manual,score,updated_at) VALUES ($1,$2,true,1,now()) ON CONFLICT (channel_id) DO UPDATE SET epg_id=$2, manual=true, score=1, updated_at=now()`, [id, eid]);
+      await pool.query(`INSERT INTO epg_map (channel_id,epg_id,manual,score,shift,updated_at) VALUES ($1,$2,true,1,$3,now()) ON CONFLICT (channel_id) DO UPDATE SET epg_id=$2, manual=true, score=1, shift=$3, updated_at=now()`, [id, eid, sh]);
     }
-    dropCaches(); soonPartial(v && v !== '-' ? v : null); return true;
+    dropCaches(); soonPartial(eid || null); return true;
   }
   let partialT = null; const partialFeeds = new Set();
   async function soonPartial(eid) {
@@ -356,7 +455,7 @@ module.exports = function install(ctx) {
     const nowD = await nowData(); const cats = [...new Set(chans.map((r) => r.category))];
     const dn = await dnesItems({ all: true }); const hidden = (await pool.query('SELECT k,title,created_at FROM dnes_hide ORDER BY created_at DESC LIMIT 100')).rows;
     const vis = chans.filter((r) => r.visible);
-    const item = (x) => `<div class="row"><span><b>${esc(hm(x.s))}</b> ${C.KIND_ICON[x.kind] || ''} ${esc(x.title)} · <span class="hint">${esc(x.ch.name)}${x.score < 999 ? ' · skóre ' + x.score : ''}${x.dupe ? ' · duplicita' : ''}${x.hidden ? ' · skryté' : ''}</span></span>${x.pin ? `<form method="post" action="/admin/epg/pin/${x.pin}/delete">${hid(req)}<button class="d">🗑 Odopnúť</button></form>` : `${x.hidden ? '' : `<form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.k)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť</button></form><form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.tk)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť titul</button></form>`}<form method="post" action="/admin/epg/pin">${hid(req)}<input type="hidden" name="channel_id" value="${x.ch.id}"><input type="hidden" name="s" value="${esc(toLocal(x.s))}"><input type="hidden" name="dur" value="${Math.round((x.e - x.s) / 60e3)}"><input type="hidden" name="title" value="${esc(x.title)}"><input type="hidden" name="kind" value="${esc(x.kind)}"><button>📌 Pripnúť</button></form>`}</div>`;
+    const item = (x) => `<div class="row"><span><b>${esc(hm(x.s))}</b> ${C.KIND_ICON[x.kind] || ''} ${esc(x.title)} · <span class="hint">${esc(x.ch.name)}${x.score < 999 ? ' · skóre ' + x.score + (x.boost ? ' (TOP +' + x.boost + ')' : '') : ''}${x.dupe ? ' · duplicita' : ''}${x.hidden ? ' · skryté' : ''}</span></span>${x.pin ? `<form method="post" action="/admin/epg/pin/${x.pin}/delete">${hid(req)}<button class="d">🗑 Odopnúť</button></form>` : `${x.hidden ? '' : `<form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.k)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť</button></form><form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.tk)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť titul</button></form>`}<form method="post" action="/admin/epg/pin">${hid(req)}<input type="hidden" name="channel_id" value="${x.ch.id}"><input type="hidden" name="s" value="${esc(toLocal(x.s))}"><input type="hidden" name="dur" value="${Math.round((x.e - x.s) / 60e3)}"><input type="hidden" name="title" value="${esc(x.title)}"><input type="hidden" name="kind" value="${esc(x.kind)}"><button>📌 Pripnúť</button></form>`}</div>`;
     res.send(page('TV program (EPG)', `<h1>🗓 TV program (EPG) &amp; Dnes v TV</h1>${msg(req.query)}<p><a href="/admin">← Admin</a> · <a href="/admin/kanaly-katalog">📺 Katalóg kanálov</a></p>
 <p class="hint">Zdroj: <b>epgshare01.online</b> – bezplatné verejné XMLTV súbory (iba programové údaje: čas, názov relácie, kategória). Ukladá sa len program na ~${esc(c.epg_ahead)} h dopredu pre kanály na stránke. Žiadne streamy ani playlisty.</p>
 <div class="card"><h2>📊 Stav</h2><p>Posledná obnova: <b>${esc(ago(lastRun))}</b>${lastMs ? ` (${Math.round(+lastMs / 1000)} s)` : ''} · plná: ${esc(ago(lastFull))} · interval ${esc(c.epg_hours)} h${status.running ? ` · <b>práve beží: ${esc(status.phase)} ${esc(status.feed)}</b>` : ''}</p>
@@ -373,8 +472,12 @@ ${lastErr ? `<p class="err">Chyba: ${esc(lastErr)}</p>` : ''}${Object.keys(repor
 <label class="ck"><input type="checkbox" name="dnes_on" value="1"${c.dnes_on === '1' ? ' checked' : ''}> Zobraziť blok na hlavnej stránke</label>
 <label>Nadpis</label><input name="dnes_title" maxlength="60" value="${esc(c.dnes_title)}"><label>Nadpis (EN)</label><input name="dnes_title_en" maxlength="60" value="${esc(c.dnes_title_en)}">
 <label>Max. položiek</label><input name="dnes_max" type="number" min="1" max="30" value="${esc(c.dnes_max)}">
+<label>Kanály</label><select name="dnes_scope"><option value="skcz"${c.dnes_scope !== 'all' ? ' selected' : ''}>Iba slovenská a česká scéna (SK/CZ kanály vrátane tematických)</option><option value="all"${c.dnes_scope === 'all' ? ' selected' : ''}>Všetky viditeľné kanály</option></select>
+<label>Počet TOP položiek (zvýraznené, na začiatku pásu) <span class="hint">vyberajú sa automaticky: veľký šport, reprezentácia, populárne/premiérové filmy, prime time; pripnuté sú vždy TOP</span></label><input name="dnes_top" type="number" min="0" max="6" value="${esc(c.dnes_top)}">
+<label>Rýchlosť posúvania pásu</label><select name="dnes_speed">${[[1, 'veľmi pomaly'], [2, 'pomaly'], [3, 'stredne'], [4, 'rýchlo'], [5, 'veľmi rýchlo']].map(([v, l]) => `<option value="${v}"${+c.dnes_speed === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+<label class="ck"><input type="checkbox" name="sport_on" value="1"${c.sport_on === '1' ? ' checked' : ''}> Záložka „⚽ Šport dnes“ v sekcii Kanály</label>
 <p>Typy:</p>${KINDS.map(([k, l]) => `<label class="ck"><input type="checkbox" name="kind_${k}" value="1"${c.dnes_kinds.split(',').includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}<button>Uložiť</button></form>
-<div class="card" id="nahlad"><h2>👁 Dnes v TV – výber</h2>${dn.pins.length ? `<h3>📌 Pripnuté</h3>${dn.pins.map(item).join('')}` : ''}<h3>Automatický výber (zoradené podľa skóre; na webe max ${esc(c.dnes_max)}, max 2 na kanál)</h3>${dn.auto.slice(0, 40).map(item).join('') || '<p class="hint">Zatiaľ žiadne dáta – spustite obnovu.</p>'}
+<div class="card" id="nahlad"><h2>👁 Dnes v TV – výber</h2>${dn.pins.length ? `<h3>📌 Pripnuté</h3>${dn.pins.map(item).join('')}` : ''}<p class="hint">Na webe: ${(await dnesItems()).map((x) => (x.top ? '<b>TOP</b> ' : '') + esc(hm(x.s) + ' ' + x.title)).join(' · ') || '—'}</p><h3>Automatický výber (zoradené podľa skóre; na webe max ${esc(c.dnes_max)}, max 2 na kanál${c.dnes_scope !== 'all' ? ', iba SK/CZ kanály' : ''})</h3>${dn.auto.slice(0, 40).map(item).join('') || '<p class="hint">Zatiaľ žiadne dáta – spustite obnovu.</p>'}
 ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><span>${esc(h.title || h.k)} <span class="hint">${h.k.startsWith('t:') ? '(celý titul)' : '(jedno vysielanie)'}</span></span><form method="post" action="/admin/epg/unhide">${hid(req)}<input type="hidden" name="k" value="${esc(h.k)}"><button>👁 Zobraziť</button></form></div>`).join('')}` : ''}</div>
 <form method="post" action="/admin/epg/pin" class="card" id="pin">${hid(req)}<h2>📌 Pridať vlastnú položku</h2><p class="hint">Napr. zápas alebo film, ktorý v programe chýba. Zobrazí sa do jeho konca.</p>
 <label>Kanál</label><select name="channel_id" required><option value="">— vyberte —</option>${vis.map((r) => `<option value="${r.id}">${esc(r.name)} (${esc(r.category)})</option>`).join('')}</select>
@@ -383,7 +486,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
 <div class="card" id="map"><h2>🔗 Párovanie kanálov s programom</h2><p class="hint">Automaticky podľa podobnosti názvu (a krajiny podľa kategórie). Opraviť: zadajte EPG id (alebo „-“ = bez programu, prázdne = automaticky) alebo kliknite 🔎.</p>
 <p>${[['unmapped', 'Bez párovania'], ['mapped', 'Spárované'], ['manual', 'Ručne'], ['skipped', 'Vynechané'], ['all', 'Všetky']].map(([k, l]) => (k === f ? `<b>${l}</b>` : `<a href="/admin/epg?f=${k}${cq ? '&cat=' + encodeURIComponent(cq) : ''}#map">${l}</a>`)).join(' · ')}</p>
 <form method="get" action="/admin/epg" class="row"><input type="hidden" name="f" value="${esc(f)}"><select name="cat"><option value="">Všetky kategórie</option>${cats.map((x) => `<option${x === cq ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select><button>Filtrovať</button></form>
-<p class="hint">${list.length} kanálov</p>${list.slice(0, 300).map((r) => { const x = m.get(r.id), nw = (nowD.c[r.id] || [])[0]; const v = x ? (x.manual && !x.epg_id ? '-' : x.epg_id) : ''; return `<form method="post" action="/admin/epg/map/${r.id}" class="row">${hid(req)}<span><b>${esc(r.name)}</b> <span class="hint">${esc(r.category)}${r.visible ? '' : ' · skrytý'} · ${x ? (x.manual ? 'ručne' : x.epg_id ? 'auto ' + Math.round(x.score * 100) + ' %' : 'nenájdené') : '—'}${nw ? ' · teraz: ' + esc(nw[2]) : ''}</span></span><input name="epg_id" maxlength="120" value="${esc(v)}" placeholder="EPG id"><input type="hidden" name="epg_prev" value="${esc(v)}"><button>Uložiť</button><a href="/admin/epg/ch/${r.id}">🔎</a></form>`; }).join('')}${list.length > 300 ? '<p class="hint">Zobrazených prvých 300 – použite filter kategórie.</p>' : ''}</div>`, 'adm'));
+<p class="hint">${list.length} kanálov</p>${list.slice(0, 300).map((r) => { const x = m.get(r.id), nw = (nowD.c[r.id] || [])[0]; const v = mapVal(x); return `<form method="post" action="/admin/epg/map/${r.id}" class="row">${hid(req)}<span><b>${esc(r.name)}</b> <span class="hint">${esc(r.category)}${r.visible ? '' : ' · skrytý'} · ${x ? (x.manual ? 'ručne' : x.epg_id ? 'auto ' + Math.round(x.score * 100) + ' %' : 'nenájdené') : '—'}${nw ? ' · teraz: ' + esc(nw[2]) : ''}</span></span><input name="epg_id" maxlength="120" value="${esc(v)}" placeholder="EPG id"><input type="hidden" name="epg_prev" value="${esc(v)}"><button>Uložiť</button><a href="/admin/epg/ch/${r.id}">🔎</a></form>`; }).join('')}${list.length > 300 ? '<p class="hint">Zobrazených prvých 300 – použite filter kategórie.</p>' : ''}</div>`, 'adm'));
   }));
   admin.get('/epg/ch/:id(\\d+)', needAuth, wrap(async (req, res) => {
     const ch = (await channels()).find((r) => r.id === +req.params.id); if (!ch) return res.redirect(303, '/admin/epg');
@@ -392,7 +495,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
     const ix = C.buildIndex(rows.map((r) => ({ id: r.id, names: r.names ? r.names.split('\n') : [r.name], feed: r.feed, n: r.n })));
     let cand = C.candidates(ix, q || ch.name, ch.category, 15);
     if (q) { const nq = tnorm(q); cand = cand.concat(rows.filter((r) => tnorm(r.id + ' ' + r.names).includes(nq)).slice(0, 30).map((r) => ({ id: r.id, name: r.name, feed: r.feed, n: r.n, sim: 0 }))).filter((x, i, a) => a.findIndex((y) => y.id === x.id) === i); }
-    const prev = m ? (m.manual && !m.epg_id ? '-' : m.epg_id) : '';
+    const prev = mapVal(m);
     const opt = (id, label) => `<form method="post" action="/admin/epg/map/${ch.id}" class="row">${hid(req)}<input type="hidden" name="epg_id" value="${esc(id)}"><input type="hidden" name="epg_prev" value="${esc(prev + '#')}"><input type="hidden" name="ret" value="ch"><button>${esc(label)}</button></form>`;
     res.send(page('EPG – ' + ch.name, `<h1>🔎 TV program pre: ${esc(ch.name)}</h1>${msg(req.query)}<p><a href="/admin/epg#map">← TV program</a> · <a href="/admin/kanaly-katalog">📺 Katalóg</a></p>
 <p>Kategória: ${esc(ch.category)} · teraz: <b>${m ? (m.manual ? 'ručne' : 'automaticky') : '—'}</b> ${m && m.epg_id ? '<code>' + esc(m.epg_id) + '</code>' : '(bez programu)'}</p>
@@ -412,7 +515,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
   }));
   admin.post('/epg/dnes', needAuth, csrf, wrap(async (req, res) => {
     const b = req.body; const clean = (v, d) => String(v || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60) || d;
-    await setSettings({ dnes_on: b.dnes_on ? '1' : '0', dnes_max: String(Math.max(1, Math.min(30, parseInt(b.dnes_max, 10) || 8))), dnes_kinds: KINDS.map(([k]) => k).filter((k) => b['kind_' + k]).join(',') || 'film', dnes_title: clean(b.dnes_title, D.dnes_title), dnes_title_en: clean(b.dnes_title_en, D.dnes_title_en) });
+    await setSettings({ dnes_on: b.dnes_on ? '1' : '0', dnes_max: String(Math.max(1, Math.min(30, parseInt(b.dnes_max, 10) || 8))), dnes_kinds: KINDS.map(([k]) => k).filter((k) => b['kind_' + k]).join(',') || 'film', dnes_title: clean(b.dnes_title, D.dnes_title), dnes_title_en: clean(b.dnes_title_en, D.dnes_title_en), dnes_scope: b.dnes_scope === 'all' ? 'all' : 'skcz', dnes_top: String(Math.max(0, Math.min(6, parseInt(b.dnes_top, 10) || 0))), dnes_speed: String(Math.max(1, Math.min(5, parseInt(b.dnes_speed, 10) || 3))), sport_on: b.sport_on ? '1' : '0' });
     dropCaches(); back(res, 'ok', 'dnes');
   }));
   admin.post('/epg/refresh', needAuth, csrf, wrap(async (req, res) => { if (running) return back(res, 'busy'); refresh(); back(res, 'run'); }));

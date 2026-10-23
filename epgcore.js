@@ -69,8 +69,8 @@ function progDetails(p) {
 // ---------- channel name normalization & fuzzy matching ----------
 const strip = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const QUAL = new Set(['fhd', 'hd', 'uhd', '4k', '8k', 'sd', 'hevc', 'h265', 'h264', 'hdr', 'fullhd', 'tv', 'hq', 'raw', 'backup', 'live', 'channel', 'kanal', 'telewizja', 'televizia', 'televize', 'televizio']);
-const CC = new Set(['sk', 'cz', 'hu', 'pl', 'de', 'at', 'ch', 'uk', 'gb', 'nl', 'ua', 'it', 'fr', 'es', 'ru', 'us', 'mx', 'eu', 'int', 'intl', 'cee', 'ro', 'hr', 'rs', 'si', 'ba']);
-const ALIAS = [[/\bct\s*:?\s*d\b/g, 'ct d'], [/\bct\s*art\b/g, 'ct art'], [/\bmarkiza\b/g, 'markiza'], [/\bjoj\s*\+/g, 'joj plus'], [/\+\s*1\b/g, ' plus1 '], [/\bstv\s*1\b/g, 'jednotka'], [/\bstv\s*2\b/g, 'dvojka'], [/\bstv\s*24\b/g, 'rtvs 24'], [/\b:24\b/g, 'rtvs 24'], [/\b:sport\b/g, 'rtvs sport'], [/\bstvr\b/g, 'rtvs'], [/\bnatgeo\b/g, 'national geographic'], [/\bnat\s*geo\b/g, 'national geographic'], [/\bdiscovery\s*:\s*/g, ''], [/\bcanal\s*\+/g, 'canal plus '], [/\bfilmbox\s*\+/g, 'filmbox plus '], [/\bfilm\s*\+/g, 'film plus '], [/\bfilm europe\s*\+/g, 'film europe plus '], [/&/g, ' and '], [/\bsport(s)?\b/g, 'sport'], [/\bsport\s*1\b/g, 'sport 1'], [/\bcnn intl\.?/g, 'cnn international'], [/\bintl\.?\b/g, 'international'], [/\bnick\s*jr\b\.?/g, 'nick jr'], [/\bjr\b\.?/g, 'jr'], [/\bbarandov\b/g, 'barrandov']];
+const CC = new Set(['sk', 'cz', 'hu', 'pl', 'de', 'at', 'ch', 'uk', 'gb', 'nl', 'ua', 'it', 'fr', 'es', 'ru', 'us', 'mx', 'eu', 'int', 'intl', 'cee', 'ro', 'hr', 'rs', 'si', 'ba', 'esp', 'cze', 'svk', 'ger', 'pol', 'hun']);
+const ALIAS = [[/\bct\s*:?\s*d\b/g, 'ct d'], [/\bct\s*art\b/g, 'ct art'], [/\bmarkiza\b/g, 'markiza'], [/\bjoj\s*\+/g, 'joj plus'], [/\+\s*1\b/g, ' plus1 '], [/\bstv\s*1\b/g, 'jednotka'], [/\bstv\s*2\b/g, 'dvojka'], [/\bstv\s*24\b/g, 'rtvs 24'], [/\b:24\b/g, 'rtvs 24'], [/\b:sport\b/g, 'rtvs sport'], [/\bstvr\b/g, 'rtvs'], [/\bnatgeo\b/g, 'national geographic'], [/\bnat\s*geo\b/g, 'national geographic'], [/\bdiscovery\s*:\s*/g, ''], [/\bcanal\s*\+/g, 'canal plus '], [/\bfilmbox\s*\+/g, 'filmbox plus '], [/\bfilm\s*\+/g, 'film plus '], [/\bfilm europe\s*\+/g, 'film europe plus '], [/&/g, ' and '], [/\bsport(s)?\b/g, 'sport'], [/\bsport\s*1\b/g, 'sport 1'], [/\bcnn intl\.?/g, 'cnn international'], [/\bintl\.?\b/g, 'international'], [/\bnick\s*jr\b\.?/g, 'nick jr'], [/\bjr\b\.?/g, 'jr'], [/\bbarandov\b/g, 'barrandov'], [/\bdeluxe music (?=[a-z])/g, 'deluxe '], [/\bzwei\b/g, '2']];
 function nameKey(name) {
   let s = strip(name).replace(/\([^)]*\)|\[[^\]]*\]/g, ' ');
   for (const [r, v] of ALIAS) s = s.replace(r, v);
@@ -139,6 +139,27 @@ function candidates(ix, name, category, limit = 5) {
   }
   return [...res.values()].sort((a, b) => b.score - a.score).slice(0, limit);
 }
+// Built-in manual mappings for channels whose names differ too much from the feed (verified against epgshare01 data).
+// [regex on the lower-cased site channel name, EPG id, time shift in minutes]
+const KNOWN = [
+  [/^markiza \+ ?1\b/, 'Markíza.HD.sk', 60], [/^ct :?d\b.*ct art/, 'ČT.art.cz', 0], [/^cs horror/, 'CS.Film-CS.Horror.HD.sk', 0],
+  [/^deluxe music dance by kontor/, 'Deluxe.Dance.by.Kontor.be', 0], [/^deluxe music rap/, 'Deluxe.Rap.be', 0],
+  [/^первый( hd)?$/, 'Первый.канал.HD.[RU].ua', 0], [/^тв ?-?3( hd)?$/, 'ТВ-3.Россия.[RU].ua', 0], [/^твц( hd)?$/, 'ТВ.Центр.[RU].ua', 0],
+  [/^gagsnetwork/, 'Gagsnetwork.Україна.[UA-RU].ua', 0], [/^россия ?24/, 'RUSSIA.24.tr', 0], [/^рбк/, 'РБК.ТВ.[RU].ua', 0],
+  [/^srf ?(2|zwei)\b/, 'SRF.zwei.ch', 0], [/^3\+/, '3+.ch', 0], [/^4\+/, '4+.ch', 0], [/^5\+/, '5+.ch', 0], [/^6\+/, '6+.ch', 0], [/^7\+/, '7+./.Nickelodeon.ch', 0],
+  [/^film ?ua live/, 'FILMUA.Live.[UA-UA].ua', 0], [/^uatv|freeдом|freedom/, 'FREEDOM.sk', 0], [/^cine friki/, 'Cine.Friki.es', 0],
+  [/^polsat sport 2\b/, 'Polsat.Sport.Extra.HD.pl', 0], [/^polsat sport 3\b/, 'Polsat.Sport.News.HD.pl', 0], [/^rtm ?\+/, 'RTM.cz', 0],
+  [/^red bull tv/, 'DE:.Red.Bull.TV.be', 0],
+];
+function known(name) { const l = String(name || '').toLowerCase().trim(), st = strip(l); for (const [r, id, sh] of KNOWN) if (r.test(l) || r.test(st)) return { id, shift: sh }; return null; }
+// guard against look-alike channels from far away countries (e.g. Czech "TN Live" ≠ Uruguayan "TN")
+const EU = new Set(['sk', 'cz', 'hu', 'pl', 'de', 'at', 'ch', 'uk', 'nl', 'ua', 'it', 'fr', 'es', 'be', 'lu', 'ro', 'hr', 'rs', 'si', 'ba', 'bg', 'gr', 'lt', 'lv', 'pt', 'ie', 'dk', 'se', 'no', 'fi', 'al', 'mt', 'cy', 'tr', 'ru']);
+function allowed(category, id) {
+  const cc = idCountry(id); const cat = String(category || '');
+  if (/lokáln|lokaln/i.test(cat)) return cc === 'sk' || cc === 'cz';
+  if (/sloven|česk|cesk/i.test(cat)) return !cc || EU.has(cc);
+  return true;
+}
 const MATCH_MIN = 0.88; // on raw name similarity (exact = 1)
 const isMatch = (c) => !!c && c.sim >= MATCH_MIN && c.n !== 0;
 
@@ -173,4 +194,4 @@ const KIND_LABEL = { film: 'Film', sport: 'Šport', news: 'Správy', kids: 'Deti
 const KIND_LABEL_EN = { film: 'Movie', sport: 'Sport', news: 'News', kids: 'Kids', series: 'Series', doc: 'Documentary', show: 'Show', music: 'Music' };
 const KIND_ICON = { film: '🎬', sport: '⚽', news: '📰', kids: '🧸', series: '📺', doc: '🌍', show: '🎤', music: '🎵' };
 
-module.exports = { parseStream, progDetails, xtime, nameKey, dice, buildIndex, candidates, isMatch, prefCountries, idCountry, classify, MATCH_MIN, LIVE, NOTLIVE, BIGSHOW, KIND_LABEL, KIND_LABEL_EN, KIND_ICON, clip };
+module.exports = { known, allowed, KNOWN, parseStream, progDetails, xtime, nameKey, dice, buildIndex, candidates, isMatch, prefCountries, idCountry, classify, MATCH_MIN, LIVE, NOTLIVE, BIGSHOW, KIND_LABEL, KIND_LABEL_EN, KIND_ICON, clip };
