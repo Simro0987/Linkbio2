@@ -145,7 +145,7 @@ module.exports = function install(ctx) {
   const nextOrd = async (c) => (await c.query('SELECT COALESCE(MAX(ord),0)+1 AS n FROM tv_channels')).rows[0].n;
   const groups = (rows) => { const m = new Map(); for (const r of rows) { if (!m.has(r.category)) m.set(r.category, []); m.get(r.category).push(r); } return m; };
   const back = (res, m, a = '') => res.redirect(303, '/admin/kanaly-katalog?m=' + m + (a ? '#' + a : ''));
-  const MS = { ok: 'Uložené.', added: 'Kanál pridaný.', trashed: 'Presunuté do koša – obnoviť v Admin › Kôš.', bad: 'Neplatný názov alebo kategória (nesmie obsahovať URL).', badlogo: 'Logo musí byť https odkaz na obrázok (bez portu, nie stream/playlist).', needconfirm: 'Akciu treba potvrdiť zaškrtnutím.', nofile: 'Chýba súbor.', big: 'Súbor je väčší ako 5 MB.', badfile: 'Súbor sa nepodarilo prečítať (CSV alebo .xlsx).', many: 'Príliš veľa riadkov (max 5000).', logos: 'Logá uložené (vrátiť sa dá z Koša).', expired: 'Náhľad vypršal – nahrajte súbor znova.', imported: 'Import dokončený.', dupe: 'Kanál s týmto názvom už v kategórii existuje.' };
+  const MS = { ok: 'Uložené.', added: 'Kanál pridaný.', trashed: 'Presunuté do koša – obnoviť v Admin › Kôš.', bad: 'Neplatný názov alebo kategória (nesmie obsahovať URL).', badlogo: 'Logo musí byť https odkaz na obrázok (bez portu, nie stream/playlist).', needconfirm: 'Akciu treba potvrdiť zaškrtnutím.', nofile: 'Chýba súbor.', big: 'Súbor je väčší ako 5 MB.', badfile: 'Súbor sa nepodarilo prečítať (CSV alebo .xlsx).', many: 'Príliš veľa riadkov (max 5000).', logos: 'Logá uložené (vrátiť sa dá z Koša).', expired: 'Náhľad vypršal – nahrajte súbor znova.', imported: 'Import dokončený.', dupe: 'Kanál s týmto názvom už v kategórii existuje.', badepg: 'Kanál uložený, ale zadané EPG id v zdroji neexistuje – vyberte ho cez 🔎 vybrať.' };
 
   ctx.tvchInit = async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS tv_channel_reports (id SERIAL PRIMARY KEY, channel_id INT, channel_name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', type TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '', resolved BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
@@ -204,6 +204,7 @@ module.exports = function install(ctx) {
     if (!r.ok || !r.png) return sendBadge(res, ch);
     res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" }); res.send(r.png);
   }));
+  ctx.tvchAll = all; ctx.tvchLogoSrc = (r) => lsrc(r);
   const logoImg = (r, sz, broken) => `<img class="tlg" src="${esc(lsrc(r, broken))}" alt="" loading="lazy" decoding="async" width="${sz}" height="${sz}" data-l="${esc([...r.name][0].toUpperCase())}">`;
   ctx.tvchPublic = async (req) => {
     const en = req.lang === 'en';
@@ -213,7 +214,7 @@ module.exports = function install(ctx) {
     return `<section class="tvcat" id="katalog">${rm}<h2 class="ph">${esc(tx(en, 'Zoznam kanálov', 'Channel list'))}</h2><p class="lead">${esc(tx(en, 'Kanály podľa kategórií. Kliknite na kategóriu pre rozbalenie.', 'Channels by category. Click a category to expand.'))}</p>
 <input type="search" id="tvq" class="tvq" placeholder="${esc(tx(en, '🔎 Hľadať kanál…', '🔎 Search channel…'))}" aria-label="${esc(tx(en, 'Hľadať kanál', 'Search channel'))}" autocomplete="off">
 <p class="hint" id="tvnone" hidden>${esc(tx(en, 'Žiadny kanál nezodpovedá hľadaniu.', 'No channel matches your search.'))}</p>
-${[...g].map(([c, l]) => `<details class="tvg"><summary><span class="tt">${esc(c)}</span><span class="tm">${l.length} ${esc(tx(en, 'kanálov', 'channels'))}</span></summary><ul class="tvl">${l.map((r) => `<li class="tch" data-n="${esc((r.name + ' ' + c).toLowerCase())}">${logoImg(r, 40, broken)}<span class="tcn">${esc(r.name)}</span><a class="trb" href="/${esc(req.params.slug)}/kanal-nahlasit/${r.id}${en ? '?lang=en' : ''}" rel="nofollow" title="${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}">⚠<span> ${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}</span></a></li>`).join('')}</ul></details>`).join('')}
+${[...g].map(([c, l]) => `<details class="tvg"><summary><span class="tt">${esc(c)}</span><span class="tm">${l.length} ${esc(tx(en, 'kanálov', 'channels'))}</span></summary><ul class="tvl">${l.map((r) => `<li class="tch" data-id="${r.id}" data-n="${esc((r.name + ' ' + c).toLowerCase())}">${logoImg(r, 40, broken)}<span class="tcn">${esc(r.name)}</span><a class="trb" href="/${esc(req.params.slug)}/kanal-nahlasit/${r.id}${en ? '?lang=en' : ''}" rel="nofollow" title="${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}">⚠<span> ${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}</span></a></li>`).join('')}</ul></details>`).join('')}
 <p class="hint">${rows.length} ${esc(tx(en, 'kanálov celkom', 'channels in total'))}</p></section><script src="/static/tvch.js?v=2" defer></script>`;
   };
 
@@ -359,10 +360,11 @@ ${j.bad.length ? `<div class="card"><h2>Nefunkčné</h2>${j.bad.slice(0, 500).ma
   };
   admin.get('/kanaly-katalog', needAuth, wrap(async (req, res) => {
     const rows = await all(), g = groups(rows), cats = [...g.keys()], broken = await brokenIds();
+    const ep = ctx.epgAdminPrep ? await ctx.epgAdminPrep() : null;
     const rc = Object.fromEntries((await pool.query('SELECT channel_id, COUNT(*) FILTER (WHERE NOT resolved)::int AS o, COUNT(*)::int AS n FROM tv_channel_reports GROUP BY channel_id')).rows.map((r) => [r.channel_id, r]));
     const rcs = (id) => rc[id] ? ` <span class="hint">⚠ ${rc[id].o} otvorených / ${rc[id].n} hlásení</span>` : '';
     const m = MS[req.query.m] ? `<p class="${/^(ok|added|trashed|imported|logos)$/.test(req.query.m) ? 'ok' : 'err'}">${esc(MS[req.query.m])}</p>` : '';
-    res.send(page('Katalóg kanálov', `<h1>📺 Katalóg kanálov</h1>${m}<p><a href="/admin">← Admin</a> · <a href="/admin#kanaly">nastavenia sekcie</a> · <a href="/admin#trash">🗑️ Kôš</a></p>
+    res.send(page('Katalóg kanálov', `<h1>📺 Katalóg kanálov</h1>${m}<p><a href="/admin">← Admin</a> · <a href="/admin#kanaly">nastavenia sekcie</a> · <a href="/admin#trash">🗑️ Kôš</a> · <a href="/admin/epg">🗓 TV program (EPG)</a></p>
 <p class="hint">Ukladajú sa iba <b>názvy, kategórie a logá</b>. Stream URL, M3U/Xtream údaje ani playlist odkazy sa neprijímajú. Verejne sa zobrazuje na stránke Kanály (zoskupené podľa kategórií, s vyhľadávaním). Texty na verejnej stránke upravíte v <a href="/admin/texty">✏️ Texty</a>.</p>
 <form method="post" action="/admin/tvch" class="card" id="add">${hid(req)}<h2>➕ Pridať kanál</h2>
 <label>Názov</label><input name="name" maxlength="120" required>
@@ -377,7 +379,7 @@ ${await reportsAdmin(req)}<h2>Kanály (${rows.length})</h2>
 ${[...g].map(([c, l]) => `<details class="card"><summary><b>${esc(c)}</b> <span class="hint">${l.length} kanálov${l.some((r) => rc[r.id] && rc[r.id].o) ? ' · ⚠ ' + l.reduce((a, r) => a + ((rc[r.id] || {}).o || 0), 0) + ' hlásení' : ''}${l.some((r) => !r.visible) ? ` · ${l.filter((r) => !r.visible).length} skrytých` : ''}</span></summary>
 ${l.map((r, i) => `<div class="card"><form method="post" action="/admin/tvch/${r.id}/edit">${hid(req)}<p>${logoImg(r, 28, broken)}${r.logo ? '' : ' <span class="hint">(generované)</span>'} <b>${esc(r.name)}</b>${r.visible ? '' : ' <span class="hint">(skrytý)</span>'}${rcs(r.id)}</p>
 <label>Názov</label><input name="name" maxlength="120" value="${esc(r.name)}" required><label>Kategória</label>${catSel(cats, c, 'category')}<input name="newcat" maxlength="80" placeholder="alebo nová kategória">
-<label>Logo (https) · <a href="/admin/tvch/${r.id}/logo">🔎 Nájsť logo</a></label><input name="logo" type="url" maxlength="500" value="${esc(r.logo)}"><label class="ck"><input type="checkbox" name="visible" value="1"${r.visible ? ' checked' : ''}> Viditeľný</label><button>Uložiť</button></form>
+<label>Logo (https) · <a href="/admin/tvch/${r.id}/logo">🔎 Nájsť logo</a></label><input name="logo" type="url" maxlength="500" value="${esc(r.logo)}">${ep ? ctx.epgAdminField(ep, r) : ''}<label class="ck"><input type="checkbox" name="visible" value="1"${r.visible ? ' checked' : ''}> Viditeľný</label><button>Uložiť</button></form>
 <div class="row">${i > 0 ? `<form method="post" action="/admin/tvch/${r.id}/move">${hid(req)}<input type="hidden" name="dir" value="up"><button>▲</button></form>` : ''}${i < l.length - 1 ? `<form method="post" action="/admin/tvch/${r.id}/move">${hid(req)}<input type="hidden" name="dir" value="down"><button>▼</button></form>` : ''}
 <form method="post" action="/admin/tvch/${r.id}/toggle">${hid(req)}<button>${r.visible ? '🙈 Skryť' : '👁 Zobraziť'}</button></form>
 <form method="post" action="/admin/tvch/${r.id}/delete">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> potvrdiť</label><button class="d">🗑 Zmazať</button></form></div></div>`).join('')}</details>`).join('') || '<p class="hint">Katalóg je prázdny.</p>'}`, 'adm'));
@@ -393,7 +395,9 @@ ${l.map((r, i) => `<div class="card"><form method="post" action="/admin/tvch/${r
   }));
   admin.post('/tvch/:id(\\d+)/edit', needAuth, csrf, wrap(async (req, res) => {
     const r = input(req.body); if (r.err) return back(res, r.err);
-    await pool.query('UPDATE tv_channels SET name=$1,category=$2,logo=$3,visible=$4 WHERE id=$5', [r.name, r.category, r.logo, !!req.body.visible, +req.params.id]); drop(); back(res, 'ok');
+    await pool.query('UPDATE tv_channels SET name=$1,category=$2,logo=$3,visible=$4 WHERE id=$5', [r.name, r.category, r.logo, !!req.body.visible, +req.params.id]); drop();
+    if (ctx.epgOnEdit && !(await ctx.epgOnEdit(+req.params.id, req.body))) return back(res, 'badepg');
+    back(res, 'ok');
   }));
   admin.post('/tvch/:id(\\d+)/toggle', needAuth, csrf, wrap(async (req, res) => { await pool.query('UPDATE tv_channels SET visible=NOT visible WHERE id=$1', [+req.params.id]); drop(); back(res, 'ok'); }));
   admin.post('/tvch/:id(\\d+)/move', needAuth, csrf, wrap(async (req, res) => {

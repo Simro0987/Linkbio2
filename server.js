@@ -42,17 +42,24 @@ const FONTS = {
   rounded: { name: 'Zaoblené', css: 'ui-rounded,"SF Pro Rounded","Hiragino Maru Gothic ProN",Quicksand,Nunito,system-ui,sans-serif' },
   humanist: { name: 'Humanistické', css: 'Seravek,"Gill Sans Nova",Ubuntu,Calibri,"DejaVu Sans",source-sans-pro,sans-serif' },
 };
+function brandSvg(d, c) { return `<svg class="sico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="11" fill="#fff"/><path fill="${c}" d="${d}"/></svg>`; }
 const SOCIALS = [
   ['telegram', 'Telegram', '✈️'], ['instagram', 'Instagram', '📷'], ['facebook', 'Facebook', '📘'],
   ['x', 'X', '✖️'], ['tiktok', 'TikTok', '🎵'], ['whatsapp', 'WhatsApp', '💬'], ['signal', 'Signal', '🔒'], ['youtube', 'YouTube', '▶️'], ['email', 'E-mail', '✉️'],
+  // group links – official brand marks (Simple Icons, CC0) on a white disc, attributes only (CSP: no inline styles)
+  ['tg_group', 'Telegram skupina', brandSvg('M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z', '#26A5E4')],
+  ['fb_group', 'Facebook skupina', brandSvg('M9.101 23.691v-7.98H6.627v-3.667h2.474v-1.58c0-4.085 1.848-5.978 5.858-5.978.401 0 .955.042 1.468.103a8.68 8.68 0 0 1 1.141.195v3.325a8.623 8.623 0 0 0-.653-.036 26.805 26.805 0 0 0-.733-.009c-.707 0-1.259.096-1.675.309a1.686 1.686 0 0 0-.679.622c-.258.42-.374.995-.374 1.752v1.297h3.919l-.386 2.103-.287 1.564h-3.246v8.245C19.396 23.238 24 18.179 24 12.044c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.628 3.874 10.35 9.101 11.647Z', '#0866FF')],
 ];
+// on/off switches for group links (separate keys – not soc_* so they are neither encrypted nor URL-validated)
+const SOC_TOGGLE = ['tg_group', 'fb_group'];
+const socOn = (s, k) => !!s['soc_' + k] && (!SOC_TOGGLE.includes(k) || s['socon_' + k] !== '0');
 const LNK_PUBLIC = String(process.env.LNKBIO_PUBLIC_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '');
 const CHECKOUT_ORIGIN = String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
 const SHORT_PAY = LNK_PUBLIC + '/platby';
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
   meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
-  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: SHORT_PAY, chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', ui_texts: '{}', cen_home: '1', tvbar_on: '1', kan_intro: '', kan_intro_en: '', kan_status: '1', kan_catalog: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])),
+  btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: SHORT_PAY, chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', ui_texts: '{}', cen_home: '1', tvbar_on: '1', kan_intro: '', kan_intro_en: '', kan_status: '1', kan_catalog: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])), socon_tg_group: '1', socon_fb_group: '1',
 };
 
 async function init() {
@@ -307,7 +314,7 @@ app.get('/api/site-info', wrap(async (req, res) => {
   res.json({ title: s.title, bio: s.bio, chat_enabled: s.chat_enabled !== '0', pay_link: SHORT_PAY,
     pages: Object.fromEntries(Object.entries(PAGES).map(([k, [n, u]]) => [n, base + u])),
     about: s.about_text, payments: s.pay_text, contact: s.contact_text,
-    contacts: Object.fromEntries(SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n]) => [n, s['soc_' + k]])),
+    contacts: Object.fromEntries(SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n]) => [n, s['soc_' + k]])),
     pricing: { intro: s.pricing_intro, footnote: s.pricing_note, page: base + '/cennik', plans: (await getList('plans')).filter(p => p.active).map(p => ({ name: p.name, price: fmtEur(p.price), old_price: p.old_price ? fmtEur(p.old_price) : '', period: perLabel(p.period, false), popular: p.popular, badge: p.badge, includes: p.features.split('\n').filter(Boolean), note: p.note, link: p.btn_url || planUrl(p) })) },
     faq: (await getList('faq')).map(x => ({ q: x.q, a: x.a })),
     channels: [...t.entries()].map(([r, m]) => ({ region: r, categories: [...m.entries()].map(([c, l]) => ({ name: c, items: l.slice(0, 40).map(x => x.name) })) })) });
@@ -375,7 +382,7 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 ${payMethods.dashCard()}
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
@@ -414,14 +421,14 @@ ${listAdmin(req, 'nav', await getList('nav'))}
 <label>URL platobnej brány (checkout)</label><input name="checkout_url" type="url" maxlength="2000" value="${esc(s.checkout_url)}">${chk('chat_enabled', s.chat_enabled !== '0', '💬 Zobraziť AI chatbota podpory na verejných stránkach')}<button>Uložiť texty</button></form>
 ${listAdmin(req, 'faq', await getList('faq'))}
 <form method="post" action="/admin/kanaly" class="card" id="kanaly">${hid(req)}<h2>📺 Sekcia „Kanály“</h2>
-<p><a class="btnl" href="/admin/kanaly-katalog">📺 Spravovať katalóg kanálov (pridať, upraviť, import CSV/Excel)</a></p><p class="hint">Stavový zoznam sa načítava automaticky zo <a href="/admin/stav">📡 Stav služieb</a> (jediný zdroj – kanály pridávajte/upravujte len tam). Názov, zobrazenie v menu a poradie nastavíte v <a href="#l-nav">Navigácii</a> (položka so stránkou „Kanály“).</p>
+<p><a class="btnl" href="/admin/kanaly-katalog">📺 Spravovať katalóg kanálov (pridať, upraviť, import CSV/Excel)</a> <a class="btnl" href="/admin/epg">🗓 TV program (EPG) a „Dnes v TV“</a></p><p class="hint">Stavový zoznam sa načítava automaticky zo <a href="/admin/stav">📡 Stav služieb</a> (jediný zdroj – kanály pridávajte/upravujte len tam). Názov, zobrazenie v menu a poradie nastavíte v <a href="#l-nav">Navigácii</a> (položka so stránkou „Kanály“).</p>
 <label>Úvodný text (SK)</label><textarea name="kan_intro" rows="2" maxlength="1000">${esc(s.kan_intro)}</textarea>
 <label>Úvodný text (EN)</label><textarea name="kan_intro_en" rows="2" maxlength="1000">${esc(s.kan_intro_en)}</textarea>
 ${chk('kan_status', s.kan_status !== '0', 'Zobraziť stav pri každom kanáli')}${chk('kan_catalog', s.kan_catalog === '1', 'Zobraziť aj starý katalóg (regióny/kategórie) pod zoznamom')}<button>Uložiť</button></form>
 ${listAdmin(req, 'channels', await getList('channels'))}
 ${await trashAdmin(req)}
-<form method="post" action="/admin/social" class="card">${hid(req)}<h2>Sociálne siete (voliteľné)</h2><p class="hint">Prázdne pole = nezobrazí sa.</p>
-${SOCIALS.map(([k, n, e]) => `<label>${e} ${n}</label><input name="${k}" value="${esc(s['soc_' + k])}" maxlength="${k === 'email' ? 254 : 2000}" ${k === 'email' ? 'type="email" placeholder="meno@domena.sk"' : 'type="url" placeholder="https://"'}>`).join('')}<button>Uložiť</button></form>
+<form method="post" action="/admin/social" class="card">${hid(req)}<h2>Sociálne siete (voliteľné)</h2><p class="hint">Prázdne pole = nezobrazí sa. Skupiny (Telegram / Facebook) sa dajú aj dočasne vypnúť bez mazania odkazu.</p>
+${SOCIALS.map(([k, n, e]) => `<label>${e} ${n}</label><input name="${k}" value="${esc(s['soc_' + k])}" maxlength="${k === 'email' ? 254 : 2000}" ${k === 'email' ? 'type="email" placeholder="meno@domena.sk"' : k === 'tg_group' ? 'type="url" placeholder="https://t.me/…"' : k === 'fb_group' ? 'type="url" placeholder="https://www.facebook.com/groups/…"' : 'type="url" placeholder="https://"'}>${SOC_TOGGLE.includes(k) ? `<label class="ck"><input type="checkbox" name="on_${k}" value="1"${s['socon_' + k] !== '0' ? ' checked' : ''}> Zobraziť ${esc(n)}</label>` : ''}`).join('')}<button>Uložiť</button></form>
 <div class="card"><h2>Záloha a obnova</h2><p><a class="btnl" href="/admin/export.json">⬇ Stiahnuť zálohu (JSON)</a></p>
 <form method="post" action="/admin/restore" enctype="multipart/form-data">${hid(req)}<label>Súbor zálohy (JSON, max 10 MB)</label><input type="file" name="backup" accept="application/json,.json" required>
 ${chk('confirm', false, 'Rozumiem, že obnova prepíše všetky nastavenia, tlačidlá, krátke odkazy a obrázky.')}<button class="d">Obnoviť zo zálohy</button></form></div>
@@ -460,6 +467,7 @@ admin.post('/social', needAuth, csrf, wrap(async (req, res) => {
     if (k === 'email') { if (!EMAIL_RE.test(v)) return ok(res, 'badsoc'); o['soc_' + k] = v; }
     else { const u = safeUrl(v); if (!u) return ok(res, 'badsoc'); o['soc_' + k] = u; }
   }
+  for (const k of SOC_TOGGLE) o['socon_' + k] = req.body['on_' + k] ? '1' : '0';
   await setSettings(o); ok(res);
 }));
 admin.post('/image/:k(logo|bg)', needAuth, (req, res, next) => upload(req, res, e => {
@@ -626,6 +634,7 @@ function validateBackup(j) {
     if (k === 'btn_style' && !['rounded', 'square'].includes(v)) throw 0;
     if (k === 'layout' && !['tv', 'classic'].includes(v)) throw 0;
     if (k === 'preset' && !PRESETS[v] && v !== 'custom') throw 0;
+    if (/^socon_/.test(k) && !/^[01]$/.test(v)) throw 0;
     if (/^soc_/.test(k) && v && !(k === 'soc_email' ? EMAIL_RE.test(v) : safeUrl(v) === v)) throw 0;
     st[k] = LONG ? clean(v.replace(/\r/g, ''), 5000) : k === 'bio' || k === 'bio_en' || k === 'meta_desc' ? clean(v, 300) : clean(v, k === 'footer' ? 200 : k.startsWith('soc_') ? 2000 : 80);
   }
@@ -900,6 +909,7 @@ const features = require('./features')({ app, admin, pool, getSettings, setSetti
   dropCache: () => { cache = null; }, buildExport, safeUrl, chTree: (...a) => chTree(...a), PROD });
 require('./extras')(Object.assign(features, { sniff, shell: (...a) => shell(...a), slugOk: (r) => slugOk(r), T, clean }));
 require('./tvch')(features);
+require('./epg')(features);
 const payMethods = require('./paymethods')(features);
 app.use('/admin', admin);
 
@@ -952,7 +962,7 @@ ${f.length ? `<ul class="pfeat">${f.map(x => `<li>${esc(x).replace(/(Návod na i
 }
 const para = t => esc(t).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 const btnHtml = b => `<a class="b${b.brand ? ' br br-' + b.brand : ''}" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`;
-const SOC_BRAND = { telegram: 'telegram', instagram: 'instagram', facebook: 'facebook', x: 'x', tiktok: 'tiktok', email: 'email', whatsapp: 'whatsapp', signal: 'signal', youtube: 'youtube' };
+const SOC_BRAND = { telegram: 'telegram', instagram: 'instagram', facebook: 'facebook', x: 'x', tiktok: 'tiktok', email: 'email', whatsapp: 'whatsapp', signal: 'signal', youtube: 'youtube', tg_group: 'telegram', fb_group: 'facebook' };
 const pubBtns = async sec => { const now = Date.now(); return (await getButtons()).filter(b => b.enabled && (b.section || 'home') === sec && inWindow(b, now)); };
 const slugOk = async (req) => { const s = await getSettings(); return req.params.slug === s.slug ? s : null; };
 // channel catalogue tree (cached, invalidated with list cache)
@@ -968,11 +978,11 @@ const chBase = s => '/' + s.slug + '/kanaly';
 app.get('/:slug', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const bs = await pubBtns('home');
-  const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => `<a href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
+  const soc = SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n, e]) => `<a href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
   const banner = await features.monitorBanner(req.lang).catch(() => '');
   await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
 ${s.layout === 'tv' ? (s.tvbar_on !== '0' ? `<div class="tvbar"><span class="live">${esc(T(req, '● LIVE'))}</span><span>${esc(T(req, '▶ Stream'))}</span><span>${esc(T(req, '📺 TV'))}</span><span>${esc(T(req, '⚙ Software'))}</span></div>` : '') : ''}</section>
-${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.cen_home !== '0' ? await pricingHtml(req, s) : ''}`);
+${features.dnesBlock ? await features.dnesBlock(req, s) : ''}${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.cen_home !== '0' ? await pricingHtml(req, s) : ''}`);
 }));
 app.get('/:slug/cennik', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
@@ -995,7 +1005,7 @@ app.get('/:slug/kanaly', wrap(async (req, res, next) => {
     const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
     if (regs.length) cat = `<h2 class="ph">${tx(en, 'Katalóg', 'Catalogue')}</h2><div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} ${T(req, 'kategórií')} • ${n} ${T(req, 'položiek')}</span></a>`).join('')}</div>`;
   }
-  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${await features.tvchPublic(req)}${cat}`);
+  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${await features.tvchPublic(req)}${features.epgAssets ? await features.epgAssets(req) : ''}${cat}`);
 }));
 app.get('/:slug/kanaly-katalog', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
@@ -1041,7 +1051,7 @@ ${s.checkout_url ? `<a class="b br br-platby" href="${esc(co)}" rel="noopener no
 }));
 app.get('/:slug/kontakt', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
-  const soc = SOCIALS.filter(([k]) => s['soc_' + k]).map(([k, n, e]) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow">${e} ${esc(n)}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`).join('');
+  const soc = SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n, e]) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow">${e} ${esc(n)}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`).join('');
   await shell(req, res, s, 'contact', T(req, 'Kontakt') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Kontakt')}</h1>${loc(req, s, 'contact_text') ? `<div class="prose">${para(loc(req, s, 'contact_text'))}</div>` : ''}${soc || `<p class="hint">${T(req, 'Kontakty zatiaľ nie sú vyplnené.')}</p>`}`);
 }));
 app.get('/:slug/faq', wrap(async (req, res, next) => {
@@ -1062,7 +1072,7 @@ app.get('/:slug/stav', wrap(async (req, res, next) => {
 app.use((req, res) => res.status(404).send(page('404', `<h1>404</h1><p class="bio">${T(req, 'Stránka neexistuje.')}</p>`)));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
 
-init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => {
+init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => features.epgInit()).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // keep-awake self-ping through the public Render URL every 10 min
   // + cross-ping the checkout service so waking one wakes the other
