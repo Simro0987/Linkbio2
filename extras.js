@@ -167,7 +167,7 @@ ${ds.length ? `<h2>${tx(en, 'Vyberte zariadenie', 'Pick your device')}</h2><div 
     const gs = await getGuides(); const s = await getSettings();
     res.send(page('Návody', `<h1>Návody</h1>${anav}${gmsg(req.query.m)}<p class="hint">Verejne: <a href="/${esc(s.slug)}/navody" target="_blank" rel="noopener">/${esc(s.slug)}/navody</a></p>
 ${gs.map((g) => `<div class="card"><h2>${esc(g.title)} ${g.visible ? '' : '<span class="hint">(skryté)</span>'}</h2><p class="hint">${g.steps.length} krokov · /${esc(g.slug)}</p><a class="btnl" href="/admin/navody/${g.id}">Upraviť</a></div>`).join('')}
-<details class="card"><summary>➕ Nový návod</summary><form method="post" action="/admin/navody">${hid(req)}<label>Názov</label><input name="title" required maxlength="80"><label>Slug (a-z, 0-9, -)</label><input name="slug" required maxlength="40" pattern="[a-z0-9-]+"><button>Vytvoriť</button></form></details>`, 'a adm'));
+<details class="card"><summary>➕ Nový návod</summary><form method="post" action="/admin/navody">${hid(req)}<label>Názov</label><input name="title" required maxlength="80"><label>Slug (a-z, 0-9, -)</label><input name="slug" required maxlength="40" pattern="[a-z0-9\\-]+"><button>Vytvoriť</button></form></details>`, 'a adm'));
   }));
   const slugRe = /^[a-z0-9-]{1,40}$/;
   admin.post('/navody', needAuth, csrf, wrap(async (req, res) => {

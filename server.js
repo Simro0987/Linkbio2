@@ -381,7 +381,7 @@ ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>
 <label>Titulok (EN, voliteľné)</label><input name="title_en" value="${esc(s.title_en)}" maxlength="80">
 <label>Krátke bio (EN, voliteľné)</label><textarea name="bio_en" maxlength="300" rows="2">${esc(s.bio_en)}</textarea>
-<label>Slug (adresa stránky)</label><input name="slug" value="${esc(s.slug)}" pattern="[a-z0-9-]{1,30}" maxlength="30" required>
+<label>Slug (adresa stránky)</label><input name="slug" value="${esc(s.slug)}" pattern="[a-z0-9\\-]{1,30}" maxlength="30" required>
 <label>Titulok v prehliadači &lt;title&gt; (prázdne = titulok)</label><input name="meta_title" value="${esc(s.meta_title)}" maxlength="80">
 <label>Meta popis (prázdne = bio)</label><textarea name="meta_desc" maxlength="300" rows="2">${esc(s.meta_desc)}</textarea>
 <label>Text v pätičke</label><input name="footer" value="${esc(s.footer)}" maxlength="200"><button>Uložiť</button></form>
@@ -398,7 +398,7 @@ ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<
 <label>URL</label><input name="url" type="url" maxlength="2000" required placeholder="https://">${btnExtra({})}${chk('enabled', true, 'Zobraziť na stránke')}${chk('newtab', false, 'Otvoriť v novej karte')}<button>Pridať</button></form>
 <h2>Krátke odkazy</h2>${slRows || '<p class="hint">Žiadne krátke odkazy.</p>'}
 <form method="post" action="/admin/short" class="card">${hid(req)}<h2>Nový krátky odkaz</h2>
-<label>Kód (voliteľné, a-z 0-9 pomlčka; prázdne = náhodný 7 znakov)</label><input name="code" pattern="[a-z0-9-]{1,40}" maxlength="40">
+<label>Kód (voliteľné, a-z 0-9 pomlčka; prázdne = náhodný 7 znakov)</label><input name="code" pattern="[a-z0-9\\-]{1,40}" maxlength="40">
 <label>Cieľová URL</label><input name="target_url" type="url" maxlength="2000" required placeholder="https://">
 <label>Platnosť do (Europe/Zurich, voliteľné)</label><input type="datetime-local" name="expires_at">${chk('active', true, 'Aktívny')}<button>Vytvoriť</button></form>
 ${listAdmin(req, 'nav', await getList('nav'))}
@@ -873,7 +873,7 @@ function listAdmin(req, t, rows) {
   const fld = (o = {}) => L.fields.map(([k, n, type, max, rq]) => type === 'bool' ? `<label class="ck"><input type="checkbox" name="${k}" value="1"${(o.id ? o[k] : !['newtab', 'popular'].includes(k)) ? ' checked' : ''}> ${n}</label>`
     : type === 'sel' ? `<label>${n}</label>${sel(k, NAV_PAGES, o[k] || '')}`
     : type === 'area' ? `<label>${n}</label><textarea name="${k}" maxlength="${max}" rows="3"${rq ? ' required' : ''}>${esc(o[k] || '')}</textarea>`
-    : `<label>${n}</label><input name="${k}"${type === 'url' ? ' type="url" placeholder="https://"' : ''} maxlength="${max}" value="${esc(o[k] || '')}"${rq ? ' required' : ''}>`).join('');
+    : `<label>${n}</label><input name="${k}"${type === 'url' ? ' type="url" placeholder="https://"' : type === 'eur' ? ' inputmode="decimal" autocomplete="off" placeholder="9,99"' : type === 'int' ? ' inputmode="numeric" autocomplete="off" placeholder="1"' : ''} maxlength="${max > 0 ? max : type === 'int' ? 3 : 12}" value="${esc(o[k] || '')}"${rq ? ' required' : ''}>`).join('');
   const body = rows.map((o, i) => `<details class="card${o.visible === false || o.active === false ? ' off' : ''}"><summary>${esc(o.label || o.q || o.name)}${o.price ? ` <span class="hint">${esc(fmtEur(o.price))} / ${esc(perLabel(o.period, false))}</span>` : ''}${o.region ? ` <span class="hint">${esc(o.region)} › ${esc(o.category)}</span>` : ''}</summary>
 <form method="post" action="/admin/l/${t}/${o.id}/edit">${hid(req)}${fld(o)}<button>Uložiť</button></form><div class="row">
 ${i > 0 ? `<form method="post" action="/admin/l/${t}/${o.id}/move">${hid(req)}<input type="hidden" name="dir" value="up"><button class="g">↑</button></form>` : ''}
