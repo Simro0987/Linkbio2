@@ -1,0 +1,21 @@
+/* 👛 Adresy peňaženiek + 🔗 Odkazy podľa sumy (lnkbio admin) – mobile-first, stacked under 640px */
+.wlw h2{margin-top:0}
+.wlg{border:1px solid #263052;border-radius:12px;padding:10px;background:#0b1020;margin:0 0 10px;min-width:0}
+.wlg>summary{cursor:pointer;display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-weight:600;color:#f5f7ff}
+.wlr{display:grid;grid-template-columns:1fr;gap:6px;padding:8px 0;border-top:1px solid #1c2440;min-width:0}
+.wlr:first-of-type{border-top:0}
+.wlr.off .wla,.wlr.off b{opacity:.5}
+.wla{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;overflow-wrap:anywhere;word-break:break-all;color:#c9d4ff}
+.wlbig{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:1.15rem;line-height:1.6;letter-spacing:.04em;overflow-wrap:anywhere;word-break:break-all;background:#0b1020;border:2px solid #f59e0b;border-radius:10px;padding:12px;color:#fff}
+.wlm{color:#7480a8;font-size:.78rem;overflow-wrap:anywhere}
+.wlx{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.wlx form{display:inline;margin:0}
+.wlamt{font-weight:800;white-space:nowrap}
+.wlform select,.wlform input:not([type=checkbox]),.wlform textarea{max-width:100%;min-width:0;width:100%;box-sizing:border-box}
+.wlform .grid2{grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr))}
+.wlform .grid2>div{min-width:0}
+.wlaud{width:100%;border-collapse:collapse;font-size:.8rem}
+.wlaud td,.wlaud th{border-top:1px solid #1c2440;padding:6px 4px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+.wlwarn{background:#78350f55;border:1px solid #f59e0b;border-radius:10px;padding:10px 12px}
+@media (min-width:640px){.wlr{grid-template-columns:1fr auto;align-items:center}.wlx{justify-content:flex-end}}
+@media (max-width:639px){.wlaud thead{display:none}.wlaud tr{display:block;border-top:1px solid #1c2440;padding:6px 0}.wlaud td{display:block;border:0;padding:2px 0}}

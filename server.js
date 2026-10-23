@@ -382,8 +382,9 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a>${walletsAdmin.links()}<a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 ${payMethods.dashCard()}
+${walletsAdmin.dashCard()}
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>
@@ -911,6 +912,7 @@ require('./extras')(Object.assign(features, { sniff, shell: (...a) => shell(...a
 require('./tvch')(features);
 require('./epg')(features);
 const payMethods = require('./paymethods')(features);
+const walletsAdmin = require('./wallets')(features);
 app.use('/admin', admin);
 
 // ---- short links ----

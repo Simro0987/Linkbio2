@@ -52,4 +52,11 @@ Owner chat: TELEGRAM_ADMIN_CHAT_ID (send /start to every bot once). Each webhook
 - Never print or commit secrets; change keys only via /admin/kluce (password-confirmed, audited).
 - Keep CSP (no inline scripts), CSRF on admin forms, rate limits, admin auth + 2FA.
 - Commit as `Simro0987 <Simro0987@users.noreply.gitlab.com>`; Render auto-deploys `main`.
-- Azteco: destination is ALWAYS a fresh BTCPay address; abort if BTCPay is unavailable.
+- Azteco: destination is Ryan's first enabled BTC address from 👛 Adresy peňaženiek (baseline balance is recorded, the voucher is confirmed by the balance increase). BTCPay is used ONLY for the „BTCPay“ checkout option.
+- Never generate wallets/keys/seeds; only store public addresses typed by the admin.
+
+## Wallet addresses + amount links (checkout = source of truth, Neon)
+- Checkout admin: `/admin/wallets` (👛 Adresy peňaženiek) and `/admin/amount-links` (🔗 Odkazy podľa sumy).
+- lnkbio admin: `/admin/penazenky` and `/admin/odkazy-podla-sumy` → signed bridge `POST /api/admin-bridge/wallets` and `/api/admin-bridge/amount-links` (same HMAC as `/api/admin-bridge/pay-methods`, env `PAY_ADMIN_BRIDGE_SECRET` on BOTH services, ±300 s, replay 409, 120/min).
+- Wallets: network, label, address, memo/tag, enabled, order; checksum-validated (Slovak errors), full-address confirm step before save (`confirm:true`), audit table `wallet_address_audit` + Telegram on every change. Checkout uses the first enabled address per network; networks without one are hidden on `/crypto-pay`.
+- Amount links: method + exact EUR amount + https link (tables `pay_amount_links`, `pay_amount_links_audit`). Exact match on checkout → `/link-pay` with only a „Zaplatiť“ button (link never sent to the browser, redirect via POST `/link-pay/go/:id`); no match → normal flow and guides.
