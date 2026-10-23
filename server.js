@@ -218,7 +218,7 @@ app.disable('x-powered-by');
 app.use(compression({ threshold: 0, filter: (req, res) => !/^image\//.test(String(res.getHeader('Content-Type') || '')) && compression.filter(req, res) }));
 app.use(helmet({
   contentSecurityPolicy: { useDefaults: false, directives: {
-    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: [CHECKOUT_ORIGIN], styleSrc: ["'self'"], imgSrc: ["'self'", "https:"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
+    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: ["'self'", CHECKOUT_ORIGIN], styleSrc: ["'self'"], imgSrc: ["'self'", "https:"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
   strictTransportSecurity: { maxAge: 63072000, includeSubDomains: true, preload: true },
   frameguard: { action: 'deny' },
   referrerPolicy: { policy: 'no-referrer' },
@@ -344,7 +344,7 @@ admin.post('/login', csrf, wrap(async (req, res) => {
 }));
 admin.post('/logout', csrf, (req, res) => { writeSess(res, { auth: false, csrf: crypto.randomBytes(24).toString('base64url') }); res.redirect(303, '/admin/login'); });
 
-const MSGS = { ok: 'Uložené.', needconfirm: 'Zmazanie treba potvrdiť zaškrtnutím.', trashed: 'Presunuté do koša – dá sa obnoviť dole v sekcii Kôš.', restored: 'Obnovené z koša.', badslug: 'Neplatný slug (a-z, 0-9, pomlčka, 1–30 znakov, nie rezervované slovo).', badurl: 'Neplatná URL (povolené len http/https).', badlabel: 'Chýba názov tlačidla.',
+const MSGS = { ok: 'Uložené.', pmok: '💳 Platobné metódy boli aktualizované.', needconfirm: 'Zmazanie treba potvrdiť zaškrtnutím.', trashed: 'Presunuté do koša – dá sa obnoviť dole v sekcii Kôš.', restored: 'Obnovené z koša.', badslug: 'Neplatný slug (a-z, 0-9, pomlčka, 1–30 znakov, nie rezervované slovo).', badurl: 'Neplatná URL (povolené len http/https).', badlabel: 'Chýba názov tlačidla.',
   badimg: 'Neplatný obrázok – povolené len PNG, JPG alebo WebP (SVG nie).', big: 'Obrázok je príliš veľký (max 2 MB).', noimg: 'Nevybrali ste súbor.', badsoc: 'Neplatná adresa sociálnej siete.',
   badtime: 'Neplatný dátum/čas.', badwin: 'Koniec musí byť po začiatku.', badcode: 'Neplatný alebo rezervovaný kód.', dupcode: 'Kód už existuje.', rate: 'Príliš veľa nových odkazov. Skúste neskôr.',
   badlist: 'Neplatné údaje položky (skontrolujte povinné polia a URL).', badjson: 'Neplatný súbor zálohy.', bigjson: 'Záloha je príliš veľká (max 10 MB).', noconfirm: 'Potvrďte obnovu zaškrtnutím.', restored: 'Záloha bola obnovená.',
@@ -353,7 +353,7 @@ const sel = (name, opts, cur) => `<select name="${name}">${Object.entries(opts).
 
 admin.get('/', needAuth, wrap(async (req, res) => {
   const s = await getSettings(); const bs = await getButtons();
-  const m = MSGS[req.query.m] ? `<div class="msg ${/^(ok|pwok|restored)$/.test(req.query.m) ? '' : 'err'}">${esc(MSGS[req.query.m])}</div>` : '';
+  const m = MSGS[req.query.m] ? `<div class="msg ${/^(ok|pwok|restored|pmok)$/.test(req.query.m) ? '' : 'err'}">${esc(MSGS[req.query.m])}</div>` : '';
   const chk = (n, v, t) => `<label class="ck"><input type="checkbox" name="${n}" value="1"${v ? ' checked' : ''}> ${t}</label>`;
   const rows = bs.map((b, i) => `<div class="card${b.enabled ? '' : ' off'}"><form method="post" action="/admin/buttons/${b.id}/edit">${hid(req)}
 <label>Emoji ikona (voliteľné)</label><input name="emoji" value="${esc(b.emoji)}" maxlength="16">
@@ -375,7 +375,8 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a><a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+${payMethods.dashCard()}
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>
@@ -428,7 +429,7 @@ ${chk('confirm', false, 'Rozumiem, že obnova prepíše všetky nastavenia, tla�
 <label>Aktuálne heslo</label><input type="password" name="current" autocomplete="current-password" required maxlength="200">
 <label>Nové heslo (min. 12 znakov)</label><input type="password" name="new1" autocomplete="new-password" required minlength="12" maxlength="200">
 <label>Nové heslo znova</label><input type="password" name="new2" autocomplete="new-password" required minlength="12" maxlength="200"><button>Zmeniť heslo</button></form>
-<form method="post" action="/admin/logout">${hid(req)}<button class="g">Odhlásiť</button></form>`, 'a adm'));
+<form method="post" action="/admin/logout">${hid(req)}<button class="g">Odhlásiť</button></form>`, 'a adm', '', payMethods.HEAD));
 }));
 admin.post('/settings', needAuth, csrf, wrap(async (req, res) => {
   const slug = String(req.body.slug || '').trim();
@@ -899,6 +900,7 @@ const features = require('./features')({ app, admin, pool, getSettings, setSetti
   dropCache: () => { cache = null; }, buildExport, safeUrl, chTree: (...a) => chTree(...a), PROD });
 require('./extras')(Object.assign(features, { sniff, shell: (...a) => shell(...a), slugOk: (r) => slugOk(r), T, clean }));
 require('./tvch')(features);
+const payMethods = require('./paymethods')(features);
 app.use('/admin', admin);
 
 // ---- short links ----
