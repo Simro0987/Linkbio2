@@ -440,7 +440,7 @@ ${listAdmin(req, 'nav', await getList('nav'))}
 <label>URL platobnej brány (checkout)</label><input name="checkout_url" type="url" maxlength="2000" value="${esc(s.checkout_url)}">${chk('chat_enabled', s.chat_enabled !== '0', '💬 Zobraziť AI chatbota podpory na verejných stránkach')}<button>Uložiť texty</button></form>
 ${listAdmin(req, 'faq', await getList('faq'))}
 <form method="post" action="/admin/kanaly" class="card" id="kanaly">${hid(req)}<h2>📺 Sekcia „Kanály“</h2>
-<p><a class="btnl" href="/admin/kanaly-katalog">📺 Spravovať katalóg kanálov (pridať, upraviť, import CSV/Excel)</a> <a class="btnl" href="/admin/epg">🗓 TV program (EPG) a „Dnes v TV“</a></p><p class="hint">Stavový zoznam sa načítava automaticky zo <a href="/admin/stav">📡 Stav služieb</a> (jediný zdroj – kanály pridávajte/upravujte len tam). Názov, zobrazenie v menu a poradie nastavíte v <a href="#l-nav">Navigácii</a> (položka so stránkou „Kanály“).</p>
+<p><a class="btnl" href="/admin/kanaly-katalog">📺 Spravovať katalóg kanálov (pridať, upraviť, import CSV/Excel)</a> <a class="btnl" href="/admin/epg">🗓 TV program (EPG) a „Dnes v TV“</a> <a class="btnl" href="/admin/udalosti">🔥 Top udalosti v TV (pripnúť, kľúčové slová)</a></p><p class="hint">Stavový zoznam sa načítava automaticky zo <a href="/admin/stav">📡 Stav služieb</a> (jediný zdroj – kanály pridávajte/upravujte len tam). Názov, zobrazenie v menu a poradie nastavíte v <a href="#l-nav">Navigácii</a> (položka so stránkou „Kanály“).</p>
 <label>Úvodný text (SK)</label><textarea name="kan_intro" rows="2" maxlength="1000">${esc(s.kan_intro)}</textarea>
 <label>Úvodný text (EN)</label><textarea name="kan_intro_en" rows="2" maxlength="1000">${esc(s.kan_intro_en)}</textarea>
 ${chk('kan_status', s.kan_status !== '0', 'Zobraziť stav pri každom kanáli')}${chk('kan_catalog', s.kan_catalog === '1', 'Zobraziť aj starý katalóg (regióny/kategórie) pod zoznamom')}<button>Uložiť</button></form>
@@ -1002,7 +1002,7 @@ app.get('/:slug', wrap(async (req, res, next) => {
   const banner = await features.monitorBanner(req.lang).catch(() => '');
   await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
 ${s.layout === 'tv' ? (s.tvbar_on !== '0' ? `<div class="tvbar"><span class="live">${esc(T(req, '● LIVE'))}</span><span>${esc(T(req, '▶ Stream'))}</span><span>${esc(T(req, '📺 TV'))}</span><span>${esc(T(req, '⚙ Software'))}</span></div>` : '') : ''}</section>
-${features.dnesBlock ? await features.dnesBlock(req, s) : ''}${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.cen_home !== '0' ? await pricingHtml(req, s) : ''}`);
+${features.eventsBlock ? await features.eventsBlock(req, s, 'home') : ''}${features.dnesBlock ? await features.dnesBlock(req, s) : ''}${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.cen_home !== '0' ? await pricingHtml(req, s) : ''}`);
 }));
 app.get('/:slug/cennik', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
@@ -1025,7 +1025,7 @@ app.get('/:slug/kanaly', wrap(async (req, res, next) => {
     const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
     if (regs.length) cat = `<h2 class="ph">${tx(en, 'Katalóg', 'Catalogue')}</h2><div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} ${T(req, 'kategórií')} • ${n} ${T(req, 'položiek')}</span></a>`).join('')}</div>`;
   }
-  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${await features.tvchPublic(req)}${features.epgAssets ? await features.epgAssets(req) : ''}${cat}`);
+  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${features.eventsBlock ? await features.eventsBlock(req, s, 'kanaly') : ''}${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${await features.tvchPublic(req)}${features.epgAssets ? await features.epgAssets(req) : ''}${cat}`);
 }));
 app.get('/:slug/kanaly-katalog', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();

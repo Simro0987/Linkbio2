@@ -22,7 +22,7 @@ const isSrcFeed = (f) => /^src:\d+$/.test(String(f || ''));
 // IPTV playlists / Xtream panels are never accepted (only schedule files)
 const SRC_MAX = 10;
 const UA = { 'user-agent': 'lnkbio-epg/1.0 (+https://lnkbio.onrender.com)' };
-const ASSET_V = (() => { try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static/epg.js')) + fs.readFileSync(path.join(__dirname, 'static/epg.css'))).digest('hex').slice(0, 8); } catch { return '1'; } })();
+const ASSET_V = (() => { try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static/epg.js')) + fs.readFileSync(path.join(__dirname, 'static/epg.css')) + fs.readFileSync(path.join(__dirname, 'static/tev.js'))).digest('hex').slice(0, 8); } catch { return '1'; } })();
 const ADULT = /pre dospelých|pro dospělé|erotic|erotik|\bxxx\b|\badult\b|18\+/i;
 const JUNK = /přestávka|prestavka|nevysiela|nevysílá|nočné vysielanie|noční vysílání|teleshop|teleshopping|programme resumes|sendepause|koniec vysielania|konec vysílání|^\s*-\s*$|^\s*(n\/a|tba|tbd)\s*$/i;
 const tnorm = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -51,8 +51,8 @@ module.exports = function install(ctx) {
   let mapCache = null, nowCache = null, dnesCache = null, srcCache = null; const dayCache = new Map();
   const sources = async () => srcCache || (srcCache = (await pool.query('SELECT * FROM epg_src ORDER BY id')).rows);
   let sportCache = null;
-  const dropCaches = () => { mapCache = null; nowCache = null; dnesCache = null; sportCache = null; dayCache.clear(); if (G) G.drop(); };
-  let G = null; // genre guide (epgguide.js)
+  const dropCaches = () => { mapCache = null; nowCache = null; dnesCache = null; sportCache = null; dayCache.clear(); if (G) G.drop(); if (E) E.drop(); };
+  let G = null, E = null; // genre guide (epgguide.js), top events (epgevents.js)
   const channels = async () => (ctx.tvchAll ? ctx.tvchAll() : (await pool.query('SELECT id,name,category,logo,ord,visible FROM tv_channels ORDER BY ord,id')).rows);
   const loadMap = async () => mapCache || (mapCache = new Map((await pool.query('SELECT channel_id,epg_id,manual,score,shift FROM epg_map')).rows.map((r) => [r.channel_id, r])));
 
@@ -64,6 +64,7 @@ module.exports = function install(ctx) {
     await pool.query(`CREATE INDEX IF NOT EXISTS epg_prog_s ON epg_prog (s)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS dnes_pin (id SERIAL PRIMARY KEY, channel_id INT NOT NULL, s TIMESTAMPTZ NOT NULL, e TIMESTAMPTZ NOT NULL, title TEXT NOT NULL, kind TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS dnes_hide (k TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    if (E) await E.init();
     await pool.query(`CREATE TABLE IF NOT EXISTS epg_poster (k TEXT PRIMARY KEY, url TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '', at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`ALTER TABLE epg_map ADD COLUMN IF NOT EXISTS shift INT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE epg_poster ADD COLUMN IF NOT EXISTS pop INT NOT NULL DEFAULT 0`);
@@ -353,7 +354,7 @@ module.exports = function install(ctx) {
   const FOREIGN = /maďar|madar|poľs|pols|nemec|rusk|ukrajin|švajč|svajc|zahrani|khl|dospel|18\+/i;
   const SKCZCAT = /sloven|česk|cesk|lokáln|lokaln/i;
   const skcz = (r) => !FOREIGN.test(r.category) && (SKCZCAT.test(r.category) || /\.(sk|cz)$/i.test(r.epg));
-  const BIGSPORT = /liga majstrov|liga mistr|champions league|europa league|konferen[čc]n|conference league|premier league|bundesliga|la ?liga|serie a|ligue 1|nik[eé] lig|chance lig|fortuna lig|tipsport|tipos|extralig|\bnhl\b|\bnba\b|\bnfl\b|majstrovstv|mistrovstv|world cup|\beuro 20|olymp|\bf1\b|formul[ae] 1|grand prix|wimbledon|roland garros|us open|australian open|el cl[aá]sico|fin[aá]le|\bfinal\b|semifin|play-?off|derby|super bowl|\bufc\b|\boktagon/i;
+  const BIGSPORT = /liga majstrov|liga mistr|champions league|europa league|konferen[čc]n|conference league|premier league|bundesliga|la ?liga|serie a|ligue 1|nik[eé] lig|chance lig|fortuna lig|tipsport|tipos|extralig|\bnhl\b|\bnba\b|\bnfl\b|majstrovstv|mistrovstv|world cup|\beuro 20|olymp|\bf1\b|formul[ae] 1|grand prix|wimbledon|roland garros|us open|australian open|el cl[aá]sico|fin[aá]le|\bfinal\b|semifin|play-?off|derby|super bowl|\bufc\b|\boktagon|ballon d.?or|zlat[aá] lopt|zlat[yý] m[ií][čc]/i;
   const NATTEAM = /\b(slovensk[oa]|česk[oa]|cesk[oa]|slovakia|czechia|czech republic|reprezent)/i;
   const BIGCLUB = /slovan|sparta|slavia|plze[nň]|real madrid|barcelona|bayern|liverpool|manchester|arsenal|chelsea|juventus|\binter\b|\bmilan\b|\bpsg\b|dortmund|kometa|t[řr]inec|pardubice|ko[šs]ice|\bnitra|zvolen|bystrica|trnava|žilina|zilina/i;
   // extra points for the day's TOP: big sport, national team, popular/high-rated film (Wikidata), premiere
@@ -657,7 +658,7 @@ ${list.length < SRC_MAX ? `<form method="post" action="/admin/epg/src" class="sr
     const dn = await topItems({ all: true }), pub = await topItems(); const hidden = (await pool.query('SELECT k,title,created_at FROM dnes_hide ORDER BY created_at DESC LIMIT 100')).rows;
     const vis = chans.filter((r) => r.visible);
     const item = (x) => `<div class="row"><span>${x.best ? '★ <b>NAJ</b> ' : ''}<b>${esc(dayLbl(x.s, false))} ${esc(hm(x.s))}</b> ${C.KIND_ICON[x.kind] || ''} ${esc(x.title)} · <span class="hint">${esc(x.ch.name)}${x.score < 999 ? ' · skóre ' + x.score + (x.boost ? ' (TOP +' + x.boost + ')' : '') : ''}${x.dupe ? ' · duplicita' : ''}${x.hidden ? ' · skryté' : ''}</span></span>${x.pin ? `<form method="post" action="/admin/epg/pin/${x.pin}/delete">${hid(req)}<button class="d">🗑 Odopnúť</button></form>` : `${x.hidden ? '' : `<form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.k)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť</button></form><form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.tk)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť titul</button></form>`}<form method="post" action="/admin/epg/pin">${hid(req)}<input type="hidden" name="channel_id" value="${x.ch.id}"><input type="hidden" name="s" value="${esc(toLocal(x.s))}"><input type="hidden" name="dur" value="${Math.round((x.e - x.s) / 60e3)}"><input type="hidden" name="title" value="${esc(x.title)}"><input type="hidden" name="kind" value="${esc(x.kind)}"><button>📌 Pripnúť</button></form>`}</div>`;
-    res.send(page('TV program (EPG)', `<h1>🗓 TV program (EPG) &amp; Top v TV</h1>${msg(req.query)}<p><a href="/admin">← Admin</a> · <a href="/admin/kanaly-katalog">📺 Katalóg kanálov</a></p>
+    res.send(page('TV program (EPG)', `<h1>🗓 TV program (EPG) &amp; Top v TV</h1>${msg(req.query)}<p><a href="/admin">← Admin</a> · <a href="/admin/kanaly-katalog">📺 Katalóg kanálov</a> · <a href="/admin/udalosti">🔥 Top udalosti (pripnúť, kľúčové slová)</a></p>
 <p class="hint">Zdroj: <b>epgshare01.online</b> – bezplatné verejné XMLTV súbory (iba programové údaje: čas, názov relácie, kategória) + <a href="#zdroje">vlastné EPG zdroje</a>. Ukladá sa celý program na ~${esc(c.epg_ahead)} h dopredu pre kanály na stránke, ďalšie dni (do 7) iba kandidáti na „Top týždňa“ (filmy, priame prenosy, veľké relácie). Žiadne streamy ani playlisty.</p>
 <div class="card"><h2>📊 Stav</h2><p>Posledná obnova: <b>${esc(ago(lastRun))}</b>${lastMs ? ` (${Math.round(+lastMs / 1000)} s)` : ''} · plná: ${esc(ago(lastFull))} · interval ${esc(c.epg_hours)} h${status.running ? ` · <b>práve beží: ${esc(status.phase)} ${esc(status.feed)}</b>` : ''}</p>
 <p>Kanály: <b>${st.mapped}</b> s programom · ${st.none} bez párovania · ${st.manual} ručne · ${st.skip} vynechaných (kategórie) · spolu ${st.all}. Uložených relácií: ${nprog.n}${nprog.a ? ` (${esc(hm(+nprog.a))} – ${esc(new Date(nprog.b).toISOString().slice(0, 10))} ${esc(hm(+nprog.b))})` : ''}.</p>
@@ -739,5 +740,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
   }));
   admin.post('/epg/pin/:id(\\d+)/delete', needAuth, csrf, wrap(async (req, res) => { await pool.query('DELETE FROM dnes_pin WHERE id=$1', [+req.params.id]); dropCaches(); back(res, 'del', 'nahlad'); }));
   G = require('./epgguide')(ctx, { cfg, D, visibleMapped, skcz, dayStart, dayLbl, hm, localHour, jsonOut, scoreOf, topBoost, posterKey, posterInfo, posterMap, posterOne, tnorm, JUNK, ADULT, DOCCH, back, MS });
+  E = require('./epgevents')(ctx, { visibleMapped, skcz, dayStart, dayLbl, hm, localHour, tnorm, JUNK, ADULT, channels, fromLocal, toLocal, ASSET_V });
+  ctx.eventsBlock = (req, s, where) => E.block(req, s, where);
   ctx.epgRefresh = refresh;
 };
