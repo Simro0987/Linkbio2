@@ -222,6 +222,21 @@ setInterval(() => { const now = Date.now(); for (const [k, v] of fails) if (v.un
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+// 💶 merged payment module (former checkout) – PAY_MODULE=off|shadow|live|on; mounted before compression/helmet,
+// it keeps its own CSP (nonce), body parsers and compression. Only its own paths are handed over (pay/index.js).
+const pay = require('./pay').install(app, {
+  isAdmin: async (req) => { const x = readSess(req); if (!x || !x.auth) return false; return String(x.pv || '0') === (await getSettings()).pwver; },
+  getPlan: async (id) => { const p = (await getList('plans')).find(x => x.id === Number(id)); return p ? { id: p.id, name: p.name, name_en: p.name_en, amount: Number(p.price), period: Number(p.period) || 1, active: !!p.active } : null; },
+});
+if (pay) for (const seg of pay.segments) RESERVED.add(seg);
+const payCard = () => {
+  if (!pay) return '';
+  const ro = pay.mode === 'shadow' ? ' <span class="hint">(náhľad – len čítanie, živé platby beží ešte starý checkout)</span>' : '';
+  const L = [['/admin/platby/sepa', '🏦 SEPA objednávky'], ['/admin/platby/sepa-chain', '🤖 Reťaz SEPA botov'], ['/admin/platby/guides', '📖 Návody platieb'], ['/admin/platby/kategorie', '🗂️ Kategórie'], ['/admin/platby/sumy', '💶 Podľa sumy'], ['/admin/platby/azteco', '₿ Azteco (zákazníci)']];
+  let poll = '';
+  try { const st = require('./pay/src/sepaBotChain').channelPollerStatus(); poll = `<p class="hint">Poller SEPA kanála: ${st.running ? '✅ beží' : st.disabledByEnv ? '⏸️ vypnutý (beží na starom checkoute alebo SEPA_CHANNEL_POLL=0)' : '⏸️ nebeží'}</p>`; } catch {}
+  return `<div class="card"><h2>💶 Platby</h2>${ro}<p class="row">${L.map(([h, t]) => `<a class="btnl sm" href="${h}">${t}</a>`).join('')}<a class="btnl sm g2" href="${pay.mode === 'shadow' ? '/platby-preview' : '/platby'}" target="_blank" rel="noopener">↗ Platobná stránka</a></p>${poll}</div>`;
+};
 app.use(compression({ threshold: 0, filter: (req, res) => !/^image\//.test(String(res.getHeader('Content-Type') || '')) && compression.filter(req, res) }));
 app.use(helmet({
   contentSecurityPolicy: { useDefaults: false, directives: {
@@ -387,6 +402,7 @@ ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<
   res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a>${walletsAdmin.links()}<a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 ${payMethods.dashCard()}
 ${walletsAdmin.dashCard()}
+${payCard()}
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
 <label>Krátke bio</label><textarea name="bio" maxlength="300" rows="3">${esc(s.bio)}</textarea>

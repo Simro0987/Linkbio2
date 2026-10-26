@@ -1,0 +1,19 @@
+{
+  "_note": "Orientačné poplatky pre zákazníka (odhad z verejných cenníkov providerov; upravte podľa reality). feePct = % zo sumy, feeFix = fixne EUR, max = max. suma EUR (null = bez limitu). Kľúč: id metódy, potom providerId, potom gateway, potom skupina (group:<key>).",
+  "group:cards": { "feePct": 4.5, "feeFix": 0, "max": null },
+  "group:sepa": { "feePct": 1.0, "feeFix": 0, "max": null },
+  "group:revolut": { "feePct": 0, "feeFix": 0, "max": null },
+  "group:mtpelerin": { "feePct": 1.3, "feeFix": 0, "max": null },
+  "group:keyless": { "feePct": 4.0, "feeFix": 0, "max": null },
+  "group:gift": { "feePct": 10, "feeFix": 0, "max": null },
+  "revolut_manual": { "feePct": 0, "feeFix": 0, "max": null },
+  "bank_sepa_manual": { "feePct": 0, "feeFix": 0, "max": null },
+  "getblitz": { "feePct": 1.0, "feeFix": 0, "max": null },
+  "mollie_banktransfer": { "feePct": 0, "feeFix": 0.25, "max": null },
+  "mollie_przelewy24": { "feePct": 2.2, "feeFix": 0.25, "max": null },
+  "mollie_blik": { "feePct": 1.6, "feeFix": 0.25, "max": null },
+  "paysafecard": { "feePct": 15, "feeFix": 0, "max": 250 },
+  "g2a": { "feePct": 10, "feeFix": 0, "max": null },
+  "banxa": { "feePct": 3.0, "feeFix": 0, "max": null },
+  "stripe": { "feePct": 3.0, "feeFix": 0, "max": null }
+}

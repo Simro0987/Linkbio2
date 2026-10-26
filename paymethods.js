@@ -10,7 +10,8 @@ const multer = require('multer');
 
 module.exports = function install(ctx) {
   const { admin, page, esc, hid, csrf, needAuth, wrap, audit } = ctx;
-  const ORIGIN = String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
+  const ORIGIN = ['live', 'on'].includes(String(process.env.PAY_MODULE || '').trim().toLowerCase()) ? '' : String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
+  const MERGED = () => ['live', 'on'].includes(String(process.env.PAY_MODULE || '').trim().toLowerCase());
   const BRIDGE = ORIGIN + '/api/admin-bridge/pay-methods';
   const secret = () => { const v = String(process.env.PAY_ADMIN_BRIDGE_SECRET || ''); return v.length >= 32 ? v : ''; };
   const BASE = '/admin/platobne-metody';
@@ -21,6 +22,17 @@ module.exports = function install(ctx) {
 
   class BridgeErr extends Error { constructor(kind, msg) { super(msg); this.kind = kind; } }
   async function call(action, extra = {}, timeoutMs = 45000) {
+    // merged payment module (PAY_MODULE=live|on): call the same actions in-process – no HTTP, no HMAC, no second service
+    const reg = MERGED() && global.__payBridge && global.__payBridge['/api/admin-bridge/pay-methods'];
+    if (reg) {
+      const fn = Object.prototype.hasOwnProperty.call(reg, String(action)) ? reg[String(action)] : null;
+      if (!fn) throw new BridgeErr('user', 'Neznáma akcia');
+      let out;
+      try { out = await fn(JSON.parse(JSON.stringify({ action, ...extra }))); } catch (x) { throw new BridgeErr('user', (x && x.message) || 'Chyba'); }
+      const j = out == null ? null : JSON.parse(JSON.stringify(out));
+      if (!j || !j.ok) throw new BridgeErr('user', (j && j.error) || 'Chyba');
+      return j;
+    }
     const sec = secret();
     if (!sec) throw new BridgeErr('off', 'nie je prepojené');
     const body = JSON.stringify({ action, ...extra, n: crypto.randomBytes(12).toString('hex') });
@@ -131,7 +143,7 @@ ${rs.auto ? '' : `<h3>Poradie skupín</h3><ul class="rkg">${groups}</ul>`}</div>
     res.setHeader('Cache-Control', 'no-store');
     let st, rs = null;
     try { [st, rs] = await Promise.all([call('state'), call('rank_state').catch((e) => (e.kind === 'user' ? null : Promise.reject(e)))]); } catch (e) { return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`)); }
-    res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${msgOf(req)}<p class="hint">Spôsoby platby na checkoute <a href="${esc(ORIGIN)}/" target="_blank" rel="noopener noreferrer">${esc(ORIGIN.replace(/^https:\/\//, ''))}</a>. Vypnuté metódy checkout zákazníkom nezobrazí a ani ich nedovolí použiť.</p>
+    res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${msgOf(req)}<p class="hint">Spôsoby platby na checkoute <a href="${esc(ORIGIN ? ORIGIN + "/" : "/platby")}" target="_blank" rel="noopener noreferrer">${esc(ORIGIN ? ORIGIN.replace(/^https:\/\//, '') : 'lnkbio.onrender.com/platby')}</a>. Vypnuté metódy checkout zákazníkom nezobrazí a ani ich nedovolí použiť.</p>
 ${rankCard(req, rs)}<div class="card pmw" id="platobne-metody">${render(req, st, true)}</div>${customForm(req, st, {})}`));
   }));
   // dashboard fragment (loaded by /static/pm.js so a sleeping checkout never blocks /admin)
@@ -159,7 +171,7 @@ ${rankCard(req, rs)}<div class="card pmw" id="platobne-metody">${render(req, st,
     let hit = LC.get(p);
     if (!hit || Date.now() - hit.t > 3600e3) {
       try {
-        const r = await fetch(ORIGIN + p, { signal: AbortSignal.timeout(20000), redirect: 'error' });
+        const r = await fetch((ORIGIN || 'http://127.0.0.1:' + (process.env.PORT || 3000)) + p, { signal: AbortSignal.timeout(20000), redirect: 'error' });
         const type = String(r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
         if (!r.ok || !/^image\/(svg\+xml|png|jpeg|webp|gif)$/.test(type)) return res.status(404).end();
         const buf = Buffer.from(await r.arrayBuffer());

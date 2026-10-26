@@ -1,0 +1,556 @@
+'use strict';
+
+/**
+ * Manual SEPA bank-transfer flow (Electrocoin-inspired UX, NO Electrocoin API).
+ *
+ * Ryan flow (2026-10-07):
+ * 1) Customer picks amount → order + 50 min countdown
+ * 2) Customer page: "Požiadaj o bankové údaje" — Ryan sends IBAN manually
+ * 3) Full order details emailed / TEMP-written to Ryan (NOTIFY_EMAIL)
+ * Slovak UI, no crypto marketing on the customer page.
+ *
+ * Inspired by: https://electrocoin.eu/en/buy?send=EUR&receive=BTC&…&send_method=sepa
+ */
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const addressPool = require('./addressPool');
+const destination = require('./destination');
+const btcpay = require('./btcpay');
+
+const ROOT = path.join(__dirname, '..');
+const IS_SERVERLESS = Boolean(
+  process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+);
+const DATA_DIR = IS_SERVERLESS
+  ? path.join('/tmp', 'chain2pay-data')
+  : path.join(ROOT, 'data');
+const TEMP_EMAIL_DIR = path.join(DATA_DIR, 'temp-emails');
+const UPLOAD_DIR = path.join(DATA_DIR, 'sepa-uploads');
+
+function env(name, fallback = '') {
+  return String(process.env[name] || fallback).trim();
+}
+
+function boolEnv(name) {
+  const v = env(name).toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+function ensureDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Default 50 min — Ryan deadline (customer waits for bank details). */
+function deadlineMinutes() {
+  const n = Number(env('SEPA_DEADLINE_MINUTES', '50'));
+  if (!Number.isFinite(n) || n < 5) return 50;
+  if (n > 60 * 24 * 7) return 60 * 24 * 7;
+  return Math.floor(n);
+}
+
+/**
+ * Optional bank template (Ryan may still paste Electrocoin IBAN into .env
+ * for his own notify email). Customer UI never shows these — Ryan sends IBAN manually.
+ */
+function bankTemplate() {
+  return {
+    iban: env('SEPA_BANK_IBAN'),
+    bic: env('SEPA_BANK_BIC'),
+    bankName: env('SEPA_BANK_NAME'),
+    beneficiary: env('SEPA_BANK_BENEFICIARY'),
+    beneficiaryAddress: env('SEPA_BANK_ADDRESS'),
+    currency: 'EUR',
+    countryHint: env('SEPA_BANK_COUNTRY', 'SEPA'),
+  };
+}
+
+function hasBankDetails() {
+  const t = bankTemplate();
+  return Boolean(t.iban && t.beneficiary);
+}
+
+function notifyEmail() {
+  return env('NOTIFY_EMAIL') || env('SEPA_NOTIFY_EMAIL');
+}
+
+/**
+ * customer = email customer only
+ * notify   = email Ryan (NOTIFY_EMAIL) with full order details (default)
+ * both     = customer + Ryan
+ * none     = never SMTP; always write TEMP JSON + instructions
+ */
+function emailMode() {
+  const m = env('EMAIL_MODE', '').toLowerCase();
+  if (['customer', 'notify', 'both', 'none'].includes(m)) return m;
+  if (notifyEmail()) return 'notify';
+  return 'notify';
+}
+
+function smtpConfigured() {
+  return Boolean(env('SMTP_HOST') && env('SMTP_FROM'));
+}
+
+function confirmSecret() {
+  return env('SEPA_CONFIRM_SECRET') || env('ADMIN_CONFIRM_SECRET');
+}
+
+function referencePrefix() {
+  const p = env('SEPA_REFERENCE_PREFIX', 'SEP').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return (p || 'SEP').slice(0, 8);
+}
+
+function makeReference(orderId) {
+  const short = String(orderId || '')
+    .replace(/^ord_/, '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(-8)
+    .toUpperCase();
+  const rnd = crypto.randomBytes(2).toString('hex').toUpperCase();
+  return `${referencePrefix()}-${short || rnd}-${rnd}`;
+}
+
+/**
+ * Manual IBAN flow is always usable — Ryan sends bank details by hand.
+ * Optional NOTIFY_EMAIL / SMTP improve delivery; TEMP files are the fallback.
+ */
+function isConfigured() {
+  return true;
+}
+
+function status() {
+  const t = bankTemplate();
+  const smtp = smtpConfigured();
+  const mode = emailMode();
+  return {
+    id: 'bank_sepa_manual',
+    provider_name: 'Bankový prevod (SEPA)',
+    configured: true,
+    hint: 'Požiadaj o bankové údaje · 50 min · Ryan pošle IBAN manuálne',
+    methods: ['sepa', 'bank_transfer'],
+    deadlineMinutes: deadlineMinutes(),
+    emailMode: mode,
+    smtpConfigured: smtp,
+    notifyEmail: notifyEmail() || null,
+    hasIban: Boolean(t.iban),
+    hasBeneficiary: Boolean(t.beneficiary),
+    bankDetailsPublic: false,
+    manualIbanDelivery: true,
+    confirmSecretSet: Boolean(confirmSecret()),
+    btcpayConfigured: Boolean(btcpay.isConfigured && btcpay.isConfigured()),
+    destinationNote:
+      'bank_sepa_manual settles via BTCPay bc1 (BTC). Lower-fee LTC/BCH/DOGE → use Switchere. EVM only if cheaper/necessary (C2P).',
+    destinationRank: destination.rankingDoc(),
+  };
+}
+
+function nextBtcDestination(orderId) {
+  // Manual SEPA + BTCPay invoice requires BTC; pool BTC rotation (not LTC) for invoice match
+  return addressPool.nextAddress('btc', orderId ? { orderId } : {});
+}
+
+/** Lowest-fee pool pick when not bound to a BTCPay BTC invoice. */
+function nextPoolDestination(orderId) {
+  return destination.pickDestination({
+    orderId,
+    provider: 'switchere',
+    allowEvmFallback: false,
+  });
+}
+
+/**
+ * Resolve amount + bc1 from BTCPay Lite invoice (preferred).
+ * Falls back to address-pool rotation if BTCPay is unavailable.
+ * @param {{ orderId: string, amountEur: number, email: string }} opts
+ */
+async function resolveBtcPayDestination(opts) {
+  if (btcpay.isConfigured && btcpay.isConfigured()) {
+    try {
+      const inv = await btcpay.createInvoiceWithOnChain(
+        opts.amountEur,
+        opts.email,
+        opts.orderId,
+        { sepaManual: true }
+      );
+      return {
+        source: 'btcpay',
+        address: inv.btcAddress,
+        btcAmount: inv.btcAmount,
+        invoiceId: inv.invoiceId,
+        checkoutLink: inv.checkoutLink || null,
+        paymentLink: inv.paymentLink || null,
+        index: null,
+      };
+    } catch (e) {
+      // fall through to pool
+      return {
+        source: 'pool_fallback',
+        error: e.message,
+        ...(() => {
+          const payout = nextBtcDestination(opts.orderId);
+          return {
+            address: payout.address,
+            btcAmount: null,
+            invoiceId: null,
+            checkoutLink: null,
+            paymentLink: null,
+            index: payout.index,
+          };
+        })(),
+      };
+    }
+  }
+  const payout = nextBtcDestination(opts.orderId);
+  return {
+    source: 'pool',
+    address: payout.address,
+    btcAmount: null,
+    invoiceId: null,
+    checkoutLink: null,
+    paymentLink: null,
+    index: payout.index,
+  };
+}
+
+/**
+ * Build order: EUR amount + BTCPay Lite bc1 + 50 min deadline.
+ * Customer never sees IBAN — Ryan emails/forwards bank block from NOTIFY_EMAIL.
+ * @param {{ orderId: string, amountEur: number, email: string }} opts
+ */
+async function buildOrder(opts) {
+  const orderId = opts.orderId;
+  const amountEur = Number(opts.amountEur);
+  const email = String(opts.email || '').trim();
+  if (!Number.isFinite(amountEur) || amountEur <= 0) {
+    const err = new Error('Suma v EUR musí byť kladné číslo');
+    err.code = 'BAD_AMOUNT';
+    throw err;
+  }
+
+  const dest = await resolveBtcPayDestination({ orderId, amountEur, email });
+  const bank = bankTemplate();
+  const reference = makeReference(orderId);
+  const createdAt = new Date();
+  const mins = deadlineMinutes();
+  const deadlineAt = new Date(createdAt.getTime() + mins * 60 * 1000);
+
+  return {
+    orderId,
+    amountEur,
+    amount: amountEur,
+    email,
+    currency: 'EUR',
+    provider: 'bank_sepa_manual',
+    gateway: 'bank_sepa_manual',
+    bank: hasBankDetails()
+      ? {
+          iban: bank.iban,
+          bic: bank.bic || null,
+          bankName: bank.bankName || null,
+          beneficiary: bank.beneficiary,
+          beneficiaryAddress: bank.beneficiaryAddress || null,
+          currency: 'EUR',
+        }
+      : {
+          iban: null,
+          bic: null,
+          bankName: null,
+          beneficiary: null,
+          beneficiaryAddress: null,
+          currency: 'EUR',
+          pendingManualDelivery: true,
+        },
+    bankDetailsPublic: false,
+    manualIbanDelivery: true,
+    customerPrompt: 'Požiadaj o bankové údaje',
+    reference,
+    amountExact: amountEur.toFixed(2),
+    deadlineMinutes: mins,
+    deadlineAt: deadlineAt.toISOString(),
+    createdAt: createdAt.toISOString(),
+    payoutAddress: dest.address,
+    payoutCoin: 'btc',
+    payoutIndex: dest.index,
+    btcAddress: dest.address,
+    btcAmount: dest.btcAmount,
+    invoiceId: dest.invoiceId,
+    btcpayCheckout: dest.checkoutLink,
+    paymentLink: dest.paymentLink,
+    btcSource: dest.source,
+    btcSourceError: dest.error || null,
+    status: 'awaiting_bank_details',
+    screenshotPath: null,
+    screenshotUploadedAt: null,
+    paidMarkedAt: null,
+    confirmedAt: null,
+    confirmedBy: null,
+    emailDelivery: null,
+    resolution: 'manual_sepa',
+    providerHost: 'local-bank-sepa',
+    inspiredBy: 'electrocoin.eu buy (manual SEPA; BTCPay Lite bc1)',
+  };
+}
+
+function formatBankBlock(order) {
+  const b = order.bank || {};
+  const lines = [];
+  if (b.beneficiary) lines.push(`Príjemca: ${b.beneficiary}`);
+  if (b.iban) lines.push(`IBAN: ${b.iban}`);
+  if (b.bic) lines.push(`BIC/SWIFT: ${b.bic}`);
+  if (b.bankName) lines.push(`Banka: ${b.bankName}`);
+  if (b.beneficiaryAddress) lines.push(`Adresa: ${b.beneficiaryAddress}`);
+  if (!b.iban) {
+    lines.push(
+      'IBAN: (ešte nie je v .env — pošli zákazníkovi IBAN manuálne z Electrocoin / banky)'
+    );
+  }
+  lines.push(`Suma: ${order.amountExact || order.amountEur} EUR (presne)`);
+  lines.push(`Referencia / správa pre príjemcu: ${order.reference}`);
+  lines.push(`Termín: ${order.deadlineAt} (${order.deadlineMinutes || 50} min)`);
+  lines.push(`Objednávka: ${order.orderId}`);
+  return lines.join('\n');
+}
+
+function customerEmailText(order, publicBase) {
+  const payUrl = `${publicBase}/bank-sepa-pay?orderId=${encodeURIComponent(order.orderId)}`;
+  return [
+    'Dobrý deň,',
+    '',
+    'ďakujeme za objednávku. Bankové údaje vám pošleme manuálne.',
+    '',
+    `Objednávka: ${order.orderId}`,
+    `Suma: ${order.amountExact || order.amountEur} EUR`,
+    `Referencia (uveďte v správe po obdržaní IBAN): ${order.reference}`,
+    `Termín: ${order.deadlineAt}`,
+    '',
+    'Na stránke platby: „Požiadaj o bankové údaje“.',
+    `Stránka: ${payUrl}`,
+    '',
+    'Ďakujeme',
+  ].join('\n');
+}
+
+function notifyEmailText(order, publicBase) {
+  const payUrl = `${publicBase}/bank-sepa-pay?orderId=${encodeURIComponent(order.orderId)}`;
+  const confirmHint = confirmSecret()
+    ? `Potvrdiť: POST ${publicBase}/api/bank-sepa/${order.orderId}/confirm  Header x-confirm-secret: (SEPA_CONFIRM_SECRET)`
+    : `Potvrdiť: nastavte SEPA_CONFIRM_SECRET a POST /api/bank-sepa/${order.orderId}/confirm`;
+  return [
+    'MANUÁLNY SEPA — nová objednávka (pošli zákazníkovi IBAN ručne)',
+    '',
+    'Zákazník na stránke vidí: „Požiadaj o bankové údaje“',
+    'IBAN sa na stránke NEZOBRAZUJE — pošli ho ty (WhatsApp / SMS / email).',
+    '',
+    `Zákazník email: ${order.email}`,
+    `Objednávka: ${order.orderId}`,
+    `Suma: ${order.amountExact || order.amountEur} EUR (presne)`,
+    `Referencia: ${order.reference}`,
+    `Deadline (50 min default): ${order.deadlineAt}`,
+    `Stránka zákazníka: ${payUrl}`,
+    `BTCPay invoice: ${order.invoiceId || '—'}`,
+    `BTC adresa (bc1 z BTCPay Lite): ${order.btcAddress || order.payoutAddress}`,
+    `BTC suma (invoice): ${order.btcAmount || '—'}`,
+    `BTC zdroj: ${order.btcSource || '—'}`,
+    order.btcpayCheckout ? `BTCPay checkout: ${order.btcpayCheckout}` : null,
+    '',
+    '=== Bankové údaje NA PREPOSLANIE ZÁKAZNÍKOVI ===',
+    formatBankBlock(order),
+    '',
+    'Kroky:',
+    '1) Otvor Electrocoin (alebo banku) → skopíruj IBAN / príjemcu',
+    '2) Pošli zákazníkovi: IBAN + suma + referencia ' + order.reference,
+    '3) Po prevode + screenshote potvrď API vyššie',
+    '',
+    confirmHint,
+  ].filter((line) => line != null).join('\n');
+}
+
+async function sendSmtp({ to, subject, text }) {
+  let nodemailer;
+  try {
+    nodemailer = require('nodemailer');
+  } catch (e) {
+    const err = new Error('nodemailer nie je nainštalovaný — npm install nodemailer');
+    err.code = 'NO_NODEMAILER';
+    throw err;
+  }
+  const port = Number(env('SMTP_PORT', '587')) || 587;
+  const secure = boolEnv('SMTP_SECURE') || port === 465;
+  const transporter = nodemailer.createTransport({
+    host: env('SMTP_HOST'),
+    port,
+    secure,
+    auth:
+      env('SMTP_USER') || env('SMTP_PASS')
+        ? { user: env('SMTP_USER'), pass: env('SMTP_PASS') }
+        : undefined,
+  });
+  const info = await transporter.sendMail({
+    from: env('SMTP_FROM'),
+    to,
+    subject,
+    text,
+  });
+  return { messageId: info.messageId, accepted: info.accepted };
+}
+
+function writeTempEmail(order, payloads) {
+  ensureDir(TEMP_EMAIL_DIR);
+  const file = path.join(TEMP_EMAIL_DIR, `${order.orderId}.json`);
+  const instructions = path.join(TEMP_EMAIL_DIR, `${order.orderId}.INSTRUCTIONS.txt`);
+  const doc = {
+    writtenAt: new Date().toISOString(),
+    orderId: order.orderId,
+    reason: smtpConfigured()
+      ? 'EMAIL_MODE=none or SMTP send skipped/failed — TEMP copy'
+      : 'SMTP not configured — TEMP mailbox + forward to NOTIFY_EMAIL when set',
+    howTo:
+      '1) Open this JSON + .INSTRUCTIONS.txt\n' +
+      '2) Send IBAN manually to customer (page shows „Požiadaj o bankové údaje“)\n' +
+      '3) Set NOTIFY_EMAIL to a reliable inbox (see ELECTROCOIN.md temp-email tips)\n' +
+      '4) Optional SMTP_* so orders email Ryan automatically\n' +
+      '5) After SEPA lands, POST /api/bank-sepa/:orderId/confirm',
+    notifyEmail: notifyEmail() || null,
+    emailMode: emailMode(),
+    smtpConfigured: smtpConfigured(),
+    payloads,
+    orderSnapshot: {
+      orderId: order.orderId,
+      email: order.email,
+      amountExact: order.amountExact,
+      reference: order.reference,
+      deadlineAt: order.deadlineAt,
+      deadlineMinutes: order.deadlineMinutes,
+      btcAddress: order.btcAddress || order.payoutAddress,
+      bank: order.bank,
+      status: order.status,
+      customerPrompt: order.customerPrompt,
+    },
+  };
+  fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+  const instr = [
+    'TEMP EMAIL / RYAN FORWARD INSTRUCTIONS',
+    '=====================================',
+    '',
+    doc.howTo,
+    '',
+    '--- Order / bank block ---',
+    formatBankBlock(order),
+    '',
+    `Customer: ${order.email}`,
+    `Notify (Ryan): ${notifyEmail() || '(unset — set NOTIFY_EMAIL)'}`,
+    `Customer prompt: ${order.customerPrompt}`,
+    `File: ${file}`,
+  ].join('\n');
+  fs.writeFileSync(instructions, instr);
+  return { jsonPath: file, instructionsPath: instructions };
+}
+
+async function deliverEmails(order, publicBase) {
+  const mode = emailMode();
+  const payloads = [];
+  const report = {
+    mode,
+    smtpConfigured: smtpConfigured(),
+    sent: [],
+    skipped: [],
+    temp: null,
+    errors: [],
+  };
+
+  if (mode === 'customer' || mode === 'both') {
+    payloads.push({
+      role: 'customer',
+      to: order.email,
+      subject: `Objednávka ${order.reference} · ${order.amountExact} EUR — požiadajte o bankové údaje`,
+      text: customerEmailText(order, publicBase),
+    });
+  }
+  if ((mode === 'notify' || mode === 'both') && notifyEmail()) {
+    payloads.push({
+      role: 'notify',
+      to: notifyEmail(),
+      subject: `[SEPA] ${order.amountExact} EUR · ${order.reference} · ${order.email} · pošli IBAN`,
+      text: notifyEmailText(order, publicBase),
+    });
+  }
+  if ((mode === 'notify' || mode === 'both') && !notifyEmail()) {
+    report.skipped.push('notify: NOTIFY_EMAIL unset — using TEMP files');
+  }
+  if (mode === 'none') {
+    report.skipped.push('EMAIL_MODE=none');
+  }
+
+  const wantSmtp = smtpConfigured() && mode !== 'none' && payloads.length > 0;
+  if (wantSmtp) {
+    for (const p of payloads) {
+      try {
+        const r = await sendSmtp(p);
+        report.sent.push({ role: p.role, to: p.to, messageId: r.messageId });
+      } catch (e) {
+        report.errors.push({ role: p.role, to: p.to, error: e.message });
+      }
+    }
+  } else if (payloads.length) {
+    report.skipped.push(
+      smtpConfigured() ? 'mode blocked SMTP' : 'SMTP not configured'
+    );
+  }
+
+  // Always keep TEMP when nothing sent, or for notify workflow backup
+  if (!report.sent.length || mode === 'notify' || mode === 'none' || !smtpConfigured()) {
+    const withBodies = payloads.length
+      ? payloads
+      : [
+          {
+            role: 'notify_fallback',
+            to: notifyEmail() || 'NOTIFY_EMAIL unset',
+            subject: `[SEPA] ${order.reference} · pošli IBAN`,
+            text: notifyEmailText(order, publicBase),
+          },
+        ];
+    report.temp = writeTempEmail(order, withBodies);
+  }
+
+  return report;
+}
+
+function saveScreenshot(orderId, buffer, originalName) {
+  ensureDir(UPLOAD_DIR);
+  const safe = String(originalName || 'screenshot.png')
+    .replace(/[^a-zA-Z0-9._-]/g, '_')
+    .slice(0, 80);
+  const ext = path.extname(safe) || '.png';
+  const base = path.basename(safe, ext).slice(0, 40) || 'screenshot';
+  const filename = `${orderId}_${Date.now()}_${base}${ext}`;
+  const full = path.join(UPLOAD_DIR, filename);
+  fs.writeFileSync(full, buffer);
+  return { filename, path: full, relative: path.relative(ROOT, full) };
+}
+
+module.exports = {
+  status,
+  isConfigured,
+  hasBankDetails,
+  bankTemplate,
+  buildOrder,
+  resolveBtcPayDestination,
+  deliverEmails,
+  formatBankBlock,
+  customerEmailText,
+  notifyEmailText,
+  saveScreenshot,
+  confirmSecret,
+  deadlineMinutes,
+  emailMode,
+  notifyEmail,
+  smtpConfigured,
+  nextBtcDestination,
+  TEMP_EMAIL_DIR,
+  UPLOAD_DIR,
+};

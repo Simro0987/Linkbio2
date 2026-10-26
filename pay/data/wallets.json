@@ -1,0 +1,12 @@
+{
+  "evm": "0x0A6336C680AF9D3C6b54A77BCAC7C552cD62708d",
+  "evm_stablecoins_note": "Same EVM address accepts native + USDT/USDC on Ethereum, Polygon, BNB (and other EVM chains)",
+  "sol": "HU7yVMet5LWVgV2npErFuqFP7kemr4NhBij5GiB9Rufu",
+  "sol_stablecoins_note": "Same Solana address accepts SOL + USDT/USDC (SPL)",
+  "merchant_wallet_chain2pay": "0x0A6336C680AF9D3C6b54A77BCAC7C552cD62708d",
+  "chain2pay_payout": "USDC on Polygon → EVM address above",
+  "btc_lightning": "tg2@cake.cash",
+  "btc_lnurl": "lnurl1dp68gurn8ghj7cmpddjjucmpwd5z7tnhv4kxctttdehhwm30d3h82unvwqhhgeejr58ecc",
+  "pools": "see address-pools.json — rotated per payment (unused-first, then round-robin)",
+  "note": "Primary addresses are rotation pools; first entry of each pool is the default display address"
+}

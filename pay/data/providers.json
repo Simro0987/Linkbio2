@@ -1,0 +1,134 @@
+{
+  "fetchedAt": "2026-10-07T17:40:43.474Z",
+  "source": "https://api.chain2pay.net/control/provider-status",
+  "count": 20,
+  "activeCount": 18,
+  "providers": [
+    {
+      "id": "stripe",
+      "provider_name": "Stripe (US/EU)",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 2
+    },
+    {
+      "id": "coinbase",
+      "provider_name": "Coinbase Pay",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 2
+    },
+    {
+      "id": "paypal",
+      "provider_name": "PayPal (USA)",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 5
+    },
+    {
+      "id": "robinhood",
+      "provider_name": "Robinhood (USA)",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 5
+    },
+    {
+      "id": "revolut",
+      "provider_name": "Revolut (EU/EEA)",
+      "status": "active",
+      "minimum_currency": "EUR",
+      "minimum_amount": 6
+    },
+    {
+      "id": "meld",
+      "provider_name": "Meld (Multi)",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 30
+    },
+    {
+      "id": "topper",
+      "provider_name": "Topper",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 10
+    },
+    {
+      "id": "transak",
+      "provider_name": "Transak",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 30
+    },
+    {
+      "id": "binance",
+      "provider_name": "Binance Connect",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 20
+    },
+    {
+      "id": "banxa",
+      "provider_name": "Banxa",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 11
+    },
+    {
+      "id": "blockchaincom",
+      "provider_name": "Blockchain.com",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 20
+    },
+    {
+      "id": "particle",
+      "provider_name": "particle.network",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 30
+    },
+    {
+      "id": "cashapp",
+      "provider_name": "Cash App (USA)",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 2
+    },
+    {
+      "id": "sardine",
+      "provider_name": "Sardine.ai (USA)",
+      "status": "active",
+      "minimum_currency": "USD",
+      "minimum_amount": 30
+    },
+    {
+      "id": "klarna",
+      "provider_name": "Klarna",
+      "status": "active",
+      "minimum_currency": "SEK",
+      "minimum_amount": 125
+    },
+    {
+      "id": "ideal",
+      "provider_name": "iDEAL (NL)",
+      "status": "active",
+      "minimum_currency": "EUR",
+      "minimum_amount": 46
+    },
+    {
+      "id": "upi",
+      "provider_name": "UPI/IMPS",
+      "status": "active",
+      "minimum_currency": "INR",
+      "minimum_amount": 1600
+    },
+    {
+      "id": "interac",
+      "provider_name": "Interac",
+      "status": "active",
+      "minimum_currency": "CAD",
+      "minimum_amount": 100
+    }
+  ]
+}

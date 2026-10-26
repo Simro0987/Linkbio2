@@ -1,0 +1,1748 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Platba – TV Software</title>
+  <meta name="description" content="Bezpečná platba za TV Software – výber platobnej metódy." />
+  <meta property="og:title" content="Platba – TV Software" />
+  <meta property="og:description" content="Bezpečná platba za TV Software." />
+  <meta property="og:type" content="website" />
+  <meta name="theme-color" content="#0b1220" />
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #121a2b;
+      --border: #243044;
+      --text: #e8eef9;
+      --muted: #93a0b8;
+      --accent: #3b82f6;
+      --accent2: #22c55e;
+      --danger: #f87171;
+      --warn: #fbbf24;
+      --input: #0f172a;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #1e3a8a55, transparent),
+        radial-gradient(900px 500px at 100% 0%, #14532d44, transparent),
+        var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .wrap { width: 100%; max-width: 560px; }
+    .brand { text-align: center; margin-bottom: 1.25rem; }
+    .brand h1 {
+      margin: 0;
+      font-size: 1.45rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .brand p {
+      margin: 0.4rem 0 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 1.35rem 1.35rem 1.5rem;
+      box-shadow: 0 20px 50px #0006;
+    }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin: 0.95rem 0 0.35rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .field { position: relative; }
+    .suffix {
+      position: absolute;
+      right: 0.85rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-weight: 700;
+      pointer-events: none;
+    }
+    input, select {
+      width: 100%;
+      appearance: none;
+      background: var(--input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 0.85rem 1rem;
+      font: inherit;
+      font-size: 1.05rem;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px #3b82f633;
+    }
+    #amount { padding-right: 3.2rem; font-size: 1.35rem; font-weight: 700; }
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%2393a0b8' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 1rem center;
+      padding-right: 2.5rem;
+    }
+    optgroup { font-style: normal; color: var(--muted); background: var(--card); }
+    option { color: var(--text); }
+    option:disabled { color: #64748b; }
+    .hint {
+      margin: 0.45rem 0 0;
+      font-size: 0.8rem;
+      color: var(--muted);
+      min-height: 1.1em;
+    }
+    .hint.warn { color: var(--warn); }
+    button {
+      width: 100%;
+      margin-top: 1.35rem;
+      border: 0;
+      border-radius: 12px;
+      padding: 0.95rem 1rem;
+      font: inherit;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), #2563eb);
+      cursor: pointer;
+      transition: transform 0.1s, opacity 0.15s, filter 0.15s;
+    }
+    button:hover:not(:disabled) { filter: brightness(1.08); }
+    button:active:not(:disabled) { transform: translateY(1px); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .status {
+      margin-top: 0.9rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-align: center;
+      min-height: 1.25em;
+    }
+    .status.error { color: var(--danger); }
+    .status.ok { color: var(--accent2); }
+    .footer {
+      margin-top: 1rem;
+      text-align: center;
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      color: var(--accent2);
+      background: #14532d55;
+      border: 1px solid #16653488;
+      border-radius: 999px;
+      padding: 0.2rem 0.65rem;
+      margin-bottom: 0.75rem;
+    }
+    .badge::before {
+      content: "";
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--accent2);
+      box-shadow: 0 0 8px var(--accent2);
+    }
+    .amt-actions{display:flex;gap:8px;margin:8px 0 4px}
+    .amt-actions .amt-btn{flex:1 1 0;min-width:0;padding:12px 8px;font-size:15px;border-radius:10px;border:1px solid #8b5cf6;background:transparent;color:inherit;cursor:pointer;white-space:nowrap}
+    .gift-mode .gm-hide{display:none!important}
+    /* GUIDE_CSS */
+
+    .guide {
+      margin-top: 1.1rem;
+      border-top: 1px solid var(--border);
+      padding-top: 1rem;
+    }
+    .guide h2 {
+      margin: 0 0 0.65rem;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .guide-note {
+      margin: 0 0 0.75rem;
+      font-size: 0.78rem;
+      color: var(--warn);
+      line-height: 1.4;
+    }
+
+    .guide-video {
+      width: 100%;
+      max-height: 280px;
+      border-radius: 12px;
+      border: 1px solid var(--border, #243044);
+      background: #0a0f1a;
+      margin: 0.65rem 0 0.85rem;
+    }
+
+    .guide-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+    .guide-step {
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .guide-step img {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 200px;
+      object-fit: cover;
+      object-position: top;
+      background: #0b1220;
+    }
+    .guide-step figcaption {
+      padding: 0.55rem 0.75rem 0.65rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .guide-step .n {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.25rem; height: 1.25rem;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 700;
+      margin-right: 0.4rem;
+      vertical-align: middle;
+    }
+    .addr-box {
+      margin-top: 1rem;
+      background: #0f172a;
+      border: 1px dashed #334155;
+      border-radius: 12px;
+      padding: 0.9rem 1rem;
+    }
+    .addr-box h3 {
+      margin: 0 0 0.35rem;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .addr-box .disc {
+      margin: 0 0 0.75rem;
+      font-size: 0.72rem;
+      color: var(--warn);
+      line-height: 1.4;
+    }
+    .addr-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin-bottom: 0.65rem;
+    }
+    .addr-actions button {
+      width: auto;
+      margin: 0;
+      padding: 0.45rem 0.75rem;
+      font-size: 0.8rem;
+      border-radius: 8px;
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .addr-actions button.primary {
+      background: linear-gradient(135deg, var(--accent), #2563eb);
+      border-color: transparent;
+      color: #fff;
+    }
+    .addr-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.45rem;
+    }
+    .addr-grid .full { grid-column: 1 / -1; }
+    .addr-field {
+      background: var(--input);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.6rem;
+    }
+    .addr-field label {
+      margin: 0;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .addr-field .val {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text);
+      word-break: break-word;
+      min-height: 1.2em;
+    }
+    .addr-field button.copy {
+      width: auto;
+      margin: 0.25rem 0 0;
+      padding: 0.2rem 0.5rem;
+      font-size: 0.68rem;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      border-radius: 6px;
+    }
+    .addr-empty { display: none; }
+    .addr-box.empty .addr-empty { display: block; font-size: 0.78rem; color: var(--muted); }
+    .addr-box.empty .addr-grid { display: none; }
+    details.guide-toggle > summary {
+      cursor: pointer;
+      list-style: none;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+      user-select: none;
+    }
+    details.guide-toggle > summary::-webkit-details-marker { display: none; }
+    details.guide-toggle > summary::before {
+      content: "▸ ";
+      color: var(--muted);
+    }
+    details.guide-toggle[open] > summary::before { content: "▾ "; }
+
+    .device-toggle {
+      display: inline-flex;
+      gap: 0;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 0 0 0.75rem;
+      background: var(--input);
+    }
+    .device-toggle button {
+      width: auto;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      padding: 0.4rem 0.9rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      background: transparent;
+      color: var(--muted);
+      box-shadow: none;
+    }
+    .device-toggle button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .quick-picks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      margin: 0.35rem 0 0.15rem;
+    }
+    .quick-picks button {
+      width: auto;
+      margin: 0;
+      padding: 0.45rem 0.7rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      border-radius: 999px;
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .quick-picks button.active {
+      background: linear-gradient(135deg, var(--accent), #2563eb);
+      border-color: transparent;
+      color: #fff;
+    }
+    .baskets {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin: 0.55rem 0 0.15rem;
+    }
+    .basket {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #0f172a;
+      overflow: hidden;
+      border-left-width: 4px;
+      border-left-style: solid;
+    }
+    .basket-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.55rem 0.75rem;
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      width: 100%;
+      border: 0;
+      background: inherit;
+      color: inherit;
+      text-align: left;
+      margin: 0;
+      font: inherit;
+      font-size: 0.82rem;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      border-radius: 0;
+      box-shadow: none;
+      filter: none;
+      transform: none;
+    }
+    .basket-head:hover { filter: brightness(1.08); }
+    .basket-head:active { transform: none; filter: brightness(1.02); }
+    .basket-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex-shrink: 0;
+    }
+    .basket-count {
+      font-size: 0.72rem;
+      opacity: 0.85;
+      font-weight: 700;
+    }
+    .basket-chevron {
+      font-size: 0.7rem;
+      opacity: 0.75;
+      transition: transform 0.15s ease;
+    }
+    .basket.open .basket-chevron { transform: rotate(90deg); }
+    .basket-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .basket-chip::before {
+      content: "";
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
+    }
+    .basket-methods {
+      display: none;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      padding: 0.15rem 0.65rem 0.7rem;
+    }
+    .basket.open .basket-methods {
+      display: flex;
+    }
+    .basket-methods button {
+      width: auto;
+      margin: 0;
+      padding: 0.55rem 0.8rem;
+      font-size: 0.88rem;
+      font-weight: 700;
+      border-radius: 10px;
+      background: #1e293b;
+      border: 1px solid var(--border);
+      color: var(--text);
+      line-height: 1.25;
+      text-align: left;
+    }
+    /* payment-method logos: white chip, fixed height, aligned with the label */
+    .basket-methods button, .quick-picks button { display: inline-flex; align-items: center; gap: 0.5rem; }
+    .pm-logos { display: inline-flex; align-items: center; gap: 3px; flex-shrink: 0; }
+    .pm-logos img {
+      height: 24px; width: auto; min-width: 24px; max-width: 72px; object-fit: contain;
+      background: #fff; border-radius: 6px; padding: 2px; box-sizing: border-box; display: block;
+    }
+    .quick-picks .pm-logos img { height: 20px; min-width: 20px; border-radius: 5px; }
+    .pm-label { min-width: 0; }
+    .pm-n .pm-logos { margin-right: 0.45rem; vertical-align: middle; }
+    .pm-sub { display: block; font-size: 0.72rem; font-weight: 500; opacity: 0.7; line-height: 1.1; }
+    .pm-n .pm-logos img { height: 22px; min-width: 22px; }
+    .basket-methods button.soon .pm-logos { filter: grayscale(1); opacity: 0.8; }
+    .basket-methods button.active {
+      color: #fff;
+      border-color: transparent;
+      filter: brightness(1.05);
+    }
+    .basket-methods button.soon {
+      opacity: 0.55;
+      cursor: not-allowed;
+      font-weight: 600;
+      font-size: 0.8rem;
+    }
+    .basket-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin: 0.35rem 0 0.15rem;
+    }
+    .basket-strip button {
+      width: auto;
+      margin: 0;
+      padding: 0.35rem 0.65rem;
+      font-size: 0.72rem;
+      font-weight: 800;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: #1e293b;
+      color: var(--text);
+    }
+    .basket-strip button.active {
+      color: #fff;
+      border-color: transparent;
+    }
+    .country-tip {
+      margin: 0.55rem 0 0;
+      padding: 0.55rem 0.75rem;
+      border-radius: 10px;
+      background: #14532d33;
+      border: 1px solid #16653488;
+      color: #bbf7d0;
+      font-size: 0.78rem;
+      line-height: 1.4;
+    }
+    .country-tip.warn {
+      background: #78350f33;
+      border-color: #b4530988;
+      color: #fde68a;
+    }
+    .guide-step.mg-step figcaption { display: flex; gap: .55rem; align-items: flex-start; }
+    .guide-step.mg-step figcaption .n { flex: none; }
+    .mg-en { display: block; opacity: .7; font-size: .85em; margin-top: 2px; }
+    .guide-step.mg-step picture, .guide-step.mg-step img { display: block; max-width: 100%; }
+    .guide-step.mg-step img { width: auto; height: auto; max-height: 78vh; margin: .5rem auto 0; border-radius: 10px; object-fit: contain; }
+    @media (min-width: 700px) { .guide-step.mg-step img { max-width: min(100%, 560px); max-height: 640px; } }
+    .guide-step img.mobile-shot { object-fit: contain; max-height: 420px; background: #020617; }
+    .guide-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.35rem;
+    }
+    .selection-callout {
+      display: none;
+      margin: 0.85rem 0 0.25rem;
+      padding: 0.85rem 1rem;
+      border-radius: 12px;
+      border: 2px solid #22c55e;
+      background: linear-gradient(135deg, #14532d66, #16653444);
+      color: #ecfdf5;
+      font-size: 0.95rem;
+      font-weight: 600;
+      line-height: 1.45;
+      box-shadow: 0 0 0 4px #22c55e33, 0 10px 28px #0005;
+      animation: callout-in 0.35s ease;
+    }
+    .selection-callout.visible { display: block; }
+    .selection-callout strong { color: #86efac; font-weight: 800; }
+    .selection-callout .callout-arrow {
+      display: inline-block;
+      margin-left: 0.15rem;
+      animation: callout-bounce 1s ease infinite;
+    }
+    @keyframes callout-in {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes callout-bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(3px); }
+    }
+    @keyframes go-pulse {
+      0% { box-shadow: 0 0 0 0 #22c55e88, 0 0 0 0 #3b82f655; filter: brightness(1); }
+      35% { box-shadow: 0 0 0 10px #22c55e00, 0 0 24px 4px #22c55e66; filter: brightness(1.18); }
+      100% { box-shadow: 0 0 0 0 #22c55e00, 0 0 0 0 #3b82f600; filter: brightness(1); }
+    }
+    #go.go-pulse:not(:disabled) {
+      animation: go-pulse 0.9s ease 2;
+      outline: 2px solid #86efac;
+      outline-offset: 3px;
+    }
+    #email.field-error,
+    #amount.field-error,
+    #country.field-error {
+      border-color: var(--danger);
+      box-shadow: 0 0 0 3px #f8717133;
+    }
+    .hint.error-msg {
+      color: var(--danger);
+      font-weight: 600;
+    }
+
+    .more-ops .more-body { padding: 0 .75rem .85rem; }
+    @media (max-width: 480px) {
+      body { padding: .75rem; }
+      .card { padding: 1rem; }
+      button#go { min-height: 54px; font-size: 1.08rem; padding: 1rem; }
+    }
+  .plan-box{border:2px solid #e50914;border-radius:14px;padding:.8rem 1rem;margin-bottom:1rem;background:rgba(229,9,20,.08)}.plan-box.err{border-color:#f59e0b}
+.plan-k{font-size:.75rem;opacity:.75;text-transform:uppercase;letter-spacing:.05em}.plan-n{font-weight:700;font-size:1.1rem}.plan-a{font-size:1.6rem;font-weight:800}
+input.locked{opacity:.85;cursor:not-allowed}
+body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:has(#amount),body.plan-mode #amountHint,body.plan-mode .amt-actions,body.plan-mode label[for="country"],body.plan-mode #country,body.plan-mode #liveBadge,body.plan-mode #provider{display:none!important}
+.plan-methods{display:flex;flex-direction:column;gap:.5rem;margin:.6rem 0}
+.pm-item{display:grid;grid-template-columns:1fr auto;gap:.15rem .6rem;text-align:left;padding:.7rem .9rem;border-radius:12px;border:1px solid #243044;background:#121a2b;color:inherit;cursor:pointer;font:inherit}
+.pm-item.on{border-color:#22c55e;box-shadow:0 0 0 2px #22c55e inset}.pm-n{font-weight:600}.pm-t{font-weight:800;text-align:right}.pm-f{grid-column:1/-1;font-size:.75rem;opacity:.7}
+.pm-best{margin-left:.4rem;font-size:.65rem;background:#14532d;color:#bbf7d0;padding:1px 6px;border-radius:999px;vertical-align:middle}
+</style>
+  <link rel="stylesheet" href="/tv-theme.css?v=20261026" />
+</head>
+<body>
+  <div class="wrap">
+    <nav class="tvtop"><a class="tvlogo" href="/tv"><i>▶</i>TV Software</a><a class="tvback" href="/tv">← Späť na TV Software</a></nav>
+    <div class="brand">
+      <h1>Platba · SK / CZ</h1>
+      <p>3 kroky: suma → spôsob → platobná stránka. Návod podľa <strong>PC alebo mobilu</strong>.</p>
+      <div class="tvbar"><span class="live">● LIVE</span><span>▶ Stream</span><span>📺 TV</span><span>⚙ Software</span></div>
+    </div>
+
+    <form class="card" id="payForm" method="post" action="/api/checkout" novalidate>
+      <div class="plan-box" id="planBox" hidden><div class="plan-k">Vybraný plán</div><div class="plan-n" id="planName"></div><div class="plan-a" id="planAmt"></div><p class="hint">Suma je pevne daná plánom. Nižšie sú spôsoby platby vhodné pre túto sumu – najpoužívanejšie sú hore. Vyberte si sami.</p></div>
+      <div class="badge" id="liveBadge">Načítavam spôsoby platby…</div>
+
+      <label for="amount" class="gm-hide">Suma</label>
+      <div class="field gm-hide">
+        <input id="amount" name="amount" type="number" inputmode="decimal"
+               min="1" step="0.01" value="" required placeholder="0.00" />
+        <span class="suffix">EUR</span>
+      </div>
+      <div class="amt-actions"><button type="button" class="amt-btn" id="btnGuide">📖 Návod</button><button type="button" class="amt-btn" id="btnNext">Pokračovať ↓</button></div>
+      <p class="hint gm-hide" id="amountHint">Suma v EUR. SK: väčšinou EUR · CZ karta Banxa môže ísť v CZK.</p>
+
+      <label for="email" class="gm-hide">Email</label>
+      <input id="email" class="gm-hide" name="email" type="email" required
+             placeholder="vas@email.com" autocomplete="email" />
+      <p class="hint gm-hide" id="emailHint">Predvyplní sa do Banxa/Switchere/C2P (Switchere email uzamkne). Po emaile zadáte OTP/kód z inboxu u providera, potom kartu/platbu.</p>
+
+      <label for="country" class="gm-hide">Vaša krajina</label>
+      <select id="country" class="gm-hide" name="country" required>
+        <option value="" selected disabled>Vyberte krajinu</option>
+        <option value="SK">Slovensko (SK)</option>
+        <option value="CZ">Česko (CZ)</option>
+      </select>
+
+      <label for="provider">Spôsob platby</label>
+      <div class="basket-strip" id="basketStrip" aria-label="Koše platieb"></div>
+      <select id="provider" name="provider" required>
+        <option value="">Načítavam…</option>
+      </select>
+      <p class="hint" id="providerHint">Ťuknite farebný koš — otvorí sa zoznam metód. Rýchla voľba nižšie.</p>
+      <div class="plan-methods" id="planMethods" hidden></div>
+      <div class="baskets" id="baskets" aria-label="Farebné koše platieb"></div>
+      <div class="quick-picks" id="quickPicks" aria-label="Rýchly výber"></div>
+      <p class="country-tip" id="countryTip" hidden></p>
+
+      <div class="selection-callout" id="selectionCallout" role="status" aria-live="polite" hidden></div>
+
+      <div class="guide" id="guidePanel" hidden>
+        <details class="guide-toggle" id="guideDetails">
+          <summary id="guideSummary">Návod k platbe</summary>
+          <div class="guide-meta">
+            <div class="device-toggle" id="deviceToggle" role="group" aria-label="PC alebo mobil">
+              <button type="button" data-device="pc" id="devPc">PC</button>
+              <button type="button" data-device="mobile" id="devMobile">Mobil</button>
+            </div>
+            <span class="hint" id="deviceHint" style="margin:0;min-height:0">Návod podľa zariadenia</span>
+          </div>
+          <p class="guide-note" id="guideNote" hidden></p>
+          <video class="guide-video" id="guideVideo" controls playsinline preload="metadata" hidden></video>
+          <div class="guide-steps" id="guideSteps"></div>
+        </details>
+
+      </div>
+
+      <input type="hidden" name="redirect" value="1" />
+
+      <button type="submit" id="go" disabled>Pokračovať →</button>
+      <div class="status" id="status"></div>
+    </form>
+
+
+    <p class="footer">Po kliknutí budete presmerovaní na zabezpečenú platobnú stránku.<br/>
+      Platba kartou · Bankový prevod / SEPA · Revolut · Skrill · Apple Pay / Google Pay · Krypto</p>
+  </div>
+
+  <script src="/guides/guides.js"></script>
+  <script>
+    const amountEl = document.getElementById('amount');
+    const providerEl = document.getElementById('provider');
+    const countryEl = document.getElementById('country');
+    const emailEl = document.getElementById('email');
+    let SEPA_GUIDED = false;
+    fetch('/api/sepa-guided/mode').then(r=>r.json()).then(j=>{SEPA_GUIDED=!!j.guided;try{const p=providers.find(x=>x.id===providerEl.value);syncDeferredFieldHints(p);syncGoButton(p);}catch(e){}}).catch(()=>{});
+    const goBtn = document.getElementById('go');
+    const statusEl = document.getElementById('status');
+    const hintEl = document.getElementById('providerHint');
+    const badgeEl = document.getElementById('liveBadge');
+    const form = document.getElementById('payForm');
+    const guidePanel = document.getElementById('guidePanel');
+    const guideSummary = document.getElementById('guideSummary');
+    const guideNote = document.getElementById('guideNote');
+    const guideSteps = document.getElementById('guideSteps');
+    const countryTip = document.getElementById('countryTip');
+    const selectionCallout = document.getElementById('selectionCallout');
+    const quickPicks = document.getElementById('quickPicks');
+    const basketsEl = document.getElementById('baskets');
+    const basketStrip = document.getElementById('basketStrip');
+    const deviceHint = document.getElementById('deviceHint');
+
+    let providers = [];
+    let groups = null;
+    let RANK = null; // server order by usage / pins (ids only)
+    const rankPos = (id) => { const o = (RANK && RANK.methodOrder) || []; const i = o.indexOf(id); return i < 0 ? 1e6 : i; };
+    // anonymous per-method click counter (popularity ordering) — id only, once per page view
+    const clicked = new Set();
+    function trackClick(id) {
+      if (!id || clicked.has(id)) return; clicked.add(id);
+      try { const body = JSON.stringify({ id: String(id) });
+        if (navigator.sendBeacon) navigator.sendBeacon('/api/m/click', new Blob([body], { type: 'text/plain' }));
+        else fetch('/api/m/click', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body, keepalive: true }).catch(() => {});
+      } catch (e) { /* ignore */ }
+    }
+    let guideDevice = (window.PaymentGuides && PaymentGuides.detectDevice()) || 'pc';
+    let lastGuideProvider = null;
+
+    const QUICK = [
+      { id: 'banxa', label: 'Platba kartou Banxa' },
+      { id: 'revolut_manual', label: 'Revolut' },
+      { id: 'mtpelerin', label: 'Mt Pelerin' },
+      { id: 'bank_sepa_manual', label: 'SEPA platba' },
+      { id: 'apple_google_banxa', label: 'Apple / Google Banxa' },
+      { id: 'switchere_skrill', label: 'Skrill' },
+      { id: 'paysafecard', label: 'PaysafeCard' },
+      { id: 'g2a_azteco_ln_50', label: 'Darčeková karta Azteco 50 €' },
+      { id: 'g2a_amazon_de_50', label: 'Darčeková karta Amazon 50 €' },
+      { id: 'switchere', label: 'Platba kartou Switchere' },
+      { id: 'guardarian_card', label: 'Platba kartou Guardarian' },
+    ];
+
+    const GROUP_ORDER = [
+      // Karta / Revolut
+      ['revolut', 'Karta / Revolut', '#8b5cf6'],
+      ['cards', 'Platba kartou', '#3b82f6'],
+      ['mtpelerin', 'Mt Pelerin (Bridge)', '#0ea5e9'],
+      ['wallets', 'Apple Pay / Google Pay', '#ec4899'],
+      // SEPA
+      ['sepa', 'Bankový prevod / SEPA', '#22c55e'],
+      // Agregátory / ďalšie brány
+      ['keyless', 'Ďalšie brány', '#64748b'],
+      ['meld', 'Meld (agregátor)', '#14b8a6'],
+      ['onramps', 'Agregátory', '#14b8a6'],
+      ['skrill', 'Skrill', '#6366f1'],
+      ['paysafecard', 'PaysafeCard', '#ef4444'],
+      ['g2a_amazon', 'Darčekové karty Amazon', '#f59e0b'],
+      ['g2a_azteco', 'Darčekové karty Azteco', '#fb923c'],
+      ['vouchers', 'Poukážky / darčekové karty', '#f59e0b'],
+      ['crypto_btcpay', 'Krypto', '#06b6d4'],
+      ['paypal', 'PayPal', '#0ea5e9'],
+    ];
+    // Any group the server adds later is still rendered (appended at the end).
+    function groupKeys(g) {
+      if (RANK && Array.isArray(RANK.groupOrder) && RANK.groupOrder.length) {
+        const meta = Object.fromEntries(GROUP_ORDER.map((x) => [x[0], x]));
+        const keys = RANK.groupOrder.concat(Object.keys(g || {}).filter((k) => !RANK.groupOrder.includes(k)));
+        return keys.map((k) => meta[k] || [k, (g && g[k] && g[k].label) || k, (g && g[k] && g[k].color) || '#64748b']);
+      }
+      const known = GROUP_ORDER.map((x) => x[0]);
+      const extra = Object.keys(g || {}).filter((k) => !known.includes(k)).map((k) => [k, (g[k] && g[k].label) || k, (g[k] && g[k].color) || '#64748b']);
+      return GROUP_ORDER.concat(extra);
+    }
+
+    const GROUP_COLOR = Object.fromEntries(GROUP_ORDER.map((g) => [g[0], g[2]]));
+
+
+    function fmtMin(p) {
+      if (p.minimum_amount == null) return '';
+      return `${p.minimum_amount} ${p.minimum_currency || 'EUR'}`;
+    }
+
+    function displayName(p) {
+      return p.method_label || p.provider_name || p.id;
+    }
+    function escH(v) {
+      return String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    /** Real brand logos (served from /logos or /pm-logo), fixed height via CSS. Empty when the method has none. */
+    function logoHtml(p) {
+      const list = (p && Array.isArray(p.logos) ? p.logos : []).filter((s) => /^\/(logos|pm-logo)\//.test(String(s))).slice(0, 4);
+      if (!list.length) return '';
+      return '<span class="pm-logos" aria-hidden="true">' + list.map((s) => `<img src="${escH(s)}" alt="" width="24" height="24" loading="lazy" decoding="async">`).join('') + '</span>';
+    }
+
+    function isSelectable(p) {
+      return !p.soon && String(p.status || '').toLowerCase() === 'active';
+    }
+
+    function setDevice(dev) {
+      guideDevice = dev === 'mobile' ? 'mobile' : 'pc';
+      document.querySelectorAll('#deviceToggle button').forEach((b) => {
+        b.classList.toggle('active', b.getAttribute('data-device') === guideDevice);
+      });
+      if (deviceHint) {
+        deviceHint.textContent = guideDevice === 'mobile'
+          ? 'Mobilné obrazovky platobných stránok'
+          : 'PC / desktop obrazovky platobných stránok';
+      }
+      if (lastGuideProvider) renderGuide(lastGuideProvider);
+    }
+
+    function renderQuickPicks() {
+      if (!quickPicks) return;
+      const ids = new Set(providers.map((p) => p.id));
+      const byId = Object.fromEntries(providers.map((p) => [p.id, p]));
+      const pins = ((RANK && RANK.pins) || []).filter((id) => ids.has(id) && !QUICK.some((q) => q.id === id)).map((id) => ({ id, label: displayName(byId[id]) }));
+      const picks = pins.concat(QUICK.filter((q) => ids.has(q.id)).sort((a, b) => rankPos(a.id) - rankPos(b.id)));
+      quickPicks.innerHTML = picks.map((q) =>
+        `<button type="button" data-qid="${q.id}">${logoHtml(byId[q.id])}<span class="pm-label">${escH((byId[q.id] && byId[q.id].custom) ? displayName(byId[q.id]) : q.label)}</span></button>`
+      ).join('');
+      quickPicks.querySelectorAll('button').forEach((btn) => {
+        btn.addEventListener('click', () => selectProvider(btn.getAttribute('data-qid')));
+      });
+    }
+
+    function syncQuickActive() {
+      if (!quickPicks) return;
+      const v = providerEl.value;
+      quickPicks.querySelectorAll('button').forEach((b) => {
+        b.classList.toggle('active', b.getAttribute('data-qid') === v);
+      });
+      syncBasketActive();
+    }
+
+    function updateCountryTip(p) {
+      const PG = window.PaymentGuides;
+      if (!countryTip || !PG) return;
+      if (!p) {
+        countryTip.hidden = true;
+        countryTip.textContent = '';
+        return;
+      }
+      const guide = p.custom ? null : PG.resolveGuide(p.id, p.group);
+      const tip = countryOk() ? PG.tipFor(guide, countryEl.value) : null;
+      if (!tip) {
+        countryTip.hidden = true;
+        countryTip.textContent = '';
+        return;
+      }
+      countryTip.hidden = false;
+      const cc = ((countryEl && countryEl.value) || '').toUpperCase();
+      countryTip.className = 'country-tip' + (/doklad|KYC|nie v limitoch|ťažš/i.test(tip) ? ' warn' : '');
+      countryTip.textContent = (cc === 'CZ' ? 'CZ tip: ' : 'SK tip: ') + tip;
+    }
+
+    function emailOk() {
+      const email = (emailEl.value || '').trim();
+      return !!email && email.includes('@') && email.includes('.');
+    }
+
+    function amountOk() {
+      const amount = Number(amountEl.value);
+      return Number.isFinite(amount) && amount > 0;
+    }
+
+    function countryOk() {
+      const cc = ((countryEl && countryEl.value) || '').trim().toUpperCase();
+      return cc === 'SK' || cc === 'CZ';
+    }
+
+    function isElectrocoinSepa(p) {
+      if (!p) {
+        const id = String(providerEl.value || '').toLowerCase();
+        return id === 'bank_sepa_manual' || id === 'bank_sepa' || id === 'electrocoin' || id === 'sepa_manual';
+      }
+      const id = String(p.id || '').toLowerCase();
+      const gw = String(p.gateway || '').toLowerCase();
+      return gw === 'bank_sepa_manual' || id === 'bank_sepa_manual' || id === 'electrocoin' || id === 'sepa_manual';
+    }
+
+    /** PaysafeCard + G2A gift cards: amount/email/country filled on pay page / product link, not main form. */
+    // Revolut (Guardarian) + keyless public gateways: customer enters ONLY the amount here.
+    function isAmountOnly(p) {
+      return !!p && (['guardarian', 'keyless', 'revolut_manual', 'custom', 'crypto_direct', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin'].includes(String(p.gateway || '').toLowerCase()) || hasAmountLink(p));
+    }
+    // Admin „Odkazy podľa sumy“: exact amount match → amount-only + „Zaplatiť“ (link stays server-side).
+    function hasAmountLink(p) {
+      if (!p || !Array.isArray(p.amountLinks) || !p.amountLinks.length) return false;
+      const c = Math.round(Number(amountEl && amountEl.value) * 100);
+      return c > 0 && p.amountLinks.some((a) => Math.round(Number(a) * 100) === c);
+    }
+
+    function isDeferredAmountEmail(p) {
+      if (!p) {
+        const id = String(providerEl.value || '').toLowerCase();
+        return id === 'paysafecard' || id.startsWith('paysafe') || id.startsWith('g2a_') || id === 'g2a';
+      }
+      const id = String(p.id || '').toLowerCase();
+      const gw = String(p.gateway || '').toLowerCase();
+      return (
+        gw === 'paysafecard' || gw === 'g2a' ||
+        id === 'paysafecard' || id.startsWith('paysafe') ||
+        id.startsWith('g2a_') || id === 'g2a'
+      );
+    }
+
+    function formReady(p) {
+      const selected = p || providers.find((x) => x.id === providerEl.value);
+      if (!selected || !isSelectable(selected)) return false;
+      if (isDeferredAmountEmail(selected)) return true; // no amount/email/country on main form
+      if (isAmountOnly(selected)) return amountOk();
+      if (isElectrocoinSepa(selected)) {
+        return amountOk(); // SEPA: amount only — no personal details
+      }
+      if (!countryOk()) return false;
+      return amountOk() && emailOk();
+    }
+
+    function syncGoButton(p) {
+      const selected = p || providers.find((x) => x.id === providerEl.value);
+      // Enable when method selected so Pokračovať can surface amount/country/email alerts
+      const canAttempt = !!selected && isSelectable(selected);
+      goBtn.disabled = !canAttempt;
+      if (selected && isSelectable(selected) && hasAmountLink(selected)) {
+        goBtn.textContent = 'Zaplatiť →';
+      } else if (selected && isSelectable(selected)) {
+        goBtn.textContent = 'Zaplatiť: ' + displayName(selected).replace(/\s*★.*$/, '') + ' →';
+      } else {
+        goBtn.textContent = 'Pokračovať →';
+      }
+    }
+
+    function updateSelectionCallout(p) {
+      if (!selectionCallout) return;
+      if (!p || !isSelectable(p)) {
+        selectionCallout.hidden = true;
+        selectionCallout.classList.remove('visible');
+        selectionCallout.textContent = '';
+        return;
+      }
+      const name = displayName(p).replace(/\s*★.*$/, '');
+      selectionCallout.hidden = false;
+      selectionCallout.classList.add('visible');
+      selectionCallout.innerHTML =
+        'Vybrané: <strong>' + name + '</strong> — pozrite návod nižšie a kliknite dole na <strong>Pokračovať →</strong>.' +
+        '<span class="callout-arrow" aria-hidden="true"> ↓</span>';
+    }
+
+    const emailHintDefault = 'Predvyplní sa do Banxa/Switchere/C2P (Switchere email uzamkne). Po emaile zadáte OTP/kód z inboxu u providera, potom kartu/platbu.';
+    const amountHintDefault = 'Suma v EUR. SK: väčšinou EUR · CZ karta Banxa môže ísť v CZK.';
+    const emailHintDeferred = 'PaysafeCard / darčekové karty: len informačný návod — PIN ani kód nikomu neposielajte.';
+    const amountHintDeferred = 'PaysafeCard / darčekové karty: len informačný návod.';
+    const emailHintEl = document.getElementById('emailHint');
+    const amountHintEl = document.getElementById('amountHint');
+
+    function syncDeferredFieldHints(p) {
+      const deferred = isDeferredAmountEmail(p);
+      // Gift cards (G2A / PaysafeCard): no amount, email, country on our form
+      if (form) form.classList.toggle('gift-mode', !!deferred);
+      if (countryEl) { if (deferred) countryEl.removeAttribute('required'); else countryEl.setAttribute('required', ''); }
+
+      const sepaReal = isElectrocoinSepa(p);
+      const amountOnly = isAmountOnly(p);
+      // Plan link (?plan=): nothing to fill until a method that really needs e-mail is picked.
+      const planNoPick = !p && new URLSearchParams(location.search).has('plan');
+      const sepa = sepaReal || amountOnly || planNoPick; // SEPA / Revolut: email hidden
+      const emailLabel = document.querySelector('label[for="email"]');
+      // SEPA: amount only — no name, no email
+      if (emailLabel) emailLabel.hidden = !!sepa;
+      if (emailEl) {
+        emailEl.hidden = !!sepa;
+        if (deferred || sepa) {
+          emailEl.removeAttribute('required');
+          emailEl.disabled = !!sepa;
+          // keep a remembered/prefilled e-mail (input is disabled, so it is not editable here)
+        } else {
+          emailEl.setAttribute('required', '');
+          emailEl.disabled = false;
+        }
+      }
+      if (emailHintEl) {
+        emailHintEl.hidden = !!sepa;
+        if (!sepa && !emailEl.classList.contains('field-error')) {
+          emailHintEl.className = 'hint';
+          emailHintEl.textContent = deferred ? emailHintDeferred : emailHintDefault;
+        }
+      }
+      if (amountEl) {
+        if (deferred) amountEl.removeAttribute('required');
+        else amountEl.setAttribute('required', '');
+      }
+      if (countryEl) {
+        // Country optional for SEPA (amount only); still useful if filled
+        if (deferred || sepa) countryEl.removeAttribute('required');
+        else countryEl.setAttribute('required', '');
+        const cl = document.querySelector('label[for="country"]');
+        countryEl.hidden = amountOnly; if (cl) cl.hidden = amountOnly;
+      }
+      if (amountHintEl && !amountEl.classList.contains('field-error')) {
+        amountHintEl.className = 'hint';
+        amountHintEl.textContent = deferred ? amountHintDeferred : amountHintDefault;
+      }
+    }
+
+    function clearFieldAlerts() {
+      emailEl.classList.remove('field-error');
+      amountEl.classList.remove('field-error');
+      if (countryEl) countryEl.classList.remove('field-error');
+      const selected = providers.find((x) => x.id === providerEl.value);
+      const deferred = isDeferredAmountEmail(selected);
+      const sepa = isElectrocoinSepa(selected);
+      if (emailHintEl && !sepa) {
+        emailHintEl.className = 'hint';
+        emailHintEl.textContent = deferred ? emailHintDeferred : emailHintDefault;
+      }
+      if (amountHintEl) {
+        amountHintEl.className = 'hint';
+        amountHintEl.textContent = deferred ? amountHintDeferred : amountHintDefault;
+      }
+    }
+
+    function clearEmailAlert() {
+      emailEl.classList.remove('field-error');
+      if (emailHintEl) {
+        const selected = providers.find((x) => x.id === providerEl.value);
+        if (isElectrocoinSepa(selected)) return;
+        emailHintEl.className = 'hint';
+        emailHintEl.textContent = isDeferredAmountEmail(selected) ? emailHintDeferred : emailHintDefault;
+      }
+    }
+
+    function showFieldAlert(field, msg, { scroll } = { scroll: true }) {
+      const message = msg || '';
+      clearFieldAlerts();
+      let el = null;
+      if (field === 'amount') {
+        amountEl.classList.add('field-error');
+        el = amountEl;
+        if (amountHintEl) {
+          amountHintEl.className = 'hint error-msg';
+          amountHintEl.textContent = message;
+        }
+      } else if (field === 'country') {
+        if (countryEl) countryEl.classList.add('field-error');
+        el = countryEl;
+      } else if (field === 'email') {
+        emailEl.classList.add('field-error');
+        el = emailEl;
+        if (emailHintEl) {
+          emailHintEl.className = 'hint error-msg';
+          emailHintEl.textContent = message;
+        }
+      }
+      statusEl.className = 'status error';
+      statusEl.textContent = message;
+      if (scroll && el) {
+        el.focus({ preventScroll: true });
+        requestAnimationFrame(() => {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+      }
+    }
+
+    function showEmailAlert(msg, opts) {
+      showFieldAlert('email', msg || 'Vyplňte email', opts);
+    }
+
+    /** First missing required field, or null if OK. */
+    function firstMissingField() {
+      const selected = providers.find((x) => x.id === providerEl.value);
+      const deferred = isDeferredAmountEmail(selected);
+      if (deferred) return null; // PaysafeCard / G2A: amount, email, country on pay page / product link
+      if (isAmountOnly(selected)) return amountOk() ? null : { field: 'amount', msg: 'Vyplňte sumu' };
+      if (isElectrocoinSepa(selected)) {
+        if (!amountOk()) return { field: 'amount', msg: 'Vyplňte sumu' };
+        return null;
+      }
+      if (!amountOk()) return { field: 'amount', msg: 'Vyplňte sumu' };
+      if (!countryOk()) return { field: 'country', msg: 'Vyberte správnu krajinu' };
+      if (!emailOk()) {
+        const email = (emailEl.value || '').trim();
+        return { field: 'email', msg: email ? 'Zadajte platný email' : 'Vyplňte email' };
+      }
+      return null;
+    }
+
+    function nudgeAfterSelect() {
+      const p = providers.find((x) => x.id === providerEl.value);
+      updateSelectionCallout(p);
+      const missing = firstMissingField();
+      if (missing) {
+        // Highlight field but keep callout on screen (do not scroll past it)
+        showFieldAlert(missing.field, missing.msg, { scroll: false });
+      } else {
+        clearFieldAlerts();
+        statusEl.className = 'status';
+        statusEl.textContent = '';
+      }
+      // Keep green callout fully on screen — do not scroll past it to #go
+      requestAnimationFrame(() => {
+        if (selectionCallout && !selectionCallout.hidden && selectionCallout.scrollIntoView) {
+          selectionCallout.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        // Gentle nudge on Pokračovať without scrolling it over the callout
+        if (!missing) {
+          setTimeout(() => {
+            goBtn.classList.remove('go-pulse');
+            void goBtn.offsetWidth;
+            goBtn.classList.add('go-pulse');
+            setTimeout(() => goBtn.classList.remove('go-pulse'), 2000);
+          }, 200);
+        }
+      });
+    }
+
+    function updateHint() {
+      const p = providers.find(x => x.id === providerEl.value);
+      syncQuickActive();
+      if (!p) {
+        hintEl.className = 'hint';
+        hintEl.textContent = 'Vyberte spôsob platby alebo rýchlu voľbu.';
+        syncGoButton(null);
+        updateSelectionCallout(null);
+        updateCountryTip(null);
+        syncDeferredFieldHints(null);
+        renderGuide(null);
+        return;
+      }
+      if (!isSelectable(p)) {
+        hintEl.className = 'hint warn';
+        hintEl.textContent = (p.hint || displayName(p)) + (String(p.unavailableLabel || p.method_label || '').includes('dočasne') ? ' — dočasne nedostupné.' : ' — zatiaľ nedostupné (čoskoro).');
+        syncGoButton(p);
+        updateSelectionCallout(null);
+        updateCountryTip(p);
+        renderGuide(p);
+        return;
+      }
+      hintEl.className = 'hint';
+      const note = {
+        USD: 'Suma sa prepočíta z EUR do USD.',
+        EUR: 'Platba v EUR.',
+        CAD: 'Suma sa prepočíta z EUR do CAD.',
+        INR: 'Suma sa prepočíta z EUR do INR.',
+        SEK: 'Suma sa prepočíta z EUR do SEK.',
+      }[p.minimum_currency] || (p.minimum_currency ? `Mena: ${p.minimum_currency}.` : '');
+      const min = fmtMin(p);
+      const bits = [p.hint || displayName(p)];
+      if (p.demo) bits.push('DEMO');
+      if (min) bits.push('min. ' + min);
+      if (note) bits.push(note);
+      if (isDeferredAmountEmail(p)) {
+        bits.push('suma + email (+ krajina) na platobnej stránke / v produkte');
+      } else if (isElectrocoinSepa(p)) {
+        // SEPA platba — len suma
+        if (!amountOk()) bits.push('doplňte sumu');
+        bits.push('meno netreba · email netreba');
+      } else {
+        if (!isElectrocoinSepa(p) && !emailOk()) bits.push('doplňte email');
+        if (!amountOk()) bits.push('doplňte sumu');
+        if (!countryOk()) bits.push('vyberte krajinu');
+      }
+      hintEl.textContent = bits.join(' · ');
+      syncGoButton(p);
+      updateSelectionCallout(p);
+      updateCountryTip(p);
+      syncDeferredFieldHints(p);
+      renderGuide(p);
+    }
+
+    // Admin-editable guides (/admin/guides): real screenshots, amount filled in. Falls back to legacy guides.js.
+    const MG_CACHE = {};
+    function mgEsc(t) { return String(t == null ? '' : t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    function renderGuide(p) {
+      if (!p || p.custom || !guidePanel) return renderGuideLegacy(p);
+      const amt = Number(amountEl && amountEl.value) > 0 ? Number(amountEl.value) : '';
+      const ck = p.id + '|' + amt;
+      lastGuideProvider = p;
+      const draw = (g) => {
+        if (lastGuideProvider !== p) return;
+        if (!g || !g.steps || !g.steps.length) return renderGuideLegacy(p);
+        guidePanel.hidden = false;
+        guidePanel.classList.add('mg');
+        guideSummary.textContent = '📖 Návod: ' + (g.title || displayName(p)) + ' · Guide';
+        guideNote.hidden = true; guideNote.textContent = '';
+        const gv = document.getElementById('guideVideo');
+        if (gv) { gv.hidden = true; gv.removeAttribute('src'); }
+        const meta = guidePanel.querySelector('.guide-meta'); if (meta) meta.hidden = true;
+        guideSteps.innerHTML = g.steps.map((s, i) =>
+          '<figure class="guide-step mg-step"><figcaption><span class="n">' + (i + 1) + '</span><span>' + mgEsc(s.sk) +
+          (s.en ? '<small class="mg-en">' + mgEsc(s.en) + '</small>' : '') + '</span></figcaption>' +
+          (s.img ? '<a href="' + mgEsc(s.imgPc || s.img) + '" target="_blank" rel="noopener"><picture>' +
+            (s.imgPc && s.imgPc !== s.img ? '<source media="(min-width:700px)" srcset="' + mgEsc(s.imgPc) + '">' : '') +
+            '<img src="' + mgEsc(s.img) + '" alt="Krok ' + (i + 1) + '" loading="lazy" decoding="async"></picture></a>' : '') +
+          '</figure>').join('');
+      };
+      if (MG_CACHE[ck] !== undefined) return draw(MG_CACHE[ck]);
+      fetch('/api/guides/' + encodeURIComponent(p.id) + (amt ? '?amount=' + amt : ''))
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null)
+        .then((g) => { MG_CACHE[ck] = g; draw(g); });
+    }
+    function renderGuideLegacy(p) {
+      if (guidePanel) { guidePanel.classList.remove('mg'); const meta = guidePanel.querySelector('.guide-meta'); if (meta) meta.hidden = false; }
+      const PG = window.PaymentGuides;
+      if (!PG || !guidePanel) return;
+      lastGuideProvider = p;
+      if (!p) {
+        guidePanel.hidden = true;
+        const gv = document.getElementById('guideVideo');
+        if (gv) { gv.hidden = true; gv.removeAttribute('src'); }
+        return;
+      }
+      const guide = p.custom ? null : PG.resolveGuide(p.id, p.group);
+      const steps = PG.stepsForDevice(guide, guideDevice);
+      if (!guide || !steps.length) {
+        guidePanel.hidden = true;
+        const gv = document.getElementById('guideVideo');
+        if (gv) { gv.hidden = true; gv.removeAttribute('src'); }
+        return;
+      }
+      guidePanel.hidden = false;
+      guideSummary.textContent = 'Návod: ' + (guide.title || displayName(p)) +
+        (guideDevice === 'mobile' ? ' · mobil' : ' · PC');
+      if (guide.note) {
+        guideNote.hidden = false;
+        guideNote.textContent = guide.note;
+      } else {
+        guideNote.hidden = true;
+        guideNote.textContent = '';
+      }
+      const guideVideo = document.getElementById('guideVideo');
+      const videoSrc = (PG.videoFor && PG.videoFor(p.id, guide)) || guide.video || null;
+      if (guideVideo) {
+        if (videoSrc) {
+          if (guideVideo.getAttribute('src') !== videoSrc) {
+            guideVideo.src = videoSrc;
+          }
+          guideVideo.hidden = false;
+        } else {
+          guideVideo.removeAttribute('src');
+          guideVideo.hidden = true;
+          try { guideVideo.load(); } catch (_) {}
+        }
+      }
+      guideSteps.innerHTML = steps.map((s, i) =>
+        '<figure class="guide-step">' +
+          (s.img ? (
+          '<img class="' + (guideDevice === 'mobile' ? 'mobile-shot' : '') + '" src="' + s.img +
+          '" alt="Krok ' + (i + 1) + ' (' + guideDevice + ')" loading="lazy"' +
+          (s.fallback && s.fallback !== s.img
+            ? ' data-fallback="' + s.fallback + '"'
+            : '') +
+          ' />') : '') +
+          '<figcaption><span class="n">' + (i + 1) + '</span>' + s.caption + '</figcaption>' +
+        '</figure>'
+      ).join('');
+
+    }
+
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); } catch (_) {}
+        ta.remove();
+        return true;
+      }
+    }
+
+    if (countryEl) {
+      countryEl.addEventListener('change', () => {
+        if (countryOk()) {
+          countryEl.classList.remove('field-error');
+          if (statusEl.textContent === 'Vyberte správnu krajinu') {
+            statusEl.className = 'status';
+            statusEl.textContent = '';
+          }
+        }
+        updateHint();
+      });
+    }
+
+    document.querySelectorAll('#deviceToggle button').forEach((btn) => {
+      btn.addEventListener('click', () => setDevice(btn.getAttribute('data-device')));
+    });
+    setDevice(guideDevice);
+
+    function optionLabel(p) {
+      const name = displayName(p);
+      if (p.soon || String(p.status) === 'soon') return name;
+      // Gift-card labels already include denomination (e.g. "… 50 €")
+      if (/\d+\s*€/.test(name) || p.gateway === 'g2a') return name;
+      const min = fmtMin(p);
+      return min ? `${name} — min. ${min}` : name;
+    }
+
+    function groupColor(key, block) {
+      return (block && block.color) || GROUP_COLOR[key] || '#64748b';
+    }
+
+    function closeAllBaskets(exceptKey) {
+      if (!basketsEl) return;
+      basketsEl.querySelectorAll('.basket').forEach((el) => {
+        const key = el.getAttribute('data-basket');
+        const open = exceptKey != null && key === exceptKey;
+        el.classList.toggle('open', open);
+        const head = el.querySelector('.basket-head');
+        if (head) head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    }
+
+    function openBasket(key, { scroll } = { scroll: false }) {
+      if (!key) return;
+      const el = document.getElementById('basket-' + key);
+      if (el) { el.classList.add('open'); const h = el.querySelector('.basket-head'); if (h) h.setAttribute('aria-expanded', 'true'); }
+      if (el && scroll) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    function toggleBasket(key) {
+      if (!key || !basketsEl) return;
+      const el = document.getElementById('basket-' + key);
+      if (!el) return;
+      const willOpen = !el.classList.contains('open');
+      closeAllBaskets(willOpen ? key : null);
+    }
+
+    function selectProvider(id) {
+      if (!id) return;
+      trackClick(id);
+      providerEl.value = id;
+      const p = providers.find((x) => x.id === id);
+      if (p && p.group) openBasket(p.group);
+      updateHint();
+      nudgeAfterSelect();
+      setTimeout(() => { const gift = form && form.classList.contains('gift-mode'); const a = document.getElementById(gift ? 'go' : 'amount'); if (a) a.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 150);
+    }
+
+    function renderBasketStrip(g) {
+      if (!basketStrip) return;
+      const chips = [];
+      for (const [key, fallbackLabel] of groupKeys(g)) {
+        const block = g && g[key];
+        if (!block) continue;
+        const active = (block.providers || []).filter(isSelectable);
+        const soon = block.soon || [];
+        if (!active.length && !soon.length) continue;
+        const color = groupColor(key, block);
+        const label = block.label || fallbackLabel;
+        chips.push(
+          `<button type="button" data-basket="${key}" style="box-shadow:inset 0 0 0 1px ${color}55;color:${color}">${label}</button>`
+        );
+      }
+      basketStrip.innerHTML = chips.join('');
+      basketStrip.querySelectorAll('button').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const key = btn.getAttribute('data-basket');
+          openBasket(key, { scroll: true });
+        });
+      });
+    }
+
+    function renderBaskets(g) {
+      if (!basketsEl) return;
+      const parts = [];
+      for (const [key, fallbackLabel] of groupKeys(g)) {
+        const block = g && g[key];
+        if (!block) continue;
+        const active = (block.providers || []).filter(isSelectable);
+        const soon = block.soon || [];
+        if (!active.length && !soon.length) continue;
+        const color = groupColor(key, block);
+        const label = block.label || fallbackLabel;
+        const tint = color + '22';
+        const count = active.length + soon.length;
+        parts.push(
+          `<section class="basket" id="basket-${key}" data-basket="${key}" style="border-left-color:${color}">` +
+            `<button type="button" class="basket-head" aria-expanded="false" aria-controls="basket-methods-${key}" style="background:${tint};color:${color}">` +
+              `<span class="basket-chip">${label}</span>` +
+              `<span class="basket-meta"><span class="basket-count">${count}</span><span class="basket-chevron" aria-hidden="true">▸</span></span>` +
+            `</button><div class="basket-methods" id="basket-methods-${key}" role="group" aria-label="${label}">`
+        );
+        for (const p of active) {
+          parts.push(
+            `<button type="button" data-pid="${escH(p.id)}" style="--bc:${color}">${logoHtml(p)}<span class="pm-label">${escH(displayName(p))}${p.subtitle ? `<small class="pm-sub">${escH(p.subtitle)}</small>` : ''}</span></button>`
+          );
+        }
+        for (const p of soon) {
+          parts.push(
+            `<button type="button" class="soon" disabled>${logoHtml(p)}<span class="pm-label">${escH(displayName(p))}${p.subtitle ? `<small class="pm-sub">${escH(p.subtitle)}</small>` : ''}</span></button>`
+          );
+        }
+        parts.push('</div></section>');
+      }
+      basketsEl.innerHTML = parts.join('');
+      basketsEl.querySelectorAll('.basket-head').forEach((head) => {
+        head.addEventListener('click', () => {
+          const key = head.closest('.basket')?.getAttribute('data-basket');
+          toggleBasket(key);
+        });
+      });
+      basketsEl.querySelectorAll('button[data-pid]').forEach((btn) => {
+        btn.addEventListener('click', () => selectProvider(btn.getAttribute('data-pid')));
+      });
+      // Default: all baskets open so every active method is visible (mobile + desktop).
+      basketsEl.querySelectorAll('.basket').forEach((el) => { el.classList.add('open'); const h = el.querySelector('.basket-head'); if (h) h.setAttribute('aria-expanded', 'true'); });
+      syncBasketActive();
+    }
+
+    function syncBasketActive() {
+      if (!basketsEl) return;
+      const v = providerEl.value;
+      basketsEl.querySelectorAll('button[data-pid]').forEach((b) => {
+        const on = b.getAttribute('data-pid') === v;
+        b.classList.toggle('active', on);
+        if (on) {
+          const c = getComputedStyle(b).getPropertyValue('--bc').trim() || '#3b82f6';
+          b.style.background = `linear-gradient(135deg, ${c}, ${c}cc)`;
+          b.style.borderColor = 'transparent';
+          b.style.color = '#fff';
+        } else {
+          b.style.background = '';
+          b.style.borderColor = '';
+          b.style.color = '';
+        }
+      });
+      if (basketStrip) {
+        const p = providers.find((x) => x.id === v);
+        const gk = p && p.group;
+        basketStrip.querySelectorAll('button').forEach((b) => {
+          b.classList.toggle('active', b.getAttribute('data-basket') === gk);
+          if (b.classList.contains('active')) {
+            const c = GROUP_COLOR[gk] || '#3b82f6';
+            b.style.background = c;
+            b.style.color = '#fff';
+          } else {
+            b.style.background = '';
+          }
+        });
+      }
+    }
+
+    function renderGroups(g) {
+      const parts = [];
+      for (const [key, fallbackLabel] of groupKeys(g)) {
+        const block = g && g[key];
+        if (!block) continue;
+        const active = (block.providers || []).filter(isSelectable);
+        const soon = block.soon || [];
+        if (!active.length && !soon.length) continue;
+        const label = block.label || fallbackLabel;
+        parts.push(`<optgroup label="${label}">`);
+        for (const p of active) {
+          const sel = p.preferred ? ' selected' : '';
+          parts.push(`<option value="${escH(p.id)}"${sel}>${escH(optionLabel(p))}</option>`);
+        }
+        for (const p of soon) {
+          parts.push(`<option value="" disabled>${escH(optionLabel(p))}</option>`);
+        }
+        parts.push('</optgroup>');
+      }
+      return parts.join('');
+    }
+
+    const PLAN_ID = (new URLSearchParams(location.search).get('plan') || '').replace(/[^0-9]/g, '');
+    let plan = null, COSTS = {};
+    const eur = (n) => Number(n).toLocaleString('sk-SK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '\u00a0€';
+    async function loadPlan() {
+      if (!PLAN_ID) return;
+      const box = document.getElementById('planBox');
+      try {
+        const [r, c] = await Promise.all([fetch('/api/plan?id=' + PLAN_ID), fetch('/api/method-costs')]);
+        COSTS = await c.json().catch(() => ({}));
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || 'Plán sa nepodarilo načítať.');
+        plan = j;
+        document.getElementById('planName').textContent = (document.documentElement.lang === 'en' && plan.name_en) || plan.name;
+        document.getElementById('planAmt').textContent = eur(plan.amount);
+        amountEl.value = plan.amount.toFixed(2); amountEl.readOnly = true; amountEl.classList.add('locked');
+        box.hidden = false;
+      } catch (e) {
+        box.hidden = false; box.classList.add('err');
+        document.getElementById('planName').textContent = e.message || 'Plán sa nepodarilo načítať.';
+      }
+    }
+    function maxOf(p) {
+      const keys = [p.id, p.providerId, p.gateway, 'group:' + p.group];
+      for (const k of keys) if (k && COSTS[k]) return COSTS[k].max == null ? null : Number(COSTS[k].max);
+      return null;
+    }
+    function minEur(p) { const m = Number(p.faceValueEur || p.minimum_amount) || 0; return String(p.minimum_currency || 'EUR').toUpperCase() === 'USD' ? m * 0.95 : m; }
+    function applyPlanMode() {
+      if (!plan) return;
+      const a = plan.amount;
+      const fit = providers.filter((p) => {
+        if (!isSelectable(p)) return false;
+        if (p.gateway === 'g2a' || String(p.id).startsWith('g2a_') || p.faceValueEur) return Number(p.faceValueEur || p.minimum_amount) === Math.round(a) && Math.round(a) === a;
+        const max = maxOf(p);
+        return minEur(p) <= a && (max == null || a <= max);
+      }).map((p, i) => ({ p, i })).sort((x, y) => rankPos(x.p.id) - rankPos(y.p.id) || x.i - y.i);
+      const box = document.getElementById('planMethods');
+      ['basketStrip', 'baskets', 'quickPicks'].forEach((id) => { const el = document.getElementById(id); if (el) { el.hidden = true; el.style.display = 'none'; } });
+      providerEl.innerHTML = '<option value="" selected>— vyberte spôsob platby —</option>' + fit.map(({ p }) => `<option value="${escH(p.id)}">${escH(displayName(p))}</option>`).join('');
+      providerEl.value = '';
+      box.hidden = false;
+      box.textContent = '';
+      if (!fit.length) { box.textContent = 'Pre túto sumu momentálne nie je dostupný žiadny spôsob platby. Kontaktujte nás.'; return; }
+      fit.forEach(({ p }) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'pm-item'; b.dataset.id = p.id;
+        const n = document.createElement('span'); n.className = 'pm-n'; n.innerHTML = logoHtml(p); n.appendChild(document.createTextNode(displayName(p))); if (p.subtitle) { const sm = document.createElement('small'); sm.className = 'pm-sub'; sm.textContent = p.subtitle; n.appendChild(sm); }
+        b.append(n);
+        b.addEventListener('click', () => { box.querySelectorAll('.pm-item').forEach((x) => x.classList.toggle('on', x === b)); selectProvider(p.id); });
+        box.appendChild(b);
+      });
+      providerEl.addEventListener('change', () => box.querySelectorAll('.pm-item').forEach((x) => x.classList.toggle('on', x.dataset.id === providerEl.value)));
+      updateHint();
+    }
+
+    async function loadProviders() {
+      badgeEl.textContent = 'Načítavam…';
+      goBtn.disabled = true;
+      const res = await fetch('/api/providers?active=1');
+      const data = await res.json();
+      if (!res.ok && !(data.groups || data.providers)) {
+        throw new Error(data.error || 'Nepodarilo sa načítať spôsoby platby');
+      }
+      groups = data.groups || null;
+      RANK = data.rank || null;
+      providers = (data.providers || []).filter(isSelectable);
+      const soonCount = (data.soonProviders || []).length;
+
+      if (groups) {
+        providerEl.innerHTML = renderGroups(groups);
+        renderBasketStrip(groups);
+        renderBaskets(groups);
+      } else {
+        providerEl.innerHTML = providers.map(p =>
+          `<option value="${escH(p.id)}">${escH(optionLabel(p))}</option>`
+        ).join('');
+        if (basketsEl) basketsEl.innerHTML = '';
+        if (basketStrip) basketStrip.innerHTML = '';
+      }
+
+      if (!providers.length) throw new Error('Žiadne aktívne spôsoby platby');
+      badgeEl.textContent = `${providers.length} spôsobov` + (soonCount ? ` · ${soonCount} nedostupných` : '');
+      renderQuickPicks();
+      // Prefer Banxa if present (not in plan mode: the customer picks the method)
+      if (plan) { applyPlanMode(); return; }
+      if (!providerEl.value && providers.some(p => p.id === 'banxa')) {
+        providerEl.value = 'banxa';
+      }
+      updateHint();
+    }
+
+
+    function suggestG2aForAmount() {
+      const amount = Number(amountEl.value);
+      const g2aList = providers.filter((p) => p.gateway === 'g2a' || String(p.id).startsWith('g2a_'));
+      if (!g2aList.length || !Number.isFinite(amount) || amount <= 0) {
+        if (hintEl && hintEl.dataset.g2aTip === '1') {
+          /* keep normal hint via updateHint */
+        }
+        return;
+      }
+      const exact = g2aList.filter((p) => Number(p.faceValueEur || p.minimum_amount) === Math.round(amount));
+      const matches = exact.length
+        ? exact
+        : g2aList
+            .filter((p) => Number(p.faceValueEur || p.minimum_amount) >= amount)
+            .sort((a, b) => Number(a.faceValueEur || a.minimum_amount) - Number(b.faceValueEur || b.minimum_amount));
+      if (!matches.length) return;
+      const labels = matches.slice(0, 4).map((p) => displayName(p).replace(/\s*—.*$/, '')).join(' · ');
+      const current = providers.find((x) => x.id === providerEl.value);
+      if (current && hasAmountLink(current)) return; // admin amount link for this exact sum wins over gift-card auto-pick
+      const curIsG2a = current && (current.gateway === 'g2a' || String(current.id).startsWith('g2a_'));
+      const exactHit = exact.find((p) => p.id === providerEl.value);
+      if (!curIsG2a || !exactHit) {
+        // Prefer first exact match as selection when amount lands on a denomination
+        if (exact.length === 1) {
+          providerEl.value = exact[0].id;
+          updateHint();
+        } else if (exact.length > 1 && !exactHit) {
+          // keep selection but surface tip
+        }
+      }
+      if (hintEl) {
+        const base = hintEl.textContent || '';
+        if (!/G2A tip:/i.test(base)) {
+          hintEl.textContent = (base ? base + ' · ' : '') + 'G2A tip: ' + labels;
+        }
+      }
+    }
+
+    amountEl.addEventListener('change', () => {
+      suggestG2aForAmount();
+      syncGoButton();
+    });
+
+    providerEl.addEventListener('change', () => {
+      const p = providers.find((x) => x.id === providerEl.value);
+      if (p && p.group) openBasket(p.group);
+      updateHint();
+      nudgeAfterSelect();
+    });
+
+    emailEl.addEventListener('input', () => {
+      if (emailOk()) clearEmailAlert();
+      syncGoButton();
+      const p = providers.find((x) => x.id === providerEl.value);
+      if (p && isSelectable(p)) updateHint();
+    });
+    emailEl.addEventListener('change', () => {
+      if (emailOk()) clearEmailAlert();
+      syncGoButton();
+    });
+    amountEl.addEventListener('input', () => {
+      if (amountOk()) {
+        amountEl.classList.remove('field-error');
+        if (amountHintEl) {
+          const selected = providers.find((x) => x.id === providerEl.value);
+          amountHintEl.className = 'hint';
+          amountHintEl.textContent = isDeferredAmountEmail(selected) ? amountHintDeferred : amountHintDefault;
+        }
+        if (statusEl.textContent === 'Vyplňte sumu') {
+          statusEl.className = 'status';
+          statusEl.textContent = '';
+        }
+      }
+      suggestG2aForAmount();
+      { const sp = providers.find((x) => x.id === providerEl.value); if (sp && Array.isArray(sp.amountLinks)) syncDeferredFieldHints(sp); }
+      syncGoButton();
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      statusEl.className = 'status';
+      statusEl.textContent = '';
+
+      let amount = Number(amountEl.value);
+      let email = emailEl.value.trim();
+      const provider = providerEl.value;
+      const country = (countryEl && countryEl.value) || '';
+      const selectedP = providers.find((x) => x.id === provider);
+      const deferred = isDeferredAmountEmail(selectedP);
+      if (selectedP && selectedP.faceValueEur != null && Number(selectedP.faceValueEur) > 0) {
+        amount = Number(selectedP.faceValueEur);
+        amountEl.value = String(amount);
+      }
+      // Paysafe / G2A / Amazon / Azteco: informational guide only — no order, no PIN/code collection.
+      if (deferred) {
+        window.location.href = '/giftcard/' + encodeURIComponent(provider);
+        return;
+      }
+
+      const missing = firstMissingField();
+      if (missing) {
+        showFieldAlert(missing.field, missing.msg);
+        return;
+      }
+      clearFieldAlerts();
+      if (!provider) {
+        statusEl.className = 'status error';
+        statusEl.textContent = 'Vyberte dostupný spôsob platby.';
+        return;
+      }
+
+      goBtn.disabled = true;
+      statusEl.textContent = 'Pripravujem platbu…';
+
+      try {
+        const res = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            amount,
+            plan_id: plan ? plan.id : undefined,
+            email: isElectrocoinSepa(selectedP) && !SEPA_GUIDED ? '' : email,
+            provider,
+            country,
+            redirect: false,
+            customer: { country },
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.error || 'Nepodarilo sa vytvoriť platbu. Skúste to znova.');
+        }
+        if (!data.checkoutUrl) {
+          throw new Error('Chýba platobná adresa. Skúste to znova.');
+        }
+        const url = data.checkoutUrl;
+        let host = '';
+        try { host = new URL(url, window.location.origin).hostname; } catch (_) {}
+        if (host && (host.includes('chain2pay.net') || host.includes('paygate.to'))) {
+          throw new Error('Platobná brána je dočasne nedostupná v tomto prehliadači. Skúste inú metódu.');
+        }
+        statusEl.className = 'status ok';
+        const where = data.providerHost || host || 'providera';
+        statusEl.textContent = `Presmerovávam na ${where}… (${data.amount} ${data.currency})`;
+        window.location.href = url;
+      } catch (err) {
+        statusEl.className = 'status error';
+        statusEl.textContent = err.message || 'Chyba pri vytváraní platby. Skúste to znova.';
+        goBtn.disabled = false;
+      }
+    });
+
+    // Prefill: ?amount= ?email= ?country= (email remembered on this device), country from browser language.
+    (function prefill() {
+      const q = new URLSearchParams(location.search);
+      const a = Number(String(q.get('amount') || q.get('suma') || '').replace(',', '.'));
+      if (!PLAN_ID && a > 0 && a < 100000 && amountEl && !amountEl.value) amountEl.value = a.toFixed(2);
+      let em = (q.get('email') || '').trim();
+      try { if (!em) em = localStorage.getItem('tg_email') || ''; } catch (_) {}
+      if (em && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) && emailEl && !emailEl.value) emailEl.value = em;
+      let c = String(q.get('country') || '').toUpperCase();
+      if (!/^(SK|CZ)$/.test(c)) c = /^cs/i.test(navigator.language || '') ? 'CZ' : 'SK';
+      if (countryEl && !countryEl.value) countryEl.value = c;
+      if (PLAN_ID) document.body.classList.add('plan-mode');
+    })();
+    form.addEventListener('submit', () => { try { const v = emailEl && emailEl.value.trim(); if (v && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) localStorage.setItem('tg_email', v); } catch (_) {} }, true);
+
+    loadPlan().then(() => loadProviders()).catch(err => {
+      badgeEl.textContent = 'Chyba načítania';
+      statusEl.className = 'status error';
+      statusEl.textContent = err.message;
+      providerEl.innerHTML = '<option value="">Nedostupné</option>';
+    });
+  </script>
+<script>
+(function(){var g=document.getElementById('btnGuide'),n=document.getElementById('btnNext');
+g&&g.addEventListener('click',function(){var pn=document.getElementById('guidePanel'),d=document.getElementById('guideDetails');
+if(!pn||pn.hidden){var st=document.getElementById('status');if(st){st.className='status';st.textContent='Najprv vyberte spôsob platby – potom sa zobrazí návod.'}var pv=document.getElementById('provider');if(pv)pv.scrollIntoView({behavior:'smooth',block:'center'});return}
+if(d)d.open=true;pn.scrollIntoView({behavior:'smooth',block:'start'})});
+n&&n.addEventListener('click',function(){var b=document.getElementById('go');if(b)b.scrollIntoView({behavior:'smooth',block:'center'})});})();
+</script>
+<script src="/chat-widget.js" defer></script>
+</body>
+</html>

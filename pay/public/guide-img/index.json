@@ -1,0 +1,122 @@
+[
+ {
+  "id": "azteco-1",
+  "src": "/guide-img/azteco-1.png",
+  "method": "azteco",
+  "caption": "Klikni na farebný kôš „Darčekové karty Azteco“."
+ },
+ {
+  "id": "azteco-2",
+  "src": "/guide-img/azteco-2.png",
+  "method": "azteco",
+  "caption": "Vyber hodnotu karty (napr. 50 €)."
+ },
+ {
+  "id": "azteco-3",
+  "src": "/guide-img/azteco-3.png",
+  "method": "azteco",
+  "caption": "Tlačidlo „📖 Návod“ rozbalí návod pre zvolenú kartu."
+ },
+ {
+  "id": "azteco-4",
+  "src": "/guide-img/azteco-4.png",
+  "method": "azteco",
+  "caption": "Po „Pokračovať →“ sa zobrazí: je to len informačný návod, kód sa na stránke nezadáva."
+ },
+ {
+  "id": "revolut-1",
+  "src": "/guide-img/revolut-1.png",
+  "method": "revolut",
+  "caption": "Otvor kôš „Revolut“."
+ },
+ {
+  "id": "revolut-2",
+  "src": "/guide-img/revolut-2.png",
+  "method": "revolut",
+  "caption": "Vyber „Revolut“."
+ },
+ {
+  "id": "revolut-3",
+  "src": "/guide-img/revolut-3.png",
+  "method": "revolut",
+  "caption": "Zadaj sumu v EUR."
+ },
+ {
+  "id": "revolut-4",
+  "src": "/guide-img/revolut-4.png",
+  "method": "revolut",
+  "caption": "Klikni „Pokračovať →“ – otvorí sa stránka objednávky, kde počkáš na Revtag."
+ },
+ {
+  "id": "sepa-1",
+  "src": "/guide-img/sepa-1.png",
+  "method": "sepa",
+  "caption": "Vyber „SEPA platba“ (bankový prevod)."
+ },
+ {
+  "id": "sepa-2",
+  "src": "/guide-img/sepa-2.png",
+  "method": "sepa",
+  "caption": "Zadaj sumu v EUR."
+ },
+ {
+  "id": "sepa-3",
+  "src": "/guide-img/sepa-3.png",
+  "method": "sepa",
+  "caption": "Vyplň meno a priezvisko."
+ },
+ {
+  "id": "sepa-4",
+  "src": "/guide-img/sepa-4.png",
+  "method": "sepa",
+  "caption": "Klikni „Pokračovať →“ – na stránke objednávky počkáš na IBAN, meno príjemcu a poznámku."
+ },
+ {
+  "id": "g2a-azteco-1",
+  "src": "/guide-img/g2a-azteco-1.jpg",
+  "method": "azteco",
+  "caption": "G2A: Klikni „In den Warenkorb“ (= Do košíka)."
+ },
+ {
+  "id": "g2a-azteco-2",
+  "src": "/guide-img/g2a-azteco-2.jpg",
+  "method": "azteco",
+  "caption": "G2A: Do políčka „Gib deine E-Mail-Adresse ein“ napíš svoj e-mail – sem príde kód. Políčko „Ein Konto für diese E-Mail-Adresse erstellen“ (vytvoriť účet) nemusíš zaškrtnúť. „Plus Premium“ nechaj vypnuté. Klikni „Weiter zur Zahlung“ (= Pokračovať k platbe)."
+ },
+ {
+  "id": "g2a-azteco-3",
+  "src": "/guide-img/g2a-azteco-3.jpg",
+  "method": "azteco",
+  "caption": "G2A: Vyber „Kredit- oder Debitkarte“ (kreditná/debetná karta) a klikni „Bezahlen mit Kredit- oder Debitkarte“ (= Zaplatiť kartou). Dole skontroluj „Gesamtbetrag“ = celková suma na zaplatenie (na obrázku napr. 53,41 EUR; presnú sumu ukáže G2A)."
+ },
+ {
+  "id": "g2a-azteco-4",
+  "src": "/guide-img/g2a-azteco-4.jpg",
+  "method": "azteco",
+  "caption": "G2A: Vyplň údaje SVOJEJ karty priamo na G2A: „Kartennummer“ = číslo karty, „Ablaufdatum“ = platnosť MM/RR, „CVV/CVC“ = 3 číslice zo zadnej strany, „Name des Karteninhabers“ = meno ako na karte. Klikni „Bestätigen“ (= Potvrdiť) a potvrď platbu v appke banky. Údaje karty nikdy nikomu inému nedávaj."
+ },
+ {
+  "id": "g2a-amazon-1",
+  "src": "/guide-img/g2a-amazon-1.jpg",
+  "method": "amazon",
+  "caption": "G2A: Skontroluj „Region“ = GERMANY (Nemecko) a klikni „Add to cart“ / „In den Warenkorb“ (= Do košíka)."
+ },
+ {
+  "id": "g2a-amazon-2",
+  "src": "/guide-img/g2a-amazon-2.jpg",
+  "method": "amazon",
+  "caption": "G2A: Do políčka „Gib deine E-Mail-Adresse ein“ napíš svoj e-mail – sem príde kód. Políčko „Ein Konto für diese E-Mail-Adresse erstellen“ (vytvoriť účet) nemusíš zaškrtnúť. „Plus Premium“ nechaj vypnuté. Klikni „Weiter zur Zahlung“ (= Pokračovať k platbe)."
+ },
+ {
+  "id": "g2a-amazon-3",
+  "src": "/guide-img/g2a-amazon-3.jpg",
+  "method": "amazon",
+  "caption": "G2A: Vyber „Kredit- oder Debitkarte“ (kreditná/debetná karta) a klikni „Bezahlen mit Kredit- oder Debitkarte“ (= Zaplatiť kartou). Dole skontroluj „Gesamtbetrag“ = celková suma na zaplatenie (na obrázku napr. 53,41 EUR; presnú sumu ukáže G2A)."
+ },
+ {
+  "id": "g2a-amazon-4",
+  "src": "/guide-img/g2a-amazon-4.jpg",
+  "method": "amazon",
+  "caption": "G2A: Vyplň údaje SVOJEJ karty priamo na G2A: „Kartennummer“ = číslo karty, „Ablaufdatum“ = platnosť MM/RR, „CVV/CVC“ = 3 číslice zo zadnej strany, „Name des Karteninhabers“ = meno ako na karte. Klikni „Bestätigen“ (= Potvrdiť) a potvrď platbu v appke banky. Údaje karty nikdy nikomu inému nedávaj."
+ }
+]

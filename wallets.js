@@ -10,7 +10,7 @@ const path = require('path');
 
 module.exports = function install(ctx) {
   const { admin, page, esc, hid, csrf, needAuth, wrap, audit } = ctx;
-  const ORIGIN = String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
+  const ORIGIN = ['live', 'on'].includes(String(process.env.PAY_MODULE || '').trim().toLowerCase()) ? '' : String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
   const secret = () => { const v = String(process.env.PAY_ADMIN_BRIDGE_SECRET || ''); return v.length >= 32 ? v : ''; };
   const WB = '/admin/penazenky';
   const LB = '/admin/odkazy-podla-sumy';
@@ -18,8 +18,20 @@ module.exports = function install(ctx) {
   const HEAD = `<link rel="stylesheet" href="/static/pm.css?v=${V}"><link rel="stylesheet" href="/static/wl.css?v=${V}"><script src="/static/wl.js?v=${V}" defer></script>`;
   const ID_RE = /^(w|al)_[a-f0-9]{6,32}$/;
 
+  const MERGED = () => ['live', 'on'].includes(String(process.env.PAY_MODULE || '').trim().toLowerCase());
   class BridgeErr extends Error { constructor(kind, msg) { super(msg); this.kind = kind; } }
   const bridge = (p) => async function call(action, extra = {}, timeoutMs = 45000) {
+    // merged payment module (PAY_MODULE=live|on): call the same actions in-process – no HTTP, no HMAC, no second service
+    const reg = MERGED() && global.__payBridge && global.__payBridge[p];
+    if (reg) {
+      const fn = Object.prototype.hasOwnProperty.call(reg, String(action)) ? reg[String(action)] : null;
+      if (!fn) throw new BridgeErr('user', 'Neznáma akcia');
+      let out;
+      try { out = await fn(JSON.parse(JSON.stringify({ action, ...extra, actor: 'admin' }))); } catch (x) { throw new BridgeErr('user', (x && x.message) || 'Chyba'); }
+      const j = out == null ? null : JSON.parse(JSON.stringify(out));
+      if (!j || !j.ok) throw new BridgeErr('user', (j && j.error) || 'Chyba');
+      return j;
+    }
     const sec = secret();
     if (!sec) throw new BridgeErr('off', 'nie je prepojené');
     const body = JSON.stringify({ action, ...extra, actor: 'admin', n: crypto.randomBytes(12).toString('hex') });

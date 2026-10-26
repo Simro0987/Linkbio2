@@ -1,0 +1,83 @@
+/* TV Software theme (matches lnkbio.onrender.com/tv) – styling only */
+:root{--bg:#07080f;--card:#141a2e;--border:rgba(255,255,255,.1);--text:#e6e9f5;--muted:#9aa3c0;--accent:#e50914;--accent-blue:#2563eb;--input:#0b0e1c;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+html body{background-color:#07080f!important;background-image:radial-gradient(1200px 500px at 50% -10%,rgba(229,9,20,.28),transparent 60%),radial-gradient(900px 500px at 100% 100%,rgba(37,99,235,.25),transparent 60%),linear-gradient(180deg,#0b0d18 0%,#07080f 100%)!important;background-attachment:fixed!important;color:#e6e9f5!important;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.card,.box,.panel{background:rgba(20,26,46,.92)!important;border:1px solid rgba(255,255,255,.08)!important;border-radius:16px!important;box-shadow:0 8px 24px rgba(0,0,0,.35),inset 4px 0 0 #e50914!important;backdrop-filter:blur(6px)}
+#go,.pf-btn,form > button[type=submit],.btn{background:linear-gradient(135deg,#e50914,#2563eb)!important;color:#f5f7ff!important;border-radius:12px;box-shadow:0 0 24px rgba(229,9,20,.3)}
+input,select,textarea{background:#0b0e1c!important;border-color:rgba(255,255,255,.14)!important;color:#e6e9f5!important}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#e50914!important;box-shadow:0 0 0 3px rgba(229,9,20,.25)!important}
+.card a,.wrap a{color:#8fb0ff}
+h1{font-weight:800;letter-spacing:-.02em;background:linear-gradient(90deg,#fff,#c7d2fe);-webkit-background-clip:text;background-clip:text;color:transparent}
+.tvtop{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 18px;padding:10px 14px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(20,26,46,.6);backdrop-filter:blur(6px)}
+.tvtop a{color:#f5f7ff;text-decoration:none;font-weight:700;font-size:.9rem}
+.tvtop .tvlogo{display:inline-flex;align-items:center;gap:8px}
+.tvtop .tvlogo i{font-style:normal;display:inline-block;width:28px;height:28px;line-height:28px;text-align:center;border-radius:8px;background:linear-gradient(135deg,#e50914,#2563eb);box-shadow:0 0 16px rgba(229,9,20,.45);font-size:.8rem}
+.tvtop .tvback{padding:6px 12px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(255,255,255,.04)}
+.brand h1::before{content:"▶";display:block;margin:0 auto 12px;width:56px;height:56px;line-height:56px;border-radius:16px;font-size:1.4rem;color:#fff;-webkit-text-fill-color:#fff;background:linear-gradient(135deg,#e50914,#2563eb);box-shadow:0 0 30px rgba(229,9,20,.45)}
+.tvbar{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:10px 0 0;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase}
+.tvbar span{padding:4px 10px;border:1px solid rgba(255,255,255,.14);border-radius:6px;background:rgba(255,255,255,.04)}
+.tvbar .live{color:#ff4d57;border-color:rgba(229,9,20,.5)}
+@media(max-width:480px){.tvtop{padding:8px 10px}.tvtop a{font-size:.8rem}}
+.amt-btn,.device-toggle button.active{border-color:rgba(229,9,20,.5)!important}
+.device-toggle button.active{background:linear-gradient(135deg,rgba(229,9,20,.85),rgba(37,99,235,.85))!important;color:#fff!important}
+
+/* ===== Responsive layer (mobile-first) – layout only, no payment logic =====
+   Loaded after every page's inline <style>, so it normalises all public pages. */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%;overflow-x:clip}
+[hidden]{display:none!important}
+/* Pages that center a single .card with body{display:flex} must stack injected blocks
+   (language switch, proof form, chain status) BELOW the card, never beside it. */
+html body{flex-direction:column;flex-wrap:nowrap;max-width:100%}
+html body>*{max-width:100%;min-width:0}
+.langbar{align-self:stretch;width:100%}
+img,video,canvas,iframe{max-width:100%;height:auto}
+.qritem img,#qrSpd,#qrEpc{max-width:100%;height:auto;aspect-ratio:1/1}
+/* long IBANs / BTC addresses / Revtags / references wrap instead of widening the page */
+code,pre,kbd,samp,.addr,.val,.mono,.row strong,.row code,.addr-field .val,#c2pProof,#chainStatus{overflow-wrap:anywhere;word-break:normal}
+pre{white-space:pre-wrap}
+code{background:#0b0e1c!important;color:#f5f7ff!important;border:1px solid rgba(255,255,255,.14);border-radius:8px}
+small{color:#9aa3c0}
+.box small,.box{color:#e6e9f5}
+/* label/value rows wrap when the value is long */
+.row{flex-wrap:wrap;min-width:0}
+.row>*{min-width:0}
+/* responsive amount/address rows used on pay pages (code + unit + copy button) */
+.cprow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.cprow code{flex:1 1 140px;min-width:0;margin:0;padding:8px 10px}
+.cprow .unit{flex:0 0 auto}
+.cprow button{flex:1 1 100%}
+@media (min-width:769px){.cprow button{flex:0 0 auto}}
+
+/* ---- mobile / tablet (< 769px): single column, full-width controls, 44px tap targets, 16px inputs ---- */
+@media (max-width:768px){
+  input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=hidden]),select,textarea{font-size:16px;min-height:44px;max-width:100%}
+  input[type=file]{max-width:100%;width:100%;min-height:44px;font-size:15px}
+  input[type=checkbox],input[type=radio]{width:20px;height:20px;min-height:0;flex:0 0 auto}
+  button,.btn,a.btn,label.filebtn,input[type=submit],summary{min-height:44px}
+  button.copy,.addr-field button.copy,.addr-actions button{width:100%;display:block}
+  .addr-grid{grid-template-columns:1fr}
+  .basket-strip button,.quick-picks button{min-height:44px;padding:.5rem .8rem}
+  .basket-head{min-height:46px}
+  .device-toggle button{min-height:44px}
+  /* label/value rows: stack when the value would get squeezed */
+  .row{gap:.15rem .75rem}
+  .row strong{text-align:left}
+  .tvtop{flex-wrap:wrap}
+  details>summary{padding-top:.55rem;padding-bottom:.55rem}
+  #c2pProof{margin:16px 0}
+}
+@media (max-width:480px){
+  .basket-methods{flex-direction:column}
+  .basket-methods button{width:100%;min-height:46px}
+  .row{flex-direction:column;align-items:flex-start}
+  .row strong{text-align:left}
+  .card,.box{padding-left:14px;padding-right:14px}
+  .timer{font-size:1.35rem}
+}
+/* leave room so the floating chat button never hides the last button / form field */
+html.c2p-chat body{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))!important}
+/* 2026-10-26: comfortable tap targets (≥44px) for language switch, top nav and back links */
+a.langsw{min-height:44px;display:inline-flex;align-items:center;box-sizing:border-box}
+.tvtop a{min-height:44px;display:inline-flex;align-items:center;box-sizing:border-box}
+a.ghost{min-height:44px;display:flex;align-items:center;justify-content:center}
+p>a[href="/"]:only-child{display:inline-flex;align-items:center;min-height:44px}

@@ -1,0 +1,8 @@
+data/*
+!data/providers.json
+!data/address-pools.json
+!data/wallets.json
+.env
+.env.*
+*.log
+logs/

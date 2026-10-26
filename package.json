@@ -1,1 +1,28 @@
-{"name":"linkbio","version":"1.0.0","private":true,"main":"server.js","scripts":{"start":"node server.js","test":"node test/tvch-import.test.js"},"engines":{"node":">=18"},"dependencies":{"bcryptjs":"^2.4.3","compression":"^1.8.2","express":"^4.21.2","helmet":"^8.0.0","multer":"^2.4.0","pg":"^8.13.1","qrcode":"^1.5.4","sharp":"^0.34.5"}}
+{
+  "name": "linkbio",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/tvch-import.test.js && node pay/scripts/test-sepa-bot-chain.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1157.0",
+    "@neondatabase/serverless": "^1.2.0",
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.8.2",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.2.1",
+    "pg": "^8.13.1",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.34.5",
+    "ws": "^8.22.0"
+  }
+}

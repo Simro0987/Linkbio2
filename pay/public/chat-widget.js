@@ -1,0 +1,43 @@
+(function(){if(window.__c2pChat)return;window.__c2pChat=1;
+var q=new URLSearchParams(location.search),m=location.pathname.match(/\/order\/([^/?#]+)/),OID=q.get('orderId')||(m&&m[1])||null;
+var SK='c2p_chat_sid',sid=null;try{sid=sessionStorage.getItem(SK)}catch(e){}
+var css='#c2pW button{width:auto;margin:0;min-height:0;box-shadow:none;text-transform:none;letter-spacing:normal;box-sizing:border-box}#c2pB{position:fixed;right:14px;bottom:14px;z-index:9998;width:52px;height:52px;border-radius:50%;border:0;background:#8b5cf6;color:#fff;font-size:24px;box-shadow:0 4px 14px #0006;cursor:pointer;opacity:.92}'+
+'#c2pW{position:fixed;right:14px;bottom:76px;z-index:9999;width:min(360px,calc(100vw - 28px));height:min(520px,calc(100vh - 110px));background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:14px;display:none;flex-direction:column;box-shadow:0 10px 30px #0008;font:14px/1.4 system-ui,sans-serif}'+
+'#c2pW.open{display:flex}#c2pH{padding:10px 12px;border-bottom:1px solid #334155;display:flex;justify-content:space-between;align-items:center;font-weight:700}#c2pH span{flex:1;white-space:nowrap}#c2pH button{flex:0 0 auto;background:none;border:0;color:#94a3b8;font-size:22px;line-height:1;padding:2px 6px;cursor:pointer}'+
+'#c2pL{flex:1;overflow:auto;padding:10px;display:flex;flex-direction:column;gap:8px}.c2pM{max-width:85%;padding:8px 10px;border-radius:10px;white-space:pre-wrap;word-wrap:break-word}.c2pU{align-self:flex-end;background:#6d28d9;color:#fff}.c2pA{align-self:flex-start;background:#1e293b}.c2pO{align-self:flex-start;background:#065f46;color:#ecfdf5}'+
+'#c2pF{display:flex;gap:6px;align-items:flex-end;padding:8px;border-top:1px solid #334155}#c2pI{flex:1;min-width:0;box-sizing:border-box;padding:8px 10px;border-radius:8px;border:1px solid #475569;background:#020617;color:#e2e8f0;font:16px/1.4 system-ui,sans-serif;resize:none;min-height:calc(3 * 1.4em + 18px);max-height:calc(6 * 1.4em + 18px);overflow-y:auto}#c2pF button{flex:0 0 38px;width:38px;height:38px;padding:0;border:0;border-radius:50%;background:#8b5cf6;color:#fff;font-size:16px;cursor:pointer}'+
+'.c2pChip button{margin:8px 8px 0 0!important;padding:8px 16px;border:0;border-radius:8px;background:#16a34a;color:#fff;font-size:15px;cursor:pointer}.c2pChip button.no{background:#475569}.c2pImg{display:block;width:140px;max-width:100%;margin:6px 0;border:1px solid #475569;border-radius:8px}#c2pW #c2pHum{margin:0 8px 8px;width:calc(100% - 16px);padding:7px;border:1px solid #475569;background:none;color:#cbd5e1;border-radius:8px;cursor:pointer;font-size:13px}';
+css+='@media(max-width:600px){#c2pB{right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px))}#c2pW{left:8px;right:8px;width:auto;bottom:calc(70px + env(safe-area-inset-bottom,0px));height:min(560px,calc(100vh - 90px));height:min(560px,calc(100dvh - 90px))}#c2pF button{flex-basis:44px;width:44px;height:44px}#c2pW #c2pHum{min-height:40px}#c2pH button{min-width:44px;min-height:44px}}';document.documentElement.classList.add('c2p-chat');
+var st=document.createElement('style');st.textContent=css;document.head.appendChild(st);
+var b=document.createElement('button');b.id='c2pB';b.setAttribute('aria-label','Pomoc');b.textContent='💬';
+var w=document.createElement('div');w.id='c2pW';w.innerHTML='<div id="c2pH"><span>Pomoc s platbou</span><button aria-label="Zavrieť">×</button></div><div id="c2pL"></div><button id="c2pHum">🙋 Chcem hovoriť s človekom</button><form id="c2pF"><textarea id="c2pI" rows="3" maxlength="800" placeholder="Napíšte otázku… (Enter = odoslať, Shift+Enter = nový riadok)"></textarea><button aria-label="Odoslať">➤</button></form>';
+document.body.appendChild(w);document.body.appendChild(b);
+var L=w.querySelector('#c2pL'),I=w.querySelector('#c2pI'),busy=false,since=Date.now(),pt=null;
+function fill(d,t){d.textContent='';String(t).split(/(\[img:\/guide-img\/[a-z0-9-]+\.(?:png|jpg)\])/i).forEach(function(p){var m=p.match(/^\[img:(\/guide-img\/[a-z0-9-]+\.(?:png|jpg))\]$/i);if(m){var a=document.createElement('a');a.href=m[1];a.target='_blank';a.rel='noopener';var im=document.createElement('img');im.src=a.href;im.alt='krok';im.className='c2pImg';im.onload=function(){L.scrollTop=L.scrollHeight};a.appendChild(im);d.appendChild(a)}else if(p)d.appendChild(document.createTextNode(p))})}
+function add(t,c){var d=document.createElement('div');d.className='c2pM '+c;fill(d,t);L.appendChild(d);L.scrollTop=L.scrollHeight;return d}
+add('Dobrý deň 👋 Som asistent. Pomôžem s platbou a objednávkou. Nikdy od vás nebudeme chcieť číslo karty, heslá ani prihlásenie do banky.','c2pA');
+b.onclick=function(){w.classList.toggle('open');if(w.classList.contains('open'))setTimeout(function(){I.focus()},50)};
+w.querySelector('#c2pH button').onclick=function(){w.classList.remove('open')};
+function poll(){if(!sid)return;fetch('/api/chat/'+sid+'/updates?since='+since).then(function(r){return r.json()}).then(function(j){(j.messages||[]).forEach(function(m){since=Math.max(since,m.t);add('👤 Operátor: '+m.text,'c2pO');if(!w.classList.contains('open')){b.textContent='🔔'}})}).catch(function(){})}
+function startPoll(){if(!pt)pt=setInterval(poll,5000)}
+if(sid)startPoll();
+function send(text,human){if(busy||!text)return;busy=true;add(text,'c2pU');var th=add('…','c2pA');
+fetch('/api/chat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:text,sessionId:sid,orderId:OID,human:!!human,lang:document.documentElement.lang||'sk'})}).then(function(r){return r.json()}).then(function(j){if(j.sessionId){sid=j.sessionId;try{sessionStorage.setItem(SK,sid)}catch(e){}startPoll()}fill(th,j.reply||j.error||'Chyba');if(j.fill)chip(j.fill)}).catch(function(){th.textContent='Spojenie zlyhalo, skúste znova.'}).then(function(){busy=false})}
+function grow(){I.style.height='auto';I.style.height=Math.min(I.scrollHeight+2,parseFloat(getComputedStyle(I).maxHeight)||200)+'px'}I.addEventListener('input',grow);
+I.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();w.querySelector('#c2pF').requestSubmit?w.querySelector('#c2pF').requestSubmit():w.querySelector('#c2pF').onsubmit(e)}});
+function chip(f){var d=document.createElement('div');d.className='c2pM c2pA c2pChip';var t=document.createElement('div');t.textContent='Vyplniť formulár: '+f.label+(f.gift?'':', '+f.amount+' €')+(f.firstName||f.lastName?(', '+(f.firstName+' '+f.lastName).trim()):'')+'?';d.appendChild(t);
+var y=document.createElement('button');y.type='button';y.textContent='Áno';var n=document.createElement('button');n.type='button';n.textContent='Nie';n.className='no';d.appendChild(y);d.appendChild(n);L.appendChild(d);L.scrollTop=L.scrollHeight;
+n.onclick=function(){d.remove();add('Dobre, formulár nevypĺňam.','c2pA')};
+y.onclick=function(){y.disabled=n.disabled=true;var main=document.getElementById('provider')&&document.getElementById('amount')&&document.getElementById('go');
+if(!main){var a=document.createElement('a');a.href='/platby';a.textContent='Prejsť na hlavnú stránku platby';a.style.color='#c4b5fd';d.appendChild(document.createElement('br'));d.appendChild(a);return}
+applyFill(f);d.querySelectorAll('button').forEach(function(b){b.remove()});t.textContent='✅ Vyplnené: '+f.label+(f.gift?'. Pozrite návod a tlačidlo nižšie.':', '+f.amount+' €. Skontrolujte údaje a kliknite na tlačidlo platby.')}}
+function setVal(id,v){var e=document.getElementById(id);if(!e||v===''||v==null)return;e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}))}
+function applyFill(f){
+if(typeof window.selectProvider==='function')window.selectProvider(f.method);else{var b=document.querySelector('button[data-pid="'+f.method+'"]');if(b)b.click()}
+if(!f.gift&&f.amount)setVal('amount',String(f.amount));if(f.country)setVal('country',f.country);if(f.email)setVal('email',f.email);
+var sn=document.getElementById('sepaNameFields');if(sn&&!sn.hidden){setVal('firstName',f.firstName);setVal('lastName',f.lastName)}
+setTimeout(function(){var g=document.getElementById('go');if(!g)return;if(window.innerWidth<700)w.classList.remove('open');g.scrollIntoView({behavior:'smooth',block:'center'});g.style.transition='box-shadow .3s';g.style.boxShadow='0 0 0 4px #facc15, 0 0 22px 6px #facc15aa';setTimeout(function(){g.style.boxShadow=''},6000)},400)}
+w.querySelector('#c2pF').onsubmit=function(e){e.preventDefault();var t=I.value.trim();I.value='';grow();send(t)};
+w.querySelector('#c2pHum').onclick=function(){var t=I.value.trim()||'Prosím o pomoc operátora.';I.value='';send(t,true)};
+b.addEventListener('click',function(){b.textContent='💬'});
+})();
