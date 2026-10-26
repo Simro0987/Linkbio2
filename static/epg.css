@@ -92,3 +92,15 @@
 .tvl.ep{align-items:start}
 .tch.hasep{align-content:flex-start}
 .tvl.ep .tch{min-width:0}.tvg{min-width:0}
+/* Top dnes / Top týždňa as moving strips (.mv is set by JS; without JS or with reduced motion the grid above stays) */
+.hlhd{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 8px}
+.hlhd .hlh{margin:0}
+.dnpp{flex:none;font:inherit;font-size:.8rem;color:inherit;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.15);border-radius:999px;padding:5px 12px;cursor:pointer}
+.dnpp:hover,.dnpp[aria-pressed=true]{background:rgba(229,9,20,.3)}
+.dnpp[hidden]{display:none}
+.hlv{border-radius:12px;outline-offset:2px}
+.hls.mv .hlv{overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;padding:2px 0 8px;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 20px,#000 calc(100% - 20px),transparent 100%);mask-image:linear-gradient(90deg,transparent 0,#000 20px,#000 calc(100% - 20px),transparent 100%)}
+.hls.mv .hll{display:flex;flex-wrap:nowrap;gap:10px;width:max-content;grid-template-columns:none}
+.hls.mv .hli{flex:none;width:300px;grid-column:auto}
+.hls.mv .hli.best{width:420px}
+@media (max-width:600px){.hls.mv .hli{width:250px}.hls.mv .hli.best{width:300px}}

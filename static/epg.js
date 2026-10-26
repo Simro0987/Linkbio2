@@ -12,13 +12,41 @@ function remLink(cls,id,s){var a=el('a',cls,'🔔');a.href='/api/epg/ics/'+id+'/
 var RM=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 var ICON={film:'🎬',sport:'⚽',news:'📰',kids:'🧸',series:'📺',doc:'🌍',show:'🎤',music:'🎵'};
 
-/* ---------- homepage: Top dnes / Top týždňa (3–5 cards, one highlighted) ---------- */
+/* ---------- homepage: Top dnes / Top týždňa (3–5 cards, one highlighted) as moving strips ---------- */
 [].forEach.call(document.querySelectorAll('section.hls'),function(sec){
-  var ol=sec.querySelector('.hll');if(!ol)return;
-  function tick(){var n=now(),vis=[];[].forEach.call(ol.querySelectorAll('.hli'),function(li){var s=+li.getAttribute('data-s'),e=+li.getAttribute('data-e');if(n>=e){li.hidden=true;li.classList.remove('best');return;}li.classList.toggle('live',n>=s);vis.push(li);});
-    if(vis.length<3){sec.hidden=true;return;}
+  var ol=sec.querySelector('.hll'),v=sec.querySelector('.hlv'),btn=sec.querySelector('.dnpp');if(!ol)return;
+  var mv=sec.hasAttribute('data-speed')&&!RM&&v,speed=Math.max(5,Math.min(150,+sec.getAttribute('data-speed')||28));
+  var W=0,pos=0,set=-1,last=0,run=false,user=false,hover=false,focus=false,touch=false,tt=0,sig='';
+  function orig(){return [].slice.call(ol.querySelectorAll('.hli:not(.hlcl)'));}
+  function tick(){var n=now(),vis=[];orig().forEach(function(li){var s=+li.getAttribute('data-s'),e=+li.getAttribute('data-e');if(n>=e){li.hidden=true;li.classList.remove('best');return;}li.classList.toggle('live',n>=s);vis.push(li);});
+    if(vis.length<3){sec.hidden=true;stop();return;}
     if(!vis.some(function(li){return li.classList.contains('best');})){var b=vis.slice().sort(function(a,c){return(+a.getAttribute('data-r')||9)-(+c.getAttribute('data-r')||9);})[0];b.classList.add('best');ol.insertBefore(b,ol.firstChild);}
-    sec.classList.toggle('odd',vis.length%2===0);}
+    sec.classList.toggle('odd',vis.length%2===0);
+    if(mv){var k=vis.map(function(li){return li.getAttribute('data-s')+(li.className);}).join('|');if(k!==sig){sig=k;build();}}}
+  // clone the visible set as many times as needed so the loop is seamless even when 3 cards fit on screen
+  function build(){
+    [].forEach.call(ol.querySelectorAll('.hlcl'),function(c){c.remove();});
+    sec.classList.add('mv');var items=orig().filter(function(li){return !li.hidden;});if(!items.length)return;
+    function addSet(){items.forEach(function(li){var c=li.cloneNode(true);c.classList.add('hlcl');c.setAttribute('aria-hidden','true');[].forEach.call(c.querySelectorAll('a,button'),function(x){x.tabIndex=-1;});ol.appendChild(c);});}
+    addSet();measure();var guard=0;while(W>0&&ol.scrollWidth<v.clientWidth+W+40&&guard++<8)addSet();
+    if(!run){run=true;if(btn){btn.hidden=false;ui();}requestAnimationFrame(frame);}
+  }
+  function stop(){[].forEach.call(ol.querySelectorAll('.hlcl'),function(c){c.remove();});W=0;}
+  function measure(){var a=ol.querySelector('.hli:not(.hlcl):not([hidden])'),b=ol.querySelector('.hlcl');W=a&&b?b.offsetLeft-a.offsetLeft:0;if(W>0&&pos>=W)pos-=W;}
+  function paused(){return user||hover||focus||touch||document.hidden;}
+  function ui(){if(!btn)return;btn.setAttribute('aria-pressed',user?'true':'false');btn.textContent=user?btn.getAttribute('data-play'):btn.getAttribute('data-pause');}
+  function frame(ts){var dt=last?Math.min(0.1,(ts-last)/1000):0;last=ts;if(W>0&&!paused()){pos+=speed*dt;if(pos>=W)pos-=W;set=pos;v.scrollLeft=pos;}requestAnimationFrame(frame);}
+  if(mv){
+    v.addEventListener('scroll',function(){if(Math.abs(v.scrollLeft-set)>2){pos=v.scrollLeft;if(W>0&&pos>=W){pos-=W;set=pos;v.scrollLeft=pos;}}});
+    v.addEventListener('pointerenter',function(e){if(e.pointerType==='mouse')hover=true;});
+    v.addEventListener('pointerleave',function(e){if(e.pointerType==='mouse')hover=false;});
+    v.addEventListener('focusin',function(){focus=true;});v.addEventListener('focusout',function(){focus=false;});
+    v.addEventListener('touchstart',function(){touch=true;clearTimeout(tt);},{passive:true});
+    v.addEventListener('touchend',function(){clearTimeout(tt);tt=setTimeout(function(){touch=false;},3500);},{passive:true});
+    if(btn)btn.addEventListener('click',function(){user=!user;ui();});
+    var rt=0;window.addEventListener('resize',function(){clearTimeout(rt);rt=setTimeout(function(){sig='';tick();},200);});
+    window.addEventListener('load',function(){sig='';tick();}); // images loaded → widths final
+  }
   tick();setInterval(tick,60000);
 });
 

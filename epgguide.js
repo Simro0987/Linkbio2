@@ -21,7 +21,9 @@ const CHT = [
   ['film', /film|cinema|cinemax|\bhbo|\bamc\b|\bkino\b|movie|filmbox|epic drama|horor|\baxn\b|paramount|\bmax\b|nova cinema|joj cinema|prima max|cs film|kinosvet|kino barrandov|\bfx\b|star\b|warner|universal|sony/i],
 ];
 // placeholders / shopping / station idents that are not real programmes
-const GJUNK = /media ?shop|telesklep|telenákup|infomercial|tele ?market|závěr vysílání|záver vysielania|ukončenie vysielania|zveme na|program neposkytuje|bez programu|nemá program|program nie je k dispozícii|není k dispozici|end of transmission|off ?air|sendeschluss|close ?down|^\s*(pause|loop|info|promo|trailer|reklama|upoutávky)\s*$/i;
+const GJUNK = /media ?shop|nachtprogramm|nočný program|noční program|telesklep|telenákup|infomercial|tele ?market|závěr vysílání|záver vysielania|ukončenie vysielania|zveme na|program neposkytuje|bez programu|nemá program|program nie je k dispozícii|není k dispozici|end of transmission|off ?air|sendeschluss|close ?down|^\s*(pause|loop|info|promo|trailer|reklama|upoutávky)\s*$/i;
+const SPORT_S = /(?<![\p{L}\p{N}])(premier league|pro league|bundesliga|serie a|la liga|ligue 1|champions league|europa league|nfl|nba|nhl|ufc|formula 1|motogp|tipsport liga|extraliga)(?![\p{L}\p{N}])/iu; // strong: overrides a feed category
+const SPORT_T = /(?<![\p{L}\p{N}])(league|liga|ligue|bundesliga|serie a|cup|pohár|championship|šampionát|mistrovství|majstrovstvá|grand prix|ufc|wrestling|boxing|zápas|play-?off|nfl|nba|nhl|mlb|atp|wta|formula 1|f1|motogp)(?![\p{L}\p{N}])/iu;
 const NEWS_T = /^(správy|zprávy|udalosti|události|televízne noviny|televizní noviny|noviny|krimi|reflex(ia)?|interview|news|journal|tagesschau|híradó|wiadomości|fakty|ranné správy|události v regionech|newsroom|90 ?minút|horizont|týždeň|téma dňa)\b/i;
 
 module.exports = function guide(ctx, h) {
@@ -37,9 +39,12 @@ module.exports = function guide(ctx, h) {
   // genre from EPG category (already classified at import, re-checked with the current rules) + title keywords, fallback by channel type
   function genreOf(p, ch, ct, dur) {
     if (p.kind === 'adult' || ADULT.test(p.cat)) return '';
-    let g = C.classify(p.cat, p.title) || p.kind || '';
+    const cg = C.classify(p.cat, p.title);
+    let g = cg || p.kind || '';
+    if (g !== 'news' && g !== 'sport' && (cg ? SPORT_S : SPORT_T).test(p.title)) g = 'sport'; // feeds mislabel sport ("Saudi Pro League" as Komédie)
     if (g === 'film' && (dur < 65 || /\s[IVXL]+\.$/.test(p.title) || /\b(epiz[óo]da|díl|diel|časť|část|ep\.)\s*\d|\(\d+\/\d+\)/i.test(p.sub || ''))) g = 'series'; // "Horná Dolná VI." = season
     if (!g && NEWS_T.test(p.title)) g = 'news';
+    if (!g && SPORT_T.test(p.title)) g = 'sport';
     if (ct === 'kids' && g !== 'news') return 'kids';
     if (ct === 'doc' && (g === 'film' || g === '' || g === 'series')) return 'doc';
     if (ct === 'music' && (g === '' || g === 'show')) return 'music';
