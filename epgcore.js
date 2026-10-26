@@ -164,15 +164,17 @@ const MATCH_MIN = 0.88; // on raw name similarity (exact = 1)
 const isMatch = (c) => !!c && c.sim >= MATCH_MIN && c.n !== 0;
 
 // ---------- programme classification ----------
+const B = '(?<![\\p{L}\\p{N}])'; // word start that also works before š/č/ž… (\\b does not)
+const kre = (src) => new RegExp(B + '(' + src + ')', 'iu');
 const K = {
-  film: /\b(film|filmy|movie|spielfilm|kino|thriller|horor|horror|krimi ?film|komédi|komedi|vígjáték|játékfilm|dráma|drama|western|akčn|akcni|akció|sci-?fi|romantick|rodinn[ýy] film|fantasy|animovan[ýy] film|melodr)/i,
-  sport: /\b(šport|sport|futbal|fotbal|football|soccer|hokej|hockey|tenis|tennis|basketbal|basketball|kosárlabda|labdarúgás|jégkorong|piłka|siatk|kolarst|volejbal|volleyball|motošport|motorsport|formula|f1|motogp|box|mma|ufc|golf|cyklist|cycling|atletik|athletic|biatlon|lyžov|ski|handball|hádzan|házená|wrestling|darts|snooker|nfl|nba|nhl|khl)/i,
-  news: /\b(správy|zprávy|news|nachrichten|híradó|wiadomo|aktuality|tagesschau|journal)/i,
-  kids: /\b(detsk|dětsk|deti|děti|kids|kinder|gyerek|rozprávk|pohádk|kreslen|animovan|cartoon|bajk)/i,
-  doc: /\b(dokument|documentary|doku|ismeretterjeszt|príroda|přírod|nature|cestopis|travel)/i,
-  series: /\b(seriál|serial|series|serie|sorozat|telenovel|sitcom|soap)/i,
-  show: /\b(zábav|zabav|show|šou|reality|súťaž|soutěž|quiz|kvíz|talk|entertainment|unterhaltung|szórakoz|vetélked)/i,
-  music: /\b(hudb|music|musik|zene|koncert|concert|muzyk)/i,
+  film: kre('film|filmy|movie|spielfilm|kino|thriller|horor|horror|krimi ?film|komédi|komedi|vígjáték|játékfilm|dráma|drám|drama|western|akčn|akcni|akció|sci-?fi|romantick|rodinn[ýy] film|fantasy|animovan[ýy] film|melodr|fabularn|fabularny'),
+  sport: kre('šport|sport|futbal|fotbal|football|soccer|hokej|hockey|tenis|tennis|basketbal|basketball|kosárlabda|labdarúgás|jégkorong|piłka|siatk|kolarst|volejbal|volleyball|motošport|motorsport|formula|f1|motogp|box|mma|ufc|golf|cyklist|cycling|atletik|athletic|biatlon|lyžov|ski|handball|hádzan|házená|wrestling|darts|snooker|nfl|nba|nhl|khl|fußball|fussball|calcio|deporte|rugby|cricket'),
+  news: kre('správy|zprávy|spravodajs|zpravodajs|news|nachrichten|híradó|wiadomo|informac|aktuality|tagesschau|journal|nieuws|notizie|noticias|actualit|publicistik|publicisti'),
+  kids: kre('detsk|dětsk|deti|děti|kids|kinder|gyerek|rozprávk|pohádk|kreslen|animovan|animáci|animation|zeichentrick|cartoon|bajk|dla dzieci|children|jeugd|enfant|infantil'),
+  doc: kre('dokument|documen|doku|ismeretterjeszt|príroda|přírod|nature|natur|cestopis|cestovateľ|cestovatel|travel|reise|histor|vedeck|vědeck|science|wissenschaft|rybár|rybář|lovec|lovecké|zvierat|zvířat|animals'),
+  series: kre('seriál|serial|series|serie|sorozat|telenovel|sitcom|soap|krimiserie|comedyserie|animationsserie|zeichentrickserie|filmsorozat|detektív|detektiv'),
+  show: kre('zábav|zabav|show|šou|reality|súťaž|soutěž|quiz|kvíz|talk|entertainment|unterhaltung|szórakoz|vetélked|rozrywk|divertissement|magazín|magazin|magazine|magazyn|lifestyle|voľnočas|volnočas|varenie|vaření|kuchyn|cooking|bývanie|bydlení|móda|fashion|relácia|pořad|show'),
+  music: kre('hudb|music|musik|zene|koncert|concert|muzyk|muzyc|rock|pop\\b|hip-?hop|jazz|klasick[áa] hudba|opera'),
 };
 const LIVE = /(\blive\b|naživo|nazivo|naživo|priamy prenos|přímý přenos|p\.p\.|élő|na żywo|\blive:|\bvs\.?\b|\bv\.? ?s\b| – .+ – |\bfinále|\bfinal\b|semifin|štvrťfin|čtvrtfin|playoff|play-off|\bzápas\b|grand prix|\bgp\b|liga majstrov|liga mistrů|champions league|europa league|konferenčn|premier league|bundesliga|la liga|serie a|ligue 1|niké liga|nike liga|tipsport liga|tipos extraliga|extraliga|fortuna liga|chance liga|\bnhl\b|\bnba\b|\bufc\b|\bms v\b|\bme v\b|majstrovstvá sveta|mistrovství světa|majstrovstvá európy|mistrovství evropy|olymp|wimbledon|roland garros|us open|australian open|tour de france|derby|dakar|\bf1\b|formula 1|formule 1|motogp|el clasico)/i;
 const NOTLIVE = /(magaz[ií]n|štúdio|studio|highlight|zostrih|sestřih|záznam|zaznam|repríza|repriza|preview|predstavenie|téma|news|správy|zprávy|góly|goly|týždeň|tyden|kolo ve|sport\s*\d*\s*:|sportovní noviny|športové noviny|ríša|klasik|legendy|best of|top 10)/i;

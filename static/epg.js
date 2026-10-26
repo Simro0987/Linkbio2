@@ -77,24 +77,42 @@ function tick(){var need=Date.now()-loaded>10*60000;each(function(li,id){var l=d
 load();setInterval(tick,60000);
 document.addEventListener('visibilitychange',function(){if(!document.hidden&&Date.now()-loaded>60000)tick();});
 
-/* ---------- Šport dnes ---------- */
-if(L.sport&&cat){(function(){
-  var bar=el('div','tvtools'),b=el('button','tsb',t('sport','⚽ Šport dnes'));b.type='button';b.setAttribute('aria-expanded','false');bar.appendChild(b);
-  var pn=el('div','spt');pn.hidden=true;pn.id='sport-dnes';b.setAttribute('aria-controls','sport-dnes');
+/* ---------- Program podľa žánru: genre tabs + day tabs, lazy per genre/day ---------- */
+if(L.guide&&cat){(function(){
+  var G;try{G=JSON.parse(L.guide);}catch(e){return;}if(!G.length)return;
+  var st={g:L.gdef||G[0][0],d:0,f:L.gscope==='all'?'all':'skcz',n:60},got={},days=null,favS=null;
+  var bar=el('div','tvtools gbar'),pn=el('div','gpn');pn.hidden=true;pn.id='tv-zanre';
+  bar.appendChild(el('span','gbh','🗓 '+t('gtitle','Čo dávajú – program podľa žánru')));
+  var chips=el('div','gtabs');chips.setAttribute('role','tablist');bar.appendChild(chips);
+  G.forEach(function(x){var b=el('button','gch',x[1]);b.type='button';b.setAttribute('data-g',x[0]);b.setAttribute('aria-controls','tv-zanre');b.setAttribute('role','tab');chips.appendChild(b);});
   var h=cat.querySelector('h2');cat.insertBefore(bar,h?h.nextSibling:cat.firstChild);bar.parentNode.insertBefore(pn,bar.nextSibling);
-  var got=null,only=null;
+  var dbar=el('div','gdays'),fbar=el('div','gflt'),box=el('div','gbox');pn.appendChild(dbar);pn.appendChild(fbar);pn.appendChild(box);
+  [['skcz','SK/CZ'],['all',t('gall','Všetky')],['fav','⭐ '+t('fav','Obľúbené')]].forEach(function(x){var b=el('button','gfc',x[1]);b.type='button';b.setAttribute('data-f',x[0]);fbar.appendChild(b);});
+  function mark(){[].forEach.call(chips.children,function(b){var on=!pn.hidden&&b.getAttribute('data-g')===st.g;b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false');});
+    [].forEach.call(fbar.children,function(b){b.classList.toggle('on',b.getAttribute('data-f')===st.f);});
+    [].forEach.call(dbar.children,function(b){b.classList.toggle('on',+b.getAttribute('data-d')===st.d);});}
+  function drawDays(){dbar.textContent='';(days||[[0,'Dnes']]).forEach(function(x){var b=el('button','gdc',x[1]);b.type='button';b.setAttribute('data-d',x[0]);dbar.appendChild(b);});}
+  function favs(){try{return JSON.parse(localStorage.getItem('tvfav')||'[]');}catch(e){return[];}}
   function draw(){
-    pn.textContent='';pn.appendChild(el('p','sph',t('sporth','Dnešné športové prenosy')));
-    var n=now(),lst=got.l.filter(function(x){return x[2]>n;}),hasSk=lst.some(function(x){return got.ch[x[0]]&&got.ch[x[0]][2];});
-    if(hasSk){var lb=el('label','spf');only=only||el('input');only.type='checkbox';if(!only.dataset.init){only.checked=true;only.dataset.init='1';only.addEventListener('change',draw);}lb.appendChild(only);lb.appendChild(document.createTextNode(' SK/CZ'));pn.appendChild(lb);if(only.checked)lst=lst.filter(function(x){return got.ch[x[0]]&&got.ch[x[0]][2];});}
-    if(!lst.length){pn.appendChild(el('p','hint',t('sportnone','Dnes už žiadne športové prenosy.')));return;}
-    var ol=el('ol','spl');
-    lst.forEach(function(x){var c=got.ch[x[0]]||['',''];var li=el('li','spi'+(x[1]<=n?' on':'')+(x[5]?' big':''));li.appendChild(el('span','tetm',hm(x[1])));
-      var m=el('span','spm');var tt=el('b','spt2',x[3]);m.appendChild(tt);var ch=el('span','spc');if(c[1]){var im=el('img');im.src=c[1];im.alt='';im.width=18;im.height=18;im.loading='lazy';ch.appendChild(im);}ch.appendChild(document.createTextNode(c[0]));m.appendChild(ch);li.appendChild(m);
-      if(x[1]<=n)li.appendChild(el('span','tel',t('now','Teraz')));else li.appendChild(remLink('tdr',x[0],x[1]));ol.appendChild(li);});
-    pn.appendChild(ol);
+    var r=got[st.g+'|'+st.d];box.textContent='';mark();if(!r)return;
+    var n=now(),fv=st.f==='fav'?favs():null,lst=r.l.filter(function(x){if(x[2]<=n)return false;var c=r.ch[x[0]];if(st.f==='skcz')return c&&c[2];if(fv)return fv.indexOf(String(x[0]))>=0;return true;});
+    if(!lst.length){box.appendChild(el('p','hint',t('gnone','V tento deň tu nič nie je.')));return;}
+    var ol=el('ol','gl');
+    lst.slice(0,st.n).forEach(function(x){var c=r.ch[x[0]]||['',''],live=x[1]<=n,f=x[5]||'';var li=el('li','gi'+(live?' on':'')+(f.indexOf('h')>=0?' hl':''));
+      li.appendChild(el('span','tetm',hm(x[1])));
+      if(x[6]){var p=el('img','gpo');p.src=x[6];p.alt='';p.width=36;p.height=52;p.loading='lazy';p.referrerPolicy='no-referrer';li.appendChild(p);}
+      var m=el('span','spm'),tt=el('b','spt2');if(f.indexOf('h')>=0)tt.appendChild(el('span','gtip','★ '+t('gtop','Tip')));tt.appendChild(document.createTextNode(x[3]));m.appendChild(tt);if(x[4])m.appendChild(el('span','gsub',x[4]));
+      var ch=el('span','spc');if(c[1]){var im=el('img');im.src=c[1];im.alt='';im.width=18;im.height=18;im.loading='lazy';ch.appendChild(im);}ch.appendChild(document.createTextNode(c[0]));if(f.indexOf('l')>=0&&!live)ch.appendChild(el('span','glv',t('glive','Naživo')));m.appendChild(ch);li.appendChild(m);
+      if(live)li.appendChild(el('span','tel',t('now','Teraz')));else li.appendChild(remLink('tdr',x[0],x[1]));ol.appendChild(li);});
+    box.appendChild(ol);
+    if(lst.length>st.n){var mb=el('button','gmore',t('gmore','Zobraziť ďalšie')+' ('+(lst.length-st.n)+')');mb.type='button';mb.addEventListener('click',function(){st.n+=80;draw();});box.appendChild(mb);}
   }
-  b.addEventListener('click',function(){var open=pn.hidden;pn.hidden=!open;b.setAttribute('aria-expanded',open?'true':'false');if(!open)return;if(got&&Date.now()-got.at<5*60000)return draw();pn.textContent=t('load','Načítavam…');
-    fetch('/api/epg/sport',{credentials:'omit'}).then(function(r){return r.ok?r.json():{l:[],ch:{}};}).then(function(d){got=d;got.at=Date.now();draw();}).catch(function(){pn.hidden=true;b.setAttribute('aria-expanded','false');});});
+  function load(){var k=st.g+'|'+st.d,r=got[k];st.n=60;if(r&&Date.now()-r.at<5*60000)return draw();box.textContent=t('load','Načítavam…');mark();
+    fetch('/api/epg/guide?g='+encodeURIComponent(st.g)+'&d='+st.d+'&l='+(L.l||'sk'),{credentials:'omit'}).then(function(x){return x.ok?x.json():null;}).then(function(d){if(!d){box.textContent='';return;}d.at=Date.now();got[d.g+'|'+d.d]=d;if(d.days&&!days){days=d.days;drawDays();}if(d.g===st.g&&d.d===st.d)draw();}).catch(function(){box.textContent='';});}
+  chips.addEventListener('click',function(e){var b=e.target.closest('.gch');if(!b)return;var g=b.getAttribute('data-g');if(!pn.hidden&&g===st.g){pn.hidden=true;mark();return;}st.g=g;pn.hidden=false;load();});
+  dbar.addEventListener('click',function(e){var b=e.target.closest('.gdc');if(!b)return;st.d=+b.getAttribute('data-d');load();});
+  fbar.addEventListener('click',function(e){var b=e.target.closest('.gfc');if(!b)return;st.f=b.getAttribute('data-f');st.n=60;draw();});
+  drawDays();mark();
+  setInterval(function(){if(!pn.hidden)draw();},60000);
 })();}
 })();

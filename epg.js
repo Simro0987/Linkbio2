@@ -14,12 +14,11 @@ const TZ = 'Europe/Bratislava';
 const FEED_URL = (f) => `https://epgshare01.online/epgshare01/epg_ripper_${f}.xml.gz`;
 const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1', 'RO1', 'RS1', 'GR1', 'BG1', 'LV1', 'IE1'];
 const FEEDS_V2 = ['BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1']; // added 2026-10: Deluxe/ANIXE+/Red Bull, MDR, Arena Sport 3, My Hits, Россия 24, TSN, Fox Sports; RAKUTEN1: Red Bull TV
-const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV', top_n: '4', top_title: 'Top dnes', top_title_en: 'Top today', week_on: '1', week_n: '4', week_title: 'Top týždňa', week_title_en: 'Top this week' };
+const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV', top_n: '4', top_title: 'Top dnes', top_title_en: 'Top today', week_on: '1', week_n: '4', week_title: 'Top týždňa', week_title_en: 'Top this week', guide_on: '1', guide_genres: 'sport,film,series,show,doc,kids,news,music', guide_def: 'sport', guide_days: '4', guide_scope: 'skcz' };
 // custom XMLTV sources added in admin: feed key "src:<id>", their channel ids are prefixed "src<id>:" (no collisions with epgshare ids)
 const SRC_RE = /^src(\d+):/;
 const isSrcFeed = (f) => /^src:\d+$/.test(String(f || ''));
 // IPTV playlists / Xtream panels are never accepted (only schedule files)
-const BADURL = /\.m3u8?(\?|#|$)|\bget\.php|player_api\.php|panel_api\.php|[?&](username|password|type=m3u)|output=(ts|m3u8|hls)/i;
 const SRC_MAX = 10;
 const UA = { 'user-agent': 'lnkbio-epg/1.0 (+https://lnkbio.onrender.com)' };
 const ASSET_V = (() => { try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static/epg.js')) + fs.readFileSync(path.join(__dirname, 'static/epg.css'))).digest('hex').slice(0, 8); } catch { return '1'; } })();
@@ -49,7 +48,8 @@ module.exports = function install(ctx) {
   let mapCache = null, nowCache = null, dnesCache = null, srcCache = null; const dayCache = new Map();
   const sources = async () => srcCache || (srcCache = (await pool.query('SELECT * FROM epg_src ORDER BY id')).rows);
   let sportCache = null;
-  const dropCaches = () => { mapCache = null; nowCache = null; dnesCache = null; sportCache = null; dayCache.clear(); };
+  const dropCaches = () => { mapCache = null; nowCache = null; dnesCache = null; sportCache = null; dayCache.clear(); if (G) G.drop(); };
+  let G = null; // genre guide (epgguide.js)
   const channels = async () => (ctx.tvchAll ? ctx.tvchAll() : (await pool.query('SELECT id,name,category,logo,ord,visible FROM tv_channels ORDER BY ord,id')).rows);
   const loadMap = async () => mapCache || (mapCache = new Map((await pool.query('SELECT channel_id,epg_id,manual,score,shift FROM epg_map')).rows.map((r) => [r.channel_id, r])));
 
@@ -93,9 +93,9 @@ module.exports = function install(ctx) {
     return out;
   }
   // full detail from..to; to..far only highlight candidates (films, live sport, big shows) for "Top týždňa"
-  async function readProgs(feed, want, from, to, far) {
+  async function readProgs(feed, want, from, to, far, gEnd) {
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), 300e3);
-    const counts = new Map(); let rows = [], kept = 0, hl = 0;
+    const counts = new Map(); let rows = [], kept = 0, hl = 0, slim = 0;
     try {
       const o = await open(feed, ac.signal);
       await C.parseStream(o.body, {
@@ -105,19 +105,20 @@ module.exports = function install(ctx) {
           const id = o.pre ? o.pre + C.clip(p.ch, 120) : p.ch, near = p.start < to;
           if (near) counts.set(id, (counts.get(id) || 0) + 1);
           if (!want.has(id)) return;
-          if (!near && hl >= 40000) return;
+          const dur = (p.stop - p.start) / 60e3, guide = !near && p.start < gEnd && dur >= 10 && slim < 150000;
+          if (!near && !guide && hl >= 40000) return;
           const d = C.progDetails(p); if (!d.title) return;
-          const dur = (p.stop - p.start) / 60e3;
           let kind = ADULT.test(d.cat) ? 'adult' : C.classify(d.cat, d.title);
           if (kind === 'film' && dur < 65) kind = dur < 20 ? '' : 'series';
           const fl = (d.live ? 'l' : '') + (d.rerun ? 'r' : '') + (d.premiere ? 'p' : '');
-          if (!near) { if (scoreOf({ s: p.start, e: p.stop, title: d.title, kind, cat: d.cat, yr: d.year, fl }, FARCH, 0) < 22) return; hl++; }
-          rows.push([id, new Date(p.start), new Date(p.stop), d.title, d.sub, d.cat, kind, near ? d.desc : '', d.year, fl]); kept++;
+          // days 3+: slim rows (no description) for the genre guide; beyond the guide window only "Top týždňa" candidates
+          if (!near) { if (guide) { if (kind === 'adult' || JUNK.test(d.title)) return; slim++; } else { if (scoreOf({ s: p.start, e: p.stop, title: d.title, kind, cat: d.cat, yr: d.year, fl }, FARCH, 0) < 22) return; hl++; } }
+          rows.push([id, new Date(p.start), new Date(p.stop), d.title, near ? d.sub : C.clip(d.sub, 80), near ? d.cat : d.cat.slice(0, 60), kind, near ? d.desc : '', d.year, fl]); kept++;
           if (kept > 400000) return 'stop';
         },
       });
     } finally { clearTimeout(t); ac.abort(); }
-    return { rows, counts, hl };
+    return { rows, counts, hl, slim };
   }
   const FARCH = { name: '', category: '' };
   async function insertProgs(c, rows) {
@@ -200,14 +201,14 @@ module.exports = function install(ctx) {
     status.phase = 'párovanie';
     let { want } = await computeMap(c, chans, epgRows);
     // phase 3: programmes, one feed at a time (streamed, only wanted channels within the window)
-    const now = Date.now(), from = Math.min(dayStart(now), now - 3 * 3600e3) - 3600e3, to = now + Math.max(12, Math.min(72, +c.epg_ahead || 36)) * 3600e3, far = dayStart(now) + 8 * 86400e3 + 6 * 3600e3;
+    const now = Date.now(), from = Math.min(dayStart(now), now - 3 * 3600e3) - 3600e3, to = now + Math.max(12, Math.min(72, +c.epg_ahead || 36)) * 3600e3, far = dayStart(now) + 8 * 86400e3 + 6 * 3600e3, gEnd = c.guide_on === '1' ? dayStart(dayStart(now) + Math.max(1, Math.min(7, +c.guide_days || 4)) * 86400e3 + 6 * 3600e3) + 3 * 3600e3 : 0;
     const byFeed = new Map(); for (const r of epgRows) { if (!byFeed.has(r.feed)) byFeed.set(r.feed, []); byFeed.get(r.feed).push(r.id); }
     status.phase = 'program';
     for (const f of feeds) {
       const ids = (byFeed.get(f) || []).filter((i) => want.has(i)); if (!ids.length) { (report[f] = report[f] || {}).progs = 0; continue; }
       status.feed = f;
       try {
-        const { rows, counts, hl } = await readProgs(f, new Set(ids), from, to, far);
+        const { rows, counts, hl, slim } = await readProgs(f, new Set(ids), from, to, far, gEnd);
         const cl = await pool.connect();
         try {
           await cl.query('BEGIN');
@@ -217,7 +218,7 @@ module.exports = function install(ctx) {
           await cl.query('COMMIT');
         } catch (e) { await cl.query('ROLLBACK').catch(() => {}); throw e; } finally { cl.release(); }
         let last = 0; for (const r of rows) if (+r[2] > last) last = +r[2];
-        Object.assign(report[f] = report[f] || {}, { progs: rows.length, hl, withData: [...counts.keys()].length, days: last ? +((last - now) / 86400e3).toFixed(1) : 0 });
+        Object.assign(report[f] = report[f] || {}, { progs: rows.length, hl, slim, withData: [...counts.keys()].length, days: last ? +((last - now) / 86400e3).toFixed(1) : 0 });
       } catch (e) { (report[f] = report[f] || {}).err = String(e.message).slice(0, 120); }
     }
     // phase 4: final mapping now that we know which EPG channels really have data
@@ -321,7 +322,7 @@ module.exports = function install(ctx) {
     }
     jsonOut(res, sportCache.d, 120);
   }));
-  ctx.epgAssets = async (req) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return ''; const en = req.lang === 'en'; return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div id="epgcfg" hidden data-l="${en ? 'en' : 'sk'}" data-now="${esc(tx(en, 'Teraz', 'Now'))}" data-next="${esc(tx(en, 'Potom', 'Next'))}" data-day="${esc(tx(en, 'Celý program dnes', 'Full schedule today'))}" data-min="${esc(tx(en, 'min', 'min'))}"${c.sport_on === '1' ? ` data-sport="${esc(tx(en, '⚽ Šport dnes', '⚽ Sport today'))}" data-sporth="${esc(tx(en, 'Dnešné športové prenosy na kanáloch (podľa času)', 'Today\'s sport on the channels (by time)'))}" data-sportnone="${esc(tx(en, 'Dnes už žiadne športové prenosy.', 'No more sport today.'))}"` : ''} data-fav="${esc(tx(en, 'Obľúbené', 'Favourites'))}" data-favadd="${esc(tx(en, 'Pridať do obľúbených', 'Add to favourites'))}" data-favdel="${esc(tx(en, 'Odobrať z obľúbených', 'Remove from favourites'))}" data-rem="${esc(tx(en, 'Pripomenúť', 'Remind me'))}" data-load="${esc(tx(en, 'Načítavam…', 'Loading…'))}" data-left="${esc(tx(en, 'ešte', 'left'))}"></div><script src="/static/epg.js?v=${ASSET_V}" defer></script><p class="hint epgsrc">${esc(tx(en, 'TV program: epgshare01.online (orientačný, môže sa líšiť).', 'TV schedule: epgshare01.online (indicative, may differ).'))}</p>`; };
+  ctx.epgAssets = async (req) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return ''; const en = req.lang === 'en'; return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div id="epgcfg" hidden data-l="${en ? 'en' : 'sk'}" data-now="${esc(tx(en, 'Teraz', 'Now'))}" data-next="${esc(tx(en, 'Potom', 'Next'))}" data-day="${esc(tx(en, 'Celý program dnes', 'Full schedule today'))}" data-min="${esc(tx(en, 'min', 'min'))}"${G ? G.attrs(en, c) : ''} data-fav="${esc(tx(en, 'Obľúbené', 'Favourites'))}" data-favadd="${esc(tx(en, 'Pridať do obľúbených', 'Add to favourites'))}" data-favdel="${esc(tx(en, 'Odobrať z obľúbených', 'Remove from favourites'))}" data-rem="${esc(tx(en, 'Pripomenúť', 'Remind me'))}" data-load="${esc(tx(en, 'Načítavam…', 'Loading…'))}" data-left="${esc(tx(en, 'ešte', 'left'))}"></div><script src="/static/epg.js?v=${ASSET_V}" defer></script><p class="hint epgsrc">${esc(tx(en, 'TV program: epgshare01.online (orientačný, môže sa líšiť).', 'TV schedule: epgshare01.online (indicative, may differ).'))}</p>`; };
 
   // ---------- Dnes v TV ----------
   const CATW = [[/sloven/i, 12], [/česk|cesk/i, 9], [/filmy a seri/i, 7], [/^šport$|^sport$/i, 6], [/dokument/i, 2]];
@@ -427,6 +428,14 @@ module.exports = function install(ctx) {
     const ks = [...new Set(items.filter((x) => x.kind === 'film').map(posterKey))]; if (!ks.length) return new Map();
     return new Map((await pool.query('SELECT k,url FROM epg_poster WHERE k = ANY($1) AND url <> \'\'', [ks])).rows.map((r) => [r.k, r.url]));
   }
+  // look up one film poster on Wikidata (cached in epg_poster; misses retried after 7 days); true = a lookup was made
+  async function posterOne(x) {
+    const k = posterKey(x); if ((await pool.query('SELECT 1 FROM epg_poster WHERE k=$1 AND (url <> \'\' OR at > now() - interval \'7 days\')', [k])).rowCount) return false;
+    let r = null; try { r = await POSTER.find(x.title, x.yr); } catch { r = null; }
+    const url = r && /^https:\/\/upload\.wikimedia\.org\//.test(r.url) ? r.url : '';
+    await pool.query('INSERT INTO epg_poster (k,url,label,pop,rt,at) VALUES ($1,$2,$3,$4,$5,now()) ON CONFLICT (k) DO UPDATE SET url=$2,label=$3,pop=$4,rt=$5,at=now()', [k, url, r ? String(r.label || '').slice(0, 200) : '', r ? Math.min(999, r.pop | 0) : 0, r ? Math.min(100, r.rt | 0) : 0]);
+    return true;
+  }
   let posterBusy = false;
   function postersSoon() {
     if (posterBusy) return; posterBusy = true;
@@ -434,13 +443,7 @@ module.exports = function install(ctx) {
       try {
         const t = await topItems({ all: true }), pub = await topItems();
         const items = [...pub.day, ...pub.week, ...t.day.list.slice(0, 40), ...t.week.list.slice(0, 50)].filter((x) => x.kind === 'film');
-        for (const x of items) {
-          const k = posterKey(x); if ((await pool.query('SELECT 1 FROM epg_poster WHERE k=$1 AND (url <> \'\' OR at > now() - interval \'7 days\')', [k])).rowCount) continue;
-          let r = null; try { r = await POSTER.find(x.title, x.yr); } catch { r = null; }
-          const url = r && /^https:\/\/upload\.wikimedia\.org\//.test(r.url) ? r.url : '';
-          await pool.query('INSERT INTO epg_poster (k,url,label,pop,rt,at) VALUES ($1,$2,$3,$4,$5,now()) ON CONFLICT (k) DO UPDATE SET url=$2,label=$3,pop=$4,rt=$5,at=now()', [k, url, r ? String(r.label || '').slice(0, 200) : '', r ? Math.min(999, r.pop | 0) : 0, r ? Math.min(100, r.rt | 0) : 0]);
-          await new Promise((ok) => setTimeout(ok, 400));
-        }
+        for (const x of items) if (await posterOne(x)) await new Promise((ok) => setTimeout(ok, 400));
         dnesCache = null;
       } catch (e) { console.error('EPG posters', e.message); } finally { posterBusy = false; }
     }, 2000).unref();
@@ -505,7 +508,7 @@ module.exports = function install(ctx) {
         onProg: (p) => { np++; if (p.ch && p.stop > now && p.stop > p.start) { const id = C.clip(p.ch, 120); cnt.set(id, (cnt.get(id) || 0) + 1); if (p.stop > last) last = p.stop; } } });
       for (const id of cnt.keys()) if (!chs.has(id) && chs.size < 5000) chs.set(id, [id]);
       if (!chs.size) err = 'Súbor neobsahuje XMLTV kanály ani program (je to naozaj XMLTV EPG?).';
-    } catch (e) { err = ac.signal.aborted ? 'Časový limit 75 s – súbor je príliš veľký alebo server pomalý.' : 'Chyba: ' + String(e.message || e).slice(0, 160); }
+    } catch (e) { if (e && e.code === 'NOTEPG') src.notepg = true; err = ac.signal.aborted ? 'Časový limit 75 s – súbor je príliš veľký alebo server pomalý.' : 'Chyba: ' + String(e.message || e).slice(0, 160); }
     finally { clearTimeout(tm); ac.abort(); }
     let ncover = -1, cover = [];
     if (!err) {
@@ -521,6 +524,8 @@ module.exports = function install(ctx) {
       for (const ch of await noProgChannels()) { const r = fuzzy(ix, ch, 1, w); if (r.best && r.best.n > 0) { ncover++; if (cover.length < 40) cover.push(ch.name); } }
     }
     await pool.query('UPDATE epg_src SET nch=$2, nprog=$3, ncover=$4, cover=$5, days=$6, err=$7, checked_at=now() WHERE id=$1', [src.id, err ? -1 : chs.size, err ? -1 : np, ncover, cover.join('\n'), last ? +((last - now) / 86400e3).toFixed(1) : 0, err]);
+    // a playlist/stream URL is never kept: the source is disabled and its URL cleared
+    if (src.notepg) await pool.query(`UPDATE epg_src SET url='', enabled=false WHERE id=$1`, [src.id]);
     srcCache = null;
     return !err;
   }
@@ -528,7 +533,7 @@ module.exports = function install(ctx) {
   // channels may fall back to other feeds whose programmes are not stored → full refresh (in the background)
   const refreshAll = () => { const go = () => (running ? running.then(go) : refresh()); setTimeout(() => { go().catch(() => {}); }, 2000).unref(); };
   const srcClean = (b) => ({ name: String(b.name || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60), url: String(b.url || '').trim().slice(0, 600) });
-  function srcCheck(url) { try { FETCH.checkUrl(url); } catch (e) { return e.message; } if (BADURL.test(url)) return 'Toto vyzerá ako IPTV playlist / Xtream prístup – povolené sú iba verejné XMLTV EPG súbory (.xml / .xml.gz).'; return ''; }
+  function srcCheck(url) { try { FETCH.checkUrl(url); } catch (e) { return e.message; } return ''; } // any http(s) URL – the format is checked by content when testing (epgfetch.js)
   const srcBack = (res, m, id) => res.redirect(303, '/admin/epg?m=' + m + (id ? '&src=' + id : '') + '#zdroje');
   admin.post('/epg/src', needAuth, csrf, wrap(async (req, res) => {
     const b = srcClean(req.body); const bad = srcCheck(b.url); if (bad) { await kv.set('src_err', bad); return srcBack(res, 'srcbad'); }
@@ -537,6 +542,7 @@ module.exports = function install(ctx) {
     if (probing) return srcBack(res, 'srcbusy');
     const row = (await pool.query('INSERT INTO epg_src (name,url,enabled,pref) VALUES ($1,$2,true,$3) RETURNING *', [b.name || new URL(b.url).hostname, b.url, req.body.pref === '1'])).rows[0]; srcCache = null;
     probing = true; let ok = false; try { ok = await probe(row); } finally { probing = false; }
+    if (row.notepg) { const e = (await pool.query('SELECT err FROM epg_src WHERE id=$1', [row.id])).rows[0]; await pool.query('DELETE FROM epg_src WHERE id=$1', [row.id]); srcCache = null; await kv.set('src_err', String((e && e.err) || '').replace(/^Chyba: /, '')); return srcBack(res, 'srcbad'); }
     if (ok) refreshSoon(['src:' + row.id]);
     srcBack(res, ok ? 'srcok' : 'srcerr', row.id);
   }));
@@ -571,19 +577,19 @@ module.exports = function install(ctx) {
     const row = (x) => { const r = report['src:' + x.id] || {};
       return `<form method="post" action="/admin/epg/src/${x.id}" class="srcrow${x.id === sel ? ' sel' : ''}">${hid(req)}<div class="row"><b>${esc(x.name)}</b><span class="hint">${x.enabled ? '✅ zapnutý' : '⏸ vypnutý'}${x.pref ? ' · ⭐ prednostný' : ''} · overené ${esc(ago(x.checked_at && x.checked_at.toISOString()))}</span></div>
 ${x.err ? `<p class="err">${esc(x.err)}</p>` : x.nch >= 0 ? `<p>📺 <b>${x.nch}</b> kanálov · 🗓 <b>${x.nprog}</b> relácií · na <b>${esc(String(x.days))}</b> dní dopredu · pokryje <b>${x.ncover}</b> našich kanálov bez programu${r.progs != null ? ` · posledná obnova: ${r.err ? '⚠ ' + esc(r.err) : r.progs + ' rel. uložených'}` : ''}</p>${x.cover ? `<p class="hint">Pokryje napr.: ${esc(x.cover.split('\n').slice(0, 15).join(', '))}${x.ncover > 15 ? '…' : ''}</p>` : ''}` : '<p class="hint">Zatiaľ neoverené.</p>'}
-<label>Názov</label><input name="name" maxlength="60" value="${esc(x.name)}"><label>URL (XMLTV .xml / .xml.gz)</label><input name="url" type="url" maxlength="600" value="${esc(x.url)}" required>
+<label>Názov</label><input name="name" maxlength="60" value="${esc(x.name)}"><label>URL TV programu (XMLTV)</label><input name="url" type="url" maxlength="600" value="${esc(x.url)}" required>
 <label class="ck"><input type="checkbox" name="enabled" value="1"${x.enabled ? ' checked' : ''}> Zapnutý</label><label class="ck"><input type="checkbox" name="pref" value="1"${x.pref ? ' checked' : ''}> ⭐ Prednostný (použiť aj pre kanály, ktoré už program majú)</label>
 <div class="row"><button>💾 Uložiť</button><button formaction="/admin/epg/src/${x.id}/test">🔍 Otestovať znova</button><label class="ck"><input type="checkbox" name="confirm" value="1"> potvrdiť</label><button class="d" formaction="/admin/epg/src/${x.id}/delete">🗑 Zmazať</button></div></form>`; };
     const byCat = new Map(); for (const r of miss) { if (!byCat.has(r.category)) byCat.set(r.category, []); byCat.get(r.category).push(r); }
-    return `<div class="card" id="zdroje"><h2>📡 Vlastné EPG zdroje</h2><p class="hint">Pridajte odkaz na verejný XMLTV súbor s TV programom (<code>.xml</code> alebo <code>.xml.gz</code>, http/https). Použije sa pre kanály, ktoré program zatiaľ nemajú (prednostný zdroj aj pre ostatné). Sťahuje sa spolu s ostatnými zdrojmi (každých ${esc(cfg(await getSettings()).epg_hours)} h). Párovanie kanálov je automatické podľa názvu; ručne cez „EPG id“ pri kanáli (🔎). Ukladá sa iba program (čas, názov, kategória) – žiadne streamy ani playlisty; IPTV/M3U/Xtream odkazy sa neprijímajú. Max. ${SRC_MAX} zdrojov, súbor do 120 MB.</p>
+    return `<div class="card" id="zdroje"><h2>📡 Vlastné EPG zdroje</h2><p class="hint">Pridajte ľubovoľný http/https odkaz na TV program vo formáte XMLTV – prípona ani parametre nerozhodujú (napr. <code>.xml</code>, <code>.gz</code>, <code>.xz</code>, <code>.zip</code>, <code>.php</code> alebo bez prípony). Formát sa rozpozná podľa obsahu pri overení. Použije sa pre kanály, ktoré program zatiaľ nemajú (prednostný zdroj aj pre ostatné). Sťahuje sa spolu s ostatnými zdrojmi (každých ${esc(cfg(await getSettings()).epg_hours)} h). Párovanie kanálov je automatické podľa názvu; ručne cez „EPG id“ pri kanáli (🔎). Ukladá sa iba program (čas, názov, kategória) – žiadne streamy ani playlisty; ak odkaz vráti IPTV playlist (M3U/M3U8) alebo stream, zdroj sa odmietne. Max. ${SRC_MAX} zdrojov, súbor do 120 MB.</p>
 ${err && /^src(bad)$/.test(req.query.m || '') ? `<p class="err">${esc(err)}</p>` : ''}
 ${list.map((x) => '<hr>' + row(x)).join('') || '<p class="hint">Zatiaľ žiadne vlastné zdroje.</p>'}
-${list.length < SRC_MAX ? `<form method="post" action="/admin/epg/src" class="srcrow">${hid(req)}<h3>➕ Pridať zdroj</h3><label>Názov</label><input name="name" maxlength="60" placeholder="napr. Môj EPG"><label>URL (XMLTV .xml / .xml.gz)</label><input name="url" type="url" maxlength="600" required placeholder="https://…/epg.xml.gz"><label class="ck"><input type="checkbox" name="pref" value="1"> ⭐ Prednostný</label><button>➕ Pridať a otestovať</button><p class="hint">Overenie stiahne celý súbor (môže trvať až ~1 min).</p></form>` : ''}
+${list.length < SRC_MAX ? `<form method="post" action="/admin/epg/src" class="srcrow">${hid(req)}<h3>➕ Pridať zdroj</h3><label>Názov</label><input name="name" maxlength="60" placeholder="napr. Môj EPG"><label>URL TV programu (XMLTV)</label><input name="url" type="url" maxlength="600" required placeholder="https://…/epg.xml.gz, …/xmltv.php?…, …/guide.zip"><label class="ck"><input type="checkbox" name="pref" value="1"> ⭐ Prednostný</label><button>➕ Pridať a otestovať</button><p class="hint">Overenie stiahne celý súbor (môže trvať až ~1 min).</p></form>` : ''}
 <details${miss.length ? ' open' : ''}><summary><b>Chýbajúce kanály – bez programu: ${miss.length}</b></summary><p class="hint">Viditeľné kanály, ktoré teraz nemajú žiadny program (okrem vynechaných kategórií). Kliknite 🔎 a vyberte EPG id, alebo pridajte zdroj, ktorý ich obsahuje.</p>${[...byCat].map(([cat, rs]) => `<p><b>${esc(cat)}</b> (${rs.length}): ${rs.slice(0, 60).map((r) => `<a href="/admin/epg/ch/${r.id}">${esc(r.name)}</a>`).join(', ')}${rs.length > 60 ? ' …' : ''}</p>`).join('') || '<p class="ok">Všetky kanály majú program. 🎉</p>'}</details></div>`;
   }
 
   // ---------- admin page ----------
-  const MS = { ok: 'Uložené.', run: 'Obnova TV programu spustená na pozadí (zvyčajne 1–3 min). Obnovte stránku neskôr.', busy: 'Obnova už prebieha.', remap: 'Automatické párovanie sa prepočíta pri obnove (spustená).', badid: 'Takéto EPG id v zdroji neexistuje (najprv obnovte zdroj alebo skontrolujte id).', pin: 'Pripnuté.', hid: 'Skryté.', unhid: 'Znovu zobrazené.', del: 'Zmazané.', badpin: 'Vyplňte kanál, čas začiatku a názov.', srcok: 'Zdroj overený a uložený. Program sa stiahne o chvíľu na pozadí (1–3 min).', srcerr: 'Zdroj sa nepodarilo overiť – pozrite chybu pri zdroji.', srcbad: 'Neplatná alebo nepovolená URL.', srcmax: 'Dosiahnutý max. počet zdrojov.', srcdup: 'Tento zdroj už existuje.', srcbusy: 'Práve sa overuje iný zdroj, skúste o chvíľu.' };
+  const MS = { ok: 'Uložené.', run: 'Obnova TV programu spustená na pozadí (zvyčajne 1–3 min). Obnovte stránku neskôr.', busy: 'Obnova už prebieha.', remap: 'Automatické párovanie sa prepočíta pri obnove (spustená).', badid: 'Takéto EPG id v zdroji neexistuje (najprv obnovte zdroj alebo skontrolujte id).', pin: 'Pripnuté.', hid: 'Skryté.', unhid: 'Znovu zobrazené.', del: 'Zmazané.', badpin: 'Vyplňte kanál, čas začiatku a názov.', srcok: 'Zdroj overený a uložený. Program sa stiahne o chvíľu na pozadí (1–3 min).', srcerr: 'Zdroj sa nepodarilo overiť – pozrite chybu pri zdroji.', srcbad: 'Zdroj nebol uložený – dôvod je uvedený nižšie.', srcmax: 'Dosiahnutý max. počet zdrojov.', srcdup: 'Tento zdroj už existuje.', srcbusy: 'Práve sa overuje iný zdroj, skúste o chvíľu.' };
   const msg = (q) => (MS[q.m] ? `<p class="${/^(bad|src(err|bad|max|dup|busy))/.test(q.m) ? 'err' : 'ok'}">${esc(MS[q.m])}</p>` : '');
   const back = (res, m, a = '') => res.redirect(303, '/admin/epg?m=' + m + (a ? '#' + a : ''));
   const ago = (iso) => { const t = Date.parse(iso || ''); if (!t) return 'nikdy'; const m = Math.round((Date.now() - t) / 60e3); return m < 60 ? `pred ${m} min` : `pred ${Math.round(m / 6) / 10} h`; };
@@ -623,8 +629,8 @@ ${await srcCard(req, report)}
 <h3>📅 Top týždňa</h3><label class="ck"><input type="checkbox" name="week_on" value="1"${c.week_on === '1' ? ' checked' : ''}> Zobraziť „Top týždňa“ (najbližších 7 dní, bez dneška)</label><label>Nadpis</label><input name="week_title" maxlength="60" value="${esc(c.week_title)}"><label>Nadpis (EN)</label><input name="week_title_en" maxlength="60" value="${esc(c.week_title_en)}">
 <label>Počet položiek</label><select name="week_n">${[3, 4, 5].map((n) => `<option${clampN(c.week_n) === n ? ' selected' : ''}>${n}</option>`).join('')}</select>
 <h3>Spoločné</h3><label>Kanály</label><select name="dnes_scope"><option value="skcz"${c.dnes_scope !== 'all' ? ' selected' : ''}>Iba slovenská a česká scéna (SK/CZ kanály vrátane tematických)</option><option value="all"${c.dnes_scope === 'all' ? ' selected' : ''}>Všetky viditeľné kanály</option></select>
-<label class="ck"><input type="checkbox" name="sport_on" value="1"${c.sport_on === '1' ? ' checked' : ''}> Záložka „⚽ Šport dnes“ v sekcii Kanály</label>
 <p>Typy:</p>${KINDS.map(([k, l]) => `<label class="ck"><input type="checkbox" name="kind_${k}" value="1"${c.dnes_kinds.split(',').includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}<button>Uložiť</button></form>
+${G ? await G.card(req) : ''}
 <div class="card" id="nahlad"><h2>👁 Náhľad výberu</h2>${[['🔥 Top dnes', dn.day, pub.day], ['📅 Top týždňa', dn.week, pub.week]].map(([h, d, p]) => `<h3>${h}</h3><p class="hint">Na webe: ${p.map((x) => (x.best ? '★ <b>NAJ</b> ' : '') + esc(dayLbl(x.s, false) + ' ' + hm(x.s) + ' ' + x.title)).join(' · ') || '— (menej ako 3 kvalitné položky → sekcia skrytá)'}</p>${d.pins.length ? `<p><b>📌 Pripnuté</b></p>${d.pins.map(item).join('')}` : ''}<details><summary>Kandidáti podľa skóre (${d.list.length})</summary>${d.list.slice(0, 30).map(item).join('') || '<p class="hint">Zatiaľ žiadne dáta – spustite obnovu.</p>'}</details>`).join('')}
 ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><span>${esc(h.title || h.k)} <span class="hint">${h.k.startsWith('t:') ? '(celý titul)' : '(jedno vysielanie)'}</span></span><form method="post" action="/admin/epg/unhide">${hid(req)}<input type="hidden" name="k" value="${esc(h.k)}"><button>👁 Zobraziť</button></form></div>`).join('')}` : ''}</div>
 <form method="post" action="/admin/epg/pin" class="card" id="pin">${hid(req)}<h2>📌 Pridať vlastnú položku</h2><p class="hint">Napr. zápas alebo film, ktorý v programe chýba, alebo udalosť, ktorá má byť určite v Top. Dnešná ide do „Top dnes“, neskoršia (do 7 dní) do „Top týždňa“; pripnutá je vždy „Naj“. Zobrazí sa do jej konca.</p>
@@ -663,7 +669,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
   }));
   admin.post('/epg/dnes', needAuth, csrf, wrap(async (req, res) => {
     const b = req.body; const clean = (v, d) => String(v || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60) || d;
-    await setSettings({ dnes_on: b.dnes_on ? '1' : '0', dnes_kinds: KINDS.map(([k]) => k).filter((k) => b['kind_' + k]).join(',') || 'film', top_title: clean(b.top_title, D.top_title), top_title_en: clean(b.top_title_en, D.top_title_en), top_n: String(clampN(b.top_n)), week_on: b.week_on ? '1' : '0', week_title: clean(b.week_title, D.week_title), week_title_en: clean(b.week_title_en, D.week_title_en), week_n: String(clampN(b.week_n)), dnes_scope: b.dnes_scope === 'all' ? 'all' : 'skcz', sport_on: b.sport_on ? '1' : '0' });
+    await setSettings({ dnes_on: b.dnes_on ? '1' : '0', dnes_kinds: KINDS.map(([k]) => k).filter((k) => b['kind_' + k]).join(',') || 'film', top_title: clean(b.top_title, D.top_title), top_title_en: clean(b.top_title_en, D.top_title_en), top_n: String(clampN(b.top_n)), week_on: b.week_on ? '1' : '0', week_title: clean(b.week_title, D.week_title), week_title_en: clean(b.week_title_en, D.week_title_en), week_n: String(clampN(b.week_n)), dnes_scope: b.dnes_scope === 'all' ? 'all' : 'skcz' });
     dropCaches(); back(res, 'ok', 'dnes');
   }));
   admin.post('/epg/refresh', needAuth, csrf, wrap(async (req, res) => { if (running) return back(res, 'busy'); refresh(); back(res, 'run'); }));
@@ -677,5 +683,6 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
     dropCaches(); postersSoon(); back(res, 'pin', 'nahlad');
   }));
   admin.post('/epg/pin/:id(\\d+)/delete', needAuth, csrf, wrap(async (req, res) => { await pool.query('DELETE FROM dnes_pin WHERE id=$1', [+req.params.id]); dropCaches(); back(res, 'del', 'nahlad'); }));
+  G = require('./epgguide')(ctx, { cfg, D, visibleMapped, skcz, dayStart, dayLbl, hm, localHour, jsonOut, scoreOf, topBoost, posterKey, posterInfo, posterMap, posterOne, tnorm, JUNK, ADULT, DOCCH, back, MS });
   ctx.epgRefresh = refresh;
 };
