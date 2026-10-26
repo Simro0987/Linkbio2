@@ -210,12 +210,13 @@ function install({ pool, kv, getSettings, C, ADULT, JUNK, onChange }) {
     return { n, done };
   }
   const ctFar = () => { const t = ymd(Date.now()); return local(addDays(t, 8), '06:00') + 3600e3; };
+  async function ctKeys() { const a = []; for (const k of CTK) if ((await ctIds(k)).length || (await ctIds(k, true)).length) a.push(k); return a; } // only ČT channels we actually list
   async function ctNext() {
-    const today = ymd(Date.now()), have = new Map((await pool.query(`SELECT ch, to_char(day,'YYYY-MM-DD') AS d, at, err FROM epg_ctq WHERE day >= $1::date`, [today])).rows.map((r) => [r.ch + '|' + r.d, r]));
+    const keys = await ctKeys(), today = ymd(Date.now()), have = new Map((await pool.query(`SELECT ch, to_char(day,'YYYY-MM-DD') AS d, at, err FROM epg_ctq WHERE day >= $1::date`, [today])).rows.map((r) => [r.ch + '|' + r.d, r]));
     let best = null, bs = -Infinity;
     for (let i = 0; i < 8; i++) {
       const d = addDays(today, i);
-      CTK.forEach((k, j) => {
+      keys.forEach((k, j) => {
         const q = have.get(k + '|' + d), ttl = (q && q.err ? 2 : i <= 1 ? 6 : 24) * 3600e3;
         const sc = !q ? 1e12 - i * 100 - j : Date.now() - +q.at - ttl; // never fetched first (nearest day first), then the most overdue
         if (sc > 0 && sc > bs) { bs = sc; best = { k, d }; }
@@ -296,9 +297,9 @@ function install({ pool, kv, getSettings, C, ADULT, JUNK, onChange }) {
     const [at, rep, mg] = await Promise.all(['off_at', 'off_report', 'off_merge'].map((k) => kv.get(k)));
     const per = (await pool.query(`SELECT split_part(ch, ':', 1) AS src, COUNT(*)::int AS n, MAX(s) AS b FROM epg_off GROUP BY 1`)).rows;
     let report = {}, m = {}; try { report = JSON.parse(rep || '{}'); m = JSON.parse(mg || '{}'); } catch { /* ignore */ }
-    const q = (await pool.query(`SELECT count(*)::int AS n, count(*) FILTER (WHERE err = '')::int AS ok, max(at) AS at, max(err) AS err FROM epg_ctq WHERE day >= $1::date`, [ymd(Date.now())])).rows[0];
+    const ctk = await ctKeys(), q = (await pool.query(`SELECT count(*)::int AS n, count(*) FILTER (WHERE err = '')::int AS ok, max(at) AS at, max(err) AS err FROM epg_ctq WHERE day >= $1::date AND ch = ANY($2)`, [ymd(Date.now()), ctk])).rows[0];
     const cd = (await pool.query(`SELECT count(DISTINCT (s AT TIME ZONE 'Europe/Prague')::date)::int AS d FROM epg_off WHERE ch LIKE 'ct:%' AND e > now()`)).rows[0];
-    report.ct = { name: CT.name, days: cd.d, err: !process.env.CT_XML_USER ? 'chýba prihlasovacie meno (CT_XML_USER)' : q.err || '', queue: `${q.ok}/${CTK.length * 8} kanál-dní` };
+    report.ct = { name: CT.name, days: cd.d, err: !process.env.CT_XML_USER ? 'chýba prihlasovacie meno (CT_XML_USER)' : q.err || '', queue: `${q.ok}/${ctk.length * 8} kanál-dní` };
     return { at, report, merge: m, per };
   }
   return { merge, status, srcOn, on, init, ctStart };
