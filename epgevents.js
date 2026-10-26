@@ -72,12 +72,15 @@ Eurovízia = 50
 Eurovize = 50
 Eurovision = 50
 Zlatý slávik = 35
+OKTAGON MMA = 55
+Oktagon = 50
+UFC = 40
 Česko Slovensko má talent = 25`;
 const D = { ev_on: '1', ev_kanaly: '1', ev_n: '6', ev_min: '55', ev_scope: 'skcz', ev_title: 'Dnes v TV · Top udalosti', ev_title_en: 'Today on TV · Top events', ev_kw: DEF_KW };
 const SPORTCH = /sport|šport|arena|eurosport|nova sport|premier sport|dazn|sky sport|\bespn|golf|fight|motor|canal\+ sport|polsat sport|\brtvs sport|:sport|joj šport|ct ?sport|čt ?sport|ct ?4|čt ?4|digi sport|orange sport/i;
 const LIVEW = /\b(priamy prenos|priamom prenose|přímý přenos|přímém přenosu|naživo|nazivo|live)\b|\bp\.\s?p\./i;
 const RERUN = /\b(záznam|zaznam|repríza|repriza|reprízа|opakovanie|sestřih|zostrih|highlights|best of)\b/i;
-const MAG = /\b(studio|štúdio|magazín|magazin|news|noviny|správy|zprávy|preview|pred zápasom|před zápasem|osobní příběh|dokument)\b/i;
+const MAG = /\b(studio|štúdio|magazín|magazin|news|noviny|správy|zprávy|preview|pred zápasom|před zápasem|osobní příběh|dokument|výzva|vyzva)\b/i;
 
 function parseKw(txt) {
   const out = [];
@@ -104,13 +107,15 @@ module.exports = function events(ctx, h) {
   const { app, admin, pool, esc, hid, csrf, needAuth, wrap, getSettings, setSettings } = ctx;
   const { visibleMapped, skcz, dayStart, dayLbl, hm, localHour, tnorm, JUNK, ADULT, channels, fromLocal, toLocal, ASSET_V } = h;
   const cfg = (s) => { const o = {}; for (const k of Object.keys(D)) o[k] = s[k] == null || s[k] === '' ? D[k] : String(s[k]); return o; };
-  let cache = null, kwCache = null;
-  const drop = () => { cache = null; };
+  let cache = null, kwCache = null, oktNums = null, H = null;
+  const drop = () => { cache = null; if (H) H.stale(); };
+  const setOkt = (nums) => { oktNums = nums && nums.size ? nums : null; };
   const kwOf = (c) => { if (!kwCache || kwCache.src !== c.ev_kw) kwCache = { src: c.ev_kw, l: parseKw(c.ev_kw) }; return kwCache.l; };
 
   async function init() {
     await pool.query(`CREATE TABLE IF NOT EXISTS ev_pin (id SERIAL PRIMARY KEY, title TEXT NOT NULL, channel_id INT, channel_txt TEXT NOT NULL DEFAULT '', s TIMESTAMPTZ NOT NULL, e TIMESTAMPTZ NOT NULL, img_url TEXT NOT NULL DEFAULT '', img BYTEA, note TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS ev_hide (k TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    if (H) await H.init();
   }
 
   // score one programme; returns { score, kw:[labels], live, rerun } or null when it is not an event
@@ -129,22 +134,42 @@ module.exports = function events(ctx, h) {
     kw = Math.min(kw, 95);
     let sc = kw;
     const head = p.title + ' ' + (p.sub || '') + ' ' + String(p.descr || '').slice(0, 60);
-    const live = (p.fl || '').includes('l') || LIVEW.test(head), rerun = (p.fl || '').includes('r') || RERUN.test(head);
-    if (SPORTCH.test(ch.name + ' ' + ch.category) || p.kind === 'sport') sc += 8;
-    if (live && !rerun) sc += 15; if (rerun) sc -= 30; else if ((p.fl || '').includes('p')) sc += 5;
-    if (MAG.test(p.title)) sc -= 15;
-    const hr = localHour(s); if (hr >= 19.5 && hr < 23) sc += 12; else if (hr >= 17 && hr < 19.5) sc += 6; else if (hr >= 23 || hr < 1) sc += 2; else if (hr >= 4 && hr < 12) sc -= 10;
+    // OKTAGON <n> where n is not an upcoming card in the official calendar = archive fight night (Premier Sport reruns)
+    const on = /\boktagon\s*(\d{1,3})\b/i.exec(p.title), arch = !!(on && oktNums && oktNums.size && !oktNums.has(+on[1]));
+    const live = (p.fl || '').includes('l') || LIVEW.test(head), rerun = (p.fl || '').includes('r') || RERUN.test(head) || arch;
+    const why = ['kľúč. slová +' + kw];
+    if (SPORTCH.test(ch.name + ' ' + ch.category) || p.kind === 'sport') { sc += 8; why.push('šport +8'); }
+    if (live && !rerun) { sc += 15; why.push('naživo +15'); } if (rerun) { sc -= 30; why.push((arch ? 'archív' : 'záznam') + ' −30'); } else if ((p.fl || '').includes('p')) { sc += 5; why.push('premiéra +5'); }
+    if (MAG.test(p.title)) { sc -= 15; why.push('štúdio/magazín −15'); }
+    const hr = localHour(s), tb = hr >= 19.5 && hr < 23 ? 12 : hr >= 17 && hr < 19.5 ? 6 : hr >= 23 || hr < 1 ? 2 : hr >= 4 && hr < 12 ? -10 : 0;
+    if (tb) { sc += tb; why.push((tb > 0 ? 'večer +' : 'ráno ') + tb); }
     if (c.ev_scope === 'all') sc += skcz(ch) ? 8 : -8;
     if (s <= Date.now() && e > Date.now()) sc += 5;
-    return { score: sc, kw: [...new Set([...ht, ...(dBest ? [dBest] : [])].map((x) => x.label))].slice(0, 3), live: live && !rerun, rerun };
+    return { score: sc, kw: [...new Set([...ht, ...(dBest ? [dBest] : [])].map((x) => x.label))].slice(0, 3), live: live && !rerun, rerun, why };
   }
 
   async function pinsList(until) {
     const all = await channels();
     return (await pool.query(`SELECT id,title,channel_id,channel_txt,s,e,img_url,(img IS NOT NULL) AS hasimg,note FROM ev_pin WHERE e > now() ${until ? 'AND s < $1' : ''} ORDER BY s`, until ? [new Date(until)] : [])).rows.map((p) => {
       const ch = p.channel_id ? all.find((r) => r.id === p.channel_id) : null;
-      return { k: 'pin:' + p.id, pin: p.id, title: p.title, s: +p.s, e: +p.e, ch: ch ? { id: ch.id, name: ch.name, category: ch.category, logo: ch.logo } : null, chName: ch ? ch.name : p.channel_txt, img: p.hasimg ? '/ev-img/' + p.id + '?v=' + (+p.s % 1e7) : p.img_url, note: p.note, score: 999 };
+      return { k: 'pin:' + p.id, pin: p.id, title: p.title, s: +p.s, e: +p.e, ch: ch ? { id: ch.id, name: ch.name, category: ch.category, logo: ch.logo } : null, chName: ch ? ch.name : p.channel_txt, img: p.hasimg ? '/ev-img/' + p.id + '?v=' + (+p.s % 1e7) : '', note: p.note, score: 999 };
     });
+  }
+
+  // scored EPG programmes running/starting in [from, to) on visible mapped channels
+  async function scan(c, kws, from, to) {
+    const vm = (await visibleMapped()).filter((r) => !ADULT.test(r.category) && !r.sh && (c.ev_scope === 'all' || skcz(r)));
+    const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
+    const cand = [];
+    if (!byEpg.size || !kws.length) return cand;
+    // only kinds where events live (no films/series/kids/news/docs) → small result
+    const q = await pool.query(`SELECT epg_id,s,e,title,sub,cat,kind,fl,left(descr,240) AS descr FROM epg_prog WHERE epg_id = ANY($1) AND e > $2 AND s < $3 AND kind IN ('sport','show','music','') AND e - s >= interval '25 minutes'`, [[...byEpg.keys()], new Date(from), new Date(to)]);
+    for (const p of q.rows) {
+      const chs = byEpg.get(p.epg_id); const ch = chs.find((x) => skcz(x)) || chs[0];
+      const r = score(p, ch, c, kws); if (!r) continue;
+      cand.push({ k: 'p:' + p.epg_id + '|' + +p.s, tk: 't:' + tnorm(p.title), title: p.title, sub: p.sub || '', s: +p.s, e: +p.e, kind: p.kind, ch, chName: ch.name, score: r.score, kw: r.kw, why: r.why, live: r.live, rerun: r.rerun });
+    }
+    return cand;
   }
 
   // all candidates today (until 02:00) + tomorrow; opt.all → full scored list for admin
@@ -152,20 +177,8 @@ module.exports = function events(ctx, h) {
     if (!opt.all && cache && Date.now() - cache.t < 120e3) return cache.d;
     const st = await getSettings(), c = cfg(st), now = Date.now(), ds = dayStart(now), end = dayStart(ds + 36 * 3600e3) + 26 * 3600e3; // end of tomorrow (+02:00)
     const kws = kwOf(c), n = Math.max(3, Math.min(12, parseInt(c.ev_n, 10) || 6)), min = Math.max(1, Math.min(200, parseInt(c.ev_min, 10) || 55));
-    const vm = (await visibleMapped()).filter((r) => !ADULT.test(r.category) && !r.sh && (c.ev_scope === 'all' || skcz(r)));
-    const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
     const hidden = new Set((await pool.query('SELECT k FROM ev_hide')).rows.map((r) => r.k));
-    const cand = [];
-    if (byEpg.size && kws.length) {
-      // only kinds where events live (no films/series/kids/news/docs) and only what is still running/upcoming → small result
-      const q = await pool.query(`SELECT epg_id,s,e,title,sub,cat,kind,fl,left(descr,240) AS descr FROM epg_prog WHERE epg_id = ANY($1) AND e > $2 AND s < $3 AND kind IN ('sport','show','music','') AND e - s >= interval '25 minutes'`, [[...byEpg.keys()], new Date(now + 5 * 60e3), new Date(end)]);
-      for (const p of q.rows) {
-        const chs = byEpg.get(p.epg_id); const ch = chs.find((x) => skcz(x)) || chs[0];
-        const r = score(p, ch, c, kws); if (!r) continue;
-        const tk = 't:' + tnorm(p.title), k = 'p:' + p.epg_id + '|' + +p.s;
-        cand.push({ k, tk, title: p.title, s: +p.s, e: +p.e, kind: p.kind, ch, chName: ch.name, score: r.score, kw: r.kw, live: r.live, rerun: r.rerun, hidden: hidden.has(k) || hidden.has(tk), ok: r.score >= min });
-      }
-    }
+    const cand = (await scan(c, kws, now + 5 * 60e3, end)).map((x) => Object.assign(x, { hidden: hidden.has(x.k) || hidden.has(x.tk), ok: x.score >= min }));
     cand.sort((a, b) => b.score - a.score || a.s - b.s);
     const pins = await pinsList(end + 6 * 86400e3);
     // dedupe titles (HD/SD/+1 variants, reruns – keep the best airing), max 2 per channel
@@ -187,7 +200,7 @@ module.exports = function events(ctx, h) {
   // public block for the homepage / Kanály page
   async function block(req, s, where) {
     try {
-      const c = cfg(await getSettings()); if (c.ev_on !== '1' || (where === 'kanaly' && c.ev_kanaly !== '1')) return '';
+      const st = await getSettings(), c = cfg(st); if (c.ev_on !== '1' || (where === 'kanaly' && c.ev_kanaly !== '1') || (where === 'home' && H && H.cardsOffHome(st))) return '';
       const d = await items(); const now = Date.now(); const list = d.list.filter((x) => x.e > now); if (!list.length) return '';
       const en = req.lang === 'en';
       const logo = (ch) => (ch ? (ctx.tvchLogoSrc ? ctx.tvchLogoSrc(ch) : '/tvlogo/' + ch.id) : '');
@@ -211,7 +224,7 @@ module.exports = function events(ctx, h) {
   // ---------- admin ----------
   const multer = require('multer');
   const up = multer({ storage: multer.memoryStorage(), limits: { fileSize: 3 * 1024 * 1024, files: 1, fields: 12, fieldSize: 2048 } }).single('image');
-  const MSG = { ok: 'Uložené.', pin: 'Udalosť pripnutá – zobrazuje sa ako prvá.', del: 'Zmazané.', hid: 'Skryté.', unhid: 'Znovu zobrazené.', bad: 'Vyplňte názov, kanál a čas začiatku.', badimg: 'Obrázok sa nepodarilo načítať (JPG/PNG/WebP do 3 MB).', badurl: 'Obrázok musí byť https:// odkaz na obrázok.', kw: 'Kľúčové slová uložené.', kwdef: 'Obnovený predvolený zoznam kľúčových slov.' };
+  const MSG = { ok: 'Uložené.', pin: 'Udalosť pripnutá – zobrazuje sa ako prvá.', del: 'Zmazané.', hid: 'Skryté.', unhid: 'Znovu zobrazené.', bad: 'Vyplňte názov, kanál a čas začiatku.', badimg: 'Obrázok sa nepodarilo načítať (JPG/PNG/WebP do 3 MB).', badurl: 'Obrázok sa nepodarilo stiahnuť – zadajte https:// odkaz na obrázok alebo na stránku udalosti (og:image).', kw: 'Kľúčové slová uložené.', kwdef: 'Obnovený predvolený zoznam kľúčových slov.' };
   const back = (res, m, a = '') => res.redirect(303, '/admin/udalosti?m=' + m + (a ? '#' + a : ''));
   const noUrl = (v, n) => C.clip(String(v || '').replace(/\b[a-z][a-z0-9+.-]{1,10}:\/\/\S+/gi, ''), n);
   admin.get('/udalosti', needAuth, wrap(async (req, res) => {
@@ -223,7 +236,7 @@ module.exports = function events(ctx, h) {
     const row = (x) => `<div class="row"><span>${x.ok && !x.hidden && !x.dupe && d.list.includes(x) ? '✅ ' : ''}<b>${esc(dayLbl(x.s, false))} ${esc(hm(x.s))}</b> ${esc(x.title)} · <span class="hint">${esc(x.chName)} · skóre ${x.score}${x.ok ? '' : ' (pod hranicou)'} · ${esc(x.kw.join(', '))}${x.live ? ' · živé' : ''}${x.rerun ? ' · záznam' : ''}${x.dupe ? ' · duplicita' : ''}${x.hidden ? ' · skryté' : ''}</span></span>${x.hidden ? '' : `<form method="post" action="/admin/udalosti/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.tk)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť</button></form>`}<form method="post" action="/admin/udalosti/pin" enctype="multipart/form-data">${hid(req)}<input type="hidden" name="channel_id" value="${x.ch.id}"><input type="hidden" name="s" value="${esc(toLocal(x.s))}"><input type="hidden" name="dur" value="${Math.round((x.e - x.s) / 60e3)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>📌 Pripnúť</button></form></div>`;
     res.send(ctx.page('Top udalosti v TV', `<h1>🔥 Dnes v TV · Top udalosti</h1>${m}<p><a href="/admin">← Admin</a> · <a href="/admin/epg">🗓 TV program (EPG)</a> · <a href="/${esc((await getSettings()).slug)}" target="_blank" rel="noopener">Zobraziť web ↗</a></p>
 <p class="hint">Blok navrchu domovskej stránky a stránky Kanály. Automaticky vyberá veľké udalosti z TV programu (EPG) podľa kľúčových slov, športových kanálov, priameho prenosu a hlavného vysielacieho času (dnes do 02:00 a zajtra). Pripnuté udalosti sú vždy prvé. Iba informácie o programe – žiadne odkazy na streamy.</p>
-<div class="card"><h2>👀 Teraz na webe (${d.list.length})</h2>${d.list.map((x) => `<div class="row"><span>${x.pin ? '📌 ' : x.best ? '★ ' : ''}<b>${esc(dayLbl(x.s, false))} ${esc(hm(x.s))}–${esc(hm(x.e))}</b> ${esc(x.title)} · <span class="hint">${esc(x.chName || '')}${x.pin ? ' · pripnuté' : ' · skóre ' + x.score}${x.s <= now ? ' · NAŽIVO' : ''}</span></span></div>`).join('') || '<p class="hint">Momentálne nič – blok je skrytý. Pripnite udalosť nižšie alebo upravte kľúčové slová.</p>'}</div>
+${H ? await H.adminHtml(req) : ''}<div class="card"><h2>👀 Teraz na webe (${d.list.length})</h2>${d.list.map((x) => `<div class="row"><span>${x.pin ? '📌 ' : x.best ? '★ ' : ''}<b>${esc(dayLbl(x.s, false))} ${esc(hm(x.s))}–${esc(hm(x.e))}</b> ${esc(x.title)} · <span class="hint">${esc(x.chName || '')}${x.pin ? ' · pripnuté' : ' · skóre ' + x.score}${x.s <= now ? ' · NAŽIVO' : ''}</span></span></div>`).join('') || '<p class="hint">Momentálne nič – blok je skrytý. Pripnite udalosť nižšie alebo upravte kľúčové slová.</p>'}</div>
 <form method="post" action="/admin/udalosti/pin" enctype="multipart/form-data" class="card" id="pin">${hid(req)}<h2>📌 Pripnúť / zvýrazniť udalosť</h2>
 <label>Názov</label><input name="title" maxlength="160" required placeholder="napr. Zlatá lopta 2026 – slávnostné vyhlásenie">
 <label>Kanál</label><select name="channel_id"><option value="">— iný (napíšte nižšie) —</option>${vis.map((r) => `<option value="${r.id}">${esc(r.name)} (${esc(r.category)})</option>`).join('')}</select>
@@ -231,7 +244,7 @@ module.exports = function events(ctx, h) {
 <label>Začiatok (čas SK/CZ)</label><input type="datetime-local" name="s" required><label>Dĺžka (min)</label><input type="number" name="dur" min="5" max="720" value="150">
 <label>Krátky popis (voliteľné)</label><input name="note" maxlength="140">
 <label>Obrázok (voliteľné) – súbor JPG/PNG/WebP do 3 MB…</label><input type="file" name="image" accept="image/jpeg,image/png,image/webp">
-<label>…alebo https odkaz na obrázok</label><input name="img_url" maxlength="400" placeholder="https://…">
+<label>…alebo https odkaz na obrázok / stránku udalosti (stiahne sa og:image, bez hotlinku)</label><input name="img_url" maxlength="400" placeholder="https://…">
 <button>📌 Pripnúť</button></form>
 <div class="card" id="piny"><h2>📋 Pripnuté udalosti</h2>${allPins.map((p) => `<div class="row"><span>${+p.e < now ? '<span class="hint">(skončené)</span> ' : ''}<b>${esc(dayLbl(+p.s, false))} ${esc(hm(+p.s))}–${esc(hm(+p.e))}</b> ${esc(p.title)} · <span class="hint">${esc(chName(p.channel_id, p.channel_txt))}${p.hasimg || p.img_url ? ' · 🖼' : ''}</span></span><form method="post" action="/admin/udalosti/pin/${p.id}/delete">${hid(req)}<button class="d">🗑 Zmazať</button></form></div>`).join('') || '<p class="hint">Žiadne.</p>'}</div>
 <form method="post" action="/admin/udalosti/settings" class="card" id="nast">${hid(req)}<h2>⚙ Nastavenia</h2>
@@ -254,7 +267,10 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((x) => `<div class="row"><s
     let url = String(b.img_url || '').trim().slice(0, 400), img = null;
     if (url && !/^https:\/\/[^\s"'<>]+$/i.test(url)) return back(res, 'badurl', 'pin');
     if (req.file && req.file.size) {
-      try { img = await require('sharp')(req.file.buffer, { limitInputPixels: 40e6 }).rotate().resize(640, 400, { fit: 'cover', withoutEnlargement: true }).webp({ quality: 78 }).toBuffer(); url = ''; } catch { return back(res, 'badimg', 'pin'); }
+      try { img = await H.toWebp(req.file.buffer); url = ''; } catch { return back(res, 'badimg', 'pin'); }
+    } else if (url) {
+      // never hotlink: download the image (or the page's og:image) once and keep a small webp copy
+      try { img = await H.fetchImage(url); } catch { return back(res, 'badurl', 'pin'); }
     }
     await pool.query('INSERT INTO ev_pin (title,channel_id,channel_txt,s,e,img_url,img,note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [title, cid, cid ? '' : ctxt, new Date(s), new Date(s + dur * 60e3), url, img, noUrl(b.note, 140)]);
     drop(); if (ctx.audit) await ctx.audit(req, 'ev_pin', title); back(res, 'pin', 'piny');
@@ -273,6 +289,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((x) => `<div class="row"><s
     await setSettings({ ev_kw: v || DEF_KW }); drop(); back(res, 'kw', 'kw');
   }));
 
-  return { init, block, drop, items, _score: score, _parseKw: parseKw };
+  H = require('./epghero')(ctx, h, { cfg, kwOf, scan, score, pinsList, setOkt, D, back, up, noUrl, MSG });
+  return { init, block, drop, items, hero: H.render, _score: score, _parseKw: parseKw, _hero: H };
 };
 module.exports.parseKw = parseKw; module.exports.hits = hits; module.exports.DEF_KW = DEF_KW;

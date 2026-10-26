@@ -1000,7 +1000,7 @@ app.get('/:slug', wrap(async (req, res, next) => {
   const bs = await pubBtns('home');
   const soc = SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n, e]) => `<a href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
   const banner = await features.monitorBanner(req.lang).catch(() => '');
-  await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
+  await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}${features.eventsHero ? await features.eventsHero(req, s, 'home') : ''}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
 ${s.layout === 'tv' ? (s.tvbar_on !== '0' ? `<div class="tvbar"><span class="live">${esc(T(req, '● LIVE'))}</span><span>${esc(T(req, '▶ Stream'))}</span><span>${esc(T(req, '📺 TV'))}</span><span>${esc(T(req, '⚙ Software'))}</span></div>` : '') : ''}</section>
 ${features.eventsBlock ? await features.eventsBlock(req, s, 'home') : ''}${features.dnesBlock ? await features.dnesBlock(req, s) : ''}${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.cen_home !== '0' ? await pricingHtml(req, s) : ''}`);
 }));

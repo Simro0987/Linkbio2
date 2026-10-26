@@ -22,7 +22,7 @@ const isSrcFeed = (f) => /^src:\d+$/.test(String(f || ''));
 // IPTV playlists / Xtream panels are never accepted (only schedule files)
 const SRC_MAX = 10;
 const UA = { 'user-agent': 'lnkbio-epg/1.0 (+https://lnkbio.onrender.com)' };
-const ASSET_V = (() => { try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static/epg.js')) + fs.readFileSync(path.join(__dirname, 'static/epg.css')) + fs.readFileSync(path.join(__dirname, 'static/tev.js'))).digest('hex').slice(0, 8); } catch { return '1'; } })();
+const ASSET_V = (() => { try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static/epg.js')) + fs.readFileSync(path.join(__dirname, 'static/epg.css')) + fs.readFileSync(path.join(__dirname, 'static/tev.js')) + fs.readFileSync(path.join(__dirname, 'static/evh.js'))).digest('hex').slice(0, 8); } catch { return '1'; } })();
 const ADULT = /pre dospelých|pro dospělé|erotic|erotik|\bxxx\b|\badult\b|18\+/i;
 const JUNK = /přestávka|prestavka|nevysiela|nevysílá|nočné vysielanie|noční vysílání|teleshop|teleshopping|programme resumes|sendepause|koniec vysielania|konec vysílání|^\s*-\s*$|^\s*(n\/a|tba|tbd)\s*$/i;
 const tnorm = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -740,7 +740,8 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
   }));
   admin.post('/epg/pin/:id(\\d+)/delete', needAuth, csrf, wrap(async (req, res) => { await pool.query('DELETE FROM dnes_pin WHERE id=$1', [+req.params.id]); dropCaches(); back(res, 'del', 'nahlad'); }));
   G = require('./epgguide')(ctx, { cfg, D, visibleMapped, skcz, dayStart, dayLbl, hm, localHour, jsonOut, scoreOf, topBoost, posterKey, posterInfo, posterMap, posterOne, tnorm, JUNK, ADULT, DOCCH, back, MS });
-  E = require('./epgevents')(ctx, { visibleMapped, skcz, dayStart, dayLbl, hm, localHour, tnorm, JUNK, ADULT, channels, fromLocal, toLocal, ASSET_V });
+  E = require('./epgevents')(ctx, { visibleMapped, skcz, dayStart, dayLbl, hm, localHour, tnorm, JUNK, ADULT, channels, fromLocal, toLocal, ASSET_V, kv });
   ctx.eventsBlock = (req, s, where) => E.block(req, s, where);
+  ctx.eventsHero = (req, s, where) => E.hero(req, s, where);
   ctx.epgRefresh = refresh;
 };

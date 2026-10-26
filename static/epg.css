@@ -155,3 +155,34 @@
 .tevpr{height:3px;border-radius:2px;background:rgba(255,255,255,.12);margin-top:6px;overflow:hidden}
 .tevpr i{display:block;height:100%;width:0;background:#e50914}
 .tevf{margin:10px 0 0;font-size:.72rem;opacity:.55}
+/* ---- Top udalosť týždňa: Netflix-style hero carousel ---- */
+.evh{position:relative;margin:0 0 18px;border-radius:16px;overflow:hidden;background:#07070a;color:#fff;height:clamp(360px,56vw,480px);isolation:isolate;box-shadow:0 12px 40px rgba(0,0,0,.45);text-align:left;touch-action:pan-y}
+.evh-s{position:absolute;inset:0;opacity:0;visibility:hidden;transition:opacity .7s ease,visibility 0s linear .7s}
+.evh-s.on{opacity:1;visibility:visible;transition:opacity .7s ease}
+.evh-bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;transform:scale(1.06);transition:transform 9s ease-out}
+.evh-s.on .evh-bg{transform:scale(1)}
+.evh-g{position:absolute;inset:0;background:linear-gradient(0deg,#07070a 0%,rgba(7,7,10,.88) 28%,rgba(7,7,10,.42) 62%,rgba(7,7,10,.12) 100%),linear-gradient(90deg,rgba(7,7,10,.7) 0%,rgba(7,7,10,0) 72%)}
+.evh-c{position:absolute;left:0;right:0;bottom:0;padding:20px 20px 40px;display:flex;flex-direction:column;gap:9px;max-width:780px}
+.evh-k{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;margin:0;font-size:.74rem;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#ffc400}
+.evh-b{background:#e50914;color:#fff;border-radius:4px;padding:4px 8px;letter-spacing:.05em;box-shadow:0 2px 10px rgba(229,9,20,.45)}
+.evh-s.live .evh-b{animation:evhp 1.8s ease-in-out infinite}
+@keyframes evhp{50%{box-shadow:0 0 0 6px rgba(229,9,20,0)}}
+.evh-t{margin:0;font-size:clamp(1.6rem,5.2vw,2.75rem);line-height:1.06;font-weight:900;letter-spacing:-.01em;text-shadow:0 2px 18px rgba(0,0,0,.65);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.evh-m{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin:0;font-size:.98rem;font-weight:600;color:#ececf2}
+.evh-ch{display:inline-flex;align-items:center;gap:8px;font-weight:800;color:#fff}
+.evh-ch img{width:30px;height:30px;object-fit:contain;background:#fff;border-radius:6px;padding:2px;flex:none}
+.evh-d{margin:0;font-size:.9rem;color:#cfcfd8;max-width:60ch}
+.evh-pr{height:4px;max-width:320px;background:rgba(255,255,255,.25);border-radius:2px;overflow:hidden}
+.evh-pr i{display:block;height:100%;width:0;background:#e50914}
+.evh-nav{position:absolute;top:42%;z-index:3;width:44px;height:44px;margin-top:-22px;border:0;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;font-size:1.7rem;line-height:1;cursor:pointer;display:none;align-items:center;justify-content:center;opacity:.75;transition:opacity .2s,background .2s}
+.evh-nav:hover,.evh-nav:focus-visible{opacity:1;background:rgba(229,9,20,.85)}
+.evh-prev{left:12px}.evh-next{right:12px}
+.evh-dots{position:absolute;left:0;right:0;bottom:14px;z-index:3;display:flex;justify-content:center;gap:10px}
+.evh-dots button{position:relative;width:28px;height:4px;padding:0;border:0;border-radius:2px;background:rgba(255,255,255,.35);cursor:pointer}
+.evh-dots button::before{content:'';position:absolute;inset:-12px -4px}
+.evh-dots button[aria-current=true]{background:#fff}
+.evh button:focus-visible{outline:2px solid #ffc400;outline-offset:3px}
+.evh[data-n="1"] .evh-nav,.evh[data-n="1"] .evh-dots{display:none}
+@media (min-width:700px){.evh-c{padding:30px 70px 46px}.evh-nav{display:flex}}
+@media (prefers-reduced-motion:reduce){.evh-s,.evh-s.on,.evh-bg,.evh-nav{transition:none}.evh-bg{transform:none}.evh-s.live .evh-b{animation:none}}
+.evadm{align-items:flex-start;gap:12px;flex-wrap:wrap}.evadm img{border-radius:8px;object-fit:cover;flex:none}.evbtns{display:flex;flex-direction:column;gap:6px}
