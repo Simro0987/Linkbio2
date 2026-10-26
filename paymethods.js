@@ -41,7 +41,7 @@ module.exports = function install(ctx) {
 
   const logoSrc = (p) => (typeof p === 'string' && /^\/(logos\/[a-z0-9._-]+\.(svg|png|jpe?g|webp)|pm-logo\/[a-f0-9]{24})(\?v=[0-9a-z]{1,20})?$/i.test(p) ? `${BASE}/logo?p=${encodeURIComponent(p)}` : null);
   const logoTag = (p) => { const s = logoSrc(p); return s ? `<img src="${esc(s)}" alt="" loading="lazy" height="24">` : '<span class="pmno">💳</span>'; };
-  const MSGS = { ok: 'Uložené.', added: 'Spôsob platby bol pridaný.', saved: 'Zmeny boli uložené.', del: 'Odkaz bol presunutý do koša (dá sa obnoviť).', restored: 'Odkaz bol obnovený.', moved: 'Poradie zmenené.', toggled: 'Stav zmenený.', group: 'Skupina bola prepnutá.' };
+  const MSGS = { rank: 'Poradie na pokladni uložené.', ok: 'Uložené.', added: 'Spôsob platby bol pridaný.', saved: 'Zmeny boli uložené.', del: 'Odkaz bol presunutý do koša (dá sa obnoviť).', restored: 'Odkaz bol obnovený.', moved: 'Poradie zmenené.', toggled: 'Stav zmenený.', group: 'Skupina bola prepnutá.' };
 
   function offBox(e) {
     if (e.kind === 'off') return `<div class="msg err pmoff"><b>⚠️ Platobné metódy nie sú prepojené.</b><br>Chýba premenná prostredia <code>PAY_ADMIN_BRIDGE_SECRET</code> (rovnaká hodnota na Render službách <b>lnkbio</b> aj <b>chain2pay-checkout-gl</b>). Dovtedy ich spravujte v <a href="${esc(ORIGIN)}/admin/methods" target="_blank" rel="noopener noreferrer">admine checkoutu ↗</a>.</div>`;
@@ -105,16 +105,34 @@ ${logoFields(r.logo, st, false)}<p class="row"><button>${isNew ? '➕ Pridať sp
 <label class="ck"><input type="checkbox" name="hideLogo" value="1"${r.hideLogo ? ' checked' : ''}> Skryť logo</label>
 ${logoFields(r.logo, st, true)}<p class="row"><button>💾 Uložiť</button><a class="btnl g2" href="${BASE}">Späť</a></p></form>`;
   }
+  // ↕️ checkout order by usage (auto / manual, pins, usage numbers) — admin only, via the same signed bridge
+  function rankCard(req, rs) {
+    if (!rs) return '';
+    const tok = hid(req);
+    const when = rs.computedAt ? new Date(rs.computedAt).toLocaleString('sk-SK', { timeZone: 'Europe/Bratislava' }) : '—';
+    const pin = (m) => `<form method="post" action="${BASE}/poradie/pin" class="pmf">${tok}<input type="hidden" name="id" value="${esc(m.id)}"><input type="hidden" name="pin" value="${m.pinned ? 0 : 1}"><button class="sm${m.pinned ? ' d' : ' g2'}">${m.pinned ? '📌 Odopnúť' : '📌 Pripnúť'}</button></form>`;
+    const rows = (rs.methods || []).map((m) => `<tr class="${m.pinned ? 'rkpin' : ''}"><td class="rkn">${esc(m.pos)}.</td><td><b>${esc(m.name)}</b>${m.pinned ? ' <span class="tag ok">pripnuté</span>' : ''}<small>${esc(m.groupLabel)} · ${esc(m.id)}</small></td>
+<td class="rkn" data-l="Objednávky">${esc(m.orders)}</td><td class="rkn" data-l="S dokladom">${esc(m.proof)}</td><td class="rkn" data-l="Zaplatené">${esc(m.paid)}</td><td class="rkn" data-l="Kliky">${esc(m.clicks)}</td><td class="rkn" data-l="Skóre"><b>${esc(m.score)}</b>${m.enough ? '' : ' <small>málo dát</small>'}</td><td class="rkf" data-l="Poplatok">${esc(m.fee || '—')}</td><td>${pin(m)}</td></tr>`).join('');
+    const gm = (k, dir, lbl, dis) => `<form method="post" action="${BASE}/poradie/skupina" class="pmf">${tok}<input type="hidden" name="group" value="${esc(k)}"><input type="hidden" name="dir" value="${dir}"><button class="sm g2"${dis ? ' disabled' : ''}>${lbl}</button></form>`;
+    const groups = (rs.groups || []).map((g, i, a) => `<li><span>${i + 1}. ${esc(g.label)}</span><span class="row">${gm(g.key, 'up', '↑', i === 0)}${gm(g.key, 'down', '↓', i === a.length - 1)}</span></li>`).join('');
+    const w = rs.weights || {};
+    return `<div class="card rk" id="poradie"><h2>↕️ Poradie na pokladni</h2>
+<form method="post" action="${BASE}/poradie/auto" class="pmf row rkauto">${tok}<input type="hidden" name="auto" value="${rs.auto ? 0 : 1}"><span class="tag${rs.auto ? ' ok' : ''}" role="switch" aria-checked="${rs.auto ? 'true' : 'false'}">Zoradiť automaticky podľa používania: <b>${rs.auto ? 'ZAPNUTÉ' : 'VYPNUTÉ'}</b></span><button class="sm${rs.auto ? ' g2' : ' g'}">${rs.auto ? 'Prepnúť na manuálne poradie' : 'Zapnúť automatické poradie'}</button></form>
+<p class="hint">${rs.auto ? `Skóre za posledných ${esc(rs.days)} dní: objednávka ×${esc(w.started)}, s dokladom ×${esc(w.proof)}, zaplatená ×${esc(w.paid)}, klik ×${esc(w.click)}. Pod ${esc(rs.minScore)} („málo dát“) rozhoduje predvolené poradie (Revolut, karta / Apple / Google Pay, SEPA, krypto, darčekové karty).` : 'Manuálne: poradie skupín nižšie, poradie v skupine šípkami v zozname metód.'} Pripnuté metódy sú vždy hore. Zákazník čísla ani poplatky nevidí.</p>
+<div class="row rkmeta"><span class="hint">Prepočítané: ${esc(when)} · objednávok: ${esc(rs.ordersCounted)} · automaticky každú hodinu</span><form method="post" action="${BASE}/poradie/prepocitat" class="pmf">${tok}<button class="sm g2">🔄 Prepočítať teraz</button></form></div>
+<div class="rkwrap"><table class="rkt"><thead><tr><th>#</th><th>Spôsob platby</th><th>Objednávky</th><th>S dokladom</th><th>Zaplatené</th><th>Kliky</th><th>Skóre</th><th>Poplatok (admin)</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+${rs.auto ? '' : `<h3>Poradie skupín</h3><ul class="rkg">${groups}</ul>`}</div>`;
+  }
   const shellPage = (req, title, body) => page(title, `<p class="row"><a class="btnl" href="/admin">← Admin</a><a class="btnl" href="${BASE}">💳 Platobné metódy</a></p>${body}`, 'a adm pmw0', '', HEAD);
   const msgOf = (req) => (MSGS[req.query.m] ? `<div class="msg">${esc(MSGS[req.query.m])}</div>` : '') + (req.query.e ? `<div class="msg err">${esc(String(req.query.e).slice(0, 200))}</div>` : '');
 
   // ---- pages ----
   admin.get('/platobne-metody', needAuth, wrap(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    let st;
-    try { st = await call('state'); } catch (e) { return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`)); }
+    let st, rs = null;
+    try { [st, rs] = await Promise.all([call('state'), call('rank_state').catch((e) => (e.kind === 'user' ? null : Promise.reject(e)))]); } catch (e) { return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`)); }
     res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${msgOf(req)}<p class="hint">Spôsoby platby na checkoute <a href="${esc(ORIGIN)}/" target="_blank" rel="noopener noreferrer">${esc(ORIGIN.replace(/^https:\/\//, ''))}</a>. Vypnuté metódy checkout zákazníkom nezobrazí a ani ich nedovolí použiť.</p>
-<div class="card pmw" id="platobne-metody">${render(req, st, true)}</div>${customForm(req, st, {})}`));
+${rankCard(req, rs)}<div class="card pmw" id="platobne-metody">${render(req, st, true)}</div>${customForm(req, st, {})}`));
   }));
   // dashboard fragment (loaded by /static/pm.js so a sleeping checkout never blocks /admin)
   admin.get('/platobne-metody/panel', needAuth, wrap(async (req, res) => {
@@ -194,6 +212,25 @@ ${logoFields(r.logo, st, true)}<p class="row"><button>💾 Uložiť</button><a c
     const id = String(req.body.id || '').toLowerCase();
     if (!ID_RE.test(id)) return fail(req, res, new BridgeErr('user', 'Neplatná požiadavka.'));
     try { const out = await call('restore', { id }); await audit(req, 'paymethod_restore', `${id} ${out.name || ''}`); res.redirect(303, BASE + '?m=restored'); } catch (e) { fail(req, res, e); }
+  }));
+
+  const toRank = (res) => res.redirect(303, BASE + '?m=rank#poradie');
+  admin.post('/platobne-metody/poradie/auto', needAuth, csrf, wrap(async (req, res) => {
+    const on = String(req.body.auto) === '1';
+    try { await call('rank_auto', { auto: on }); await audit(req, 'paymethod_rank_auto', on ? 'on' : 'off'); toRank(res); } catch (e) { fail(req, res, e); }
+  }));
+  admin.post('/platobne-metody/poradie/pin', needAuth, csrf, wrap(async (req, res) => {
+    const id = String(req.body.id || '').toLowerCase(); const pin = String(req.body.pin) === '1';
+    if (!ID_RE.test(id)) return fail(req, res, new BridgeErr('user', 'Neplatná požiadavka.'));
+    try { await call('rank_pin', { id, pin }); await audit(req, pin ? 'paymethod_pin' : 'paymethod_unpin', id); toRank(res); } catch (e) { fail(req, res, e); }
+  }));
+  admin.post('/platobne-metody/poradie/skupina', needAuth, csrf, wrap(async (req, res) => {
+    const group = String(req.body.group || ''); const dir = req.body.dir === 'up' ? 'up' : 'down';
+    if (!GROUP_RE.test(group)) return fail(req, res, new BridgeErr('user', 'Neplatná požiadavka.'));
+    try { await call('rank_group_move', { group, dir }); await audit(req, 'paymethod_rank_group', `${group} ${dir}`); toRank(res); } catch (e) { fail(req, res, e); }
+  }));
+  admin.post('/platobne-metody/poradie/prepocitat', needAuth, csrf, wrap(async (req, res) => {
+    try { await call('rank_recompute'); await audit(req, 'paymethod_rank_recompute', ''); toRank(res); } catch (e) { fail(req, res, e); }
   }));
 
   const FIELDS = ['name', 'group', 'url', 'description', 'minEur', 'mode', 'proofForm', 'enabled', 'hideLogo', 'logoUrl', 'lib', 'removeLogo'];
