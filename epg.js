@@ -9,12 +9,13 @@ const { tx } = require('./uitext');
 const C = require('./epgcore');
 const POSTER = require('./wdposter');
 const FETCH = require('./epgfetch');
+const OFFICIAL = require('./epgoff');
 
 const TZ = 'Europe/Bratislava';
 const FEED_URL = (f) => `https://epgshare01.online/epgshare01/epg_ripper_${f}.xml.gz`;
 const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1', 'RO1', 'RS1', 'GR1', 'BG1', 'LV1', 'IE1'];
 const FEEDS_V2 = ['BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1']; // added 2026-10: Deluxe/ANIXE+/Red Bull, MDR, Arena Sport 3, My Hits, Россия 24, TSN, Fox Sports; RAKUTEN1: Red Bull TV
-const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', top_move: '1', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV', top_n: '4', top_title: 'Top dnes', top_title_en: 'Top today', week_on: '1', week_n: '4', week_title: 'Top týždňa', week_title_en: 'Top this week', guide_on: '1', guide_genres: 'sport,film,series,show,doc,kids,news,music', guide_def: 'sport', guide_days: '4', guide_scope: 'skcz' };
+const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', top_move: '1', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV', top_n: '4', top_title: 'Top dnes', top_title_en: 'Top today', week_on: '1', week_n: '4', week_title: 'Top týždňa', week_title_en: 'Top this week', guide_on: '1', guide_genres: 'sport,film,series,show,doc,kids,news,music', guide_def: 'sport', guide_days: '7', guide_scope: 'skcz' };
 // custom XMLTV sources added in admin: feed key "src:<id>", their channel ids are prefixed "src<id>:" (no collisions with epgshare ids)
 const SRC_RE = /^src(\d+):/;
 const isSrcFeed = (f) => /^src:\d+$/.test(String(f || ''));
@@ -45,6 +46,8 @@ module.exports = function install(ctx) {
   const skipOf = (c) => String(c.epg_skip || '').split(/\r?\n/).map((x) => x.trim().toLowerCase()).filter((x) => x && x !== '-');
   const skipped = (cat, sk) => { const c = String(cat || '').toLowerCase(); return sk.some((x) => c.includes(x)); };
   const kv = { get: async (k) => ((await pool.query('SELECT v FROM epg_kv WHERE k=$1', [k])).rows[0] || {}).v, set: (k, v) => pool.query('INSERT INTO epg_kv (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=$2', [k, String(v)]) };
+  const OFF = OFFICIAL.install({ pool, kv, getSettings, C, ADULT, JUNK }); // official broadcaster schedules (STVR, JOJ, Prima) → days 4–7
+  const DATA_V = '5'; // bump when stored EPG data needs a rebuild after deploy (refresh runs on the first tick)
   let mapCache = null, nowCache = null, dnesCache = null, srcCache = null; const dayCache = new Map();
   const sources = async () => srcCache || (srcCache = (await pool.query('SELECT * FROM epg_src ORDER BY id')).rows);
   let sportCache = null;
@@ -66,6 +69,8 @@ module.exports = function install(ctx) {
     await pool.query(`ALTER TABLE epg_poster ADD COLUMN IF NOT EXISTS pop INT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE epg_poster ADD COLUMN IF NOT EXISTS rt INT NOT NULL DEFAULT 0`);
     await pool.query(`CREATE TABLE IF NOT EXISTS epg_src (id SERIAL PRIMARY KEY, name TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT true, pref BOOLEAN NOT NULL DEFAULT false, nch INT NOT NULL DEFAULT -1, nprog INT NOT NULL DEFAULT -1, ncover INT NOT NULL DEFAULT -1, cover TEXT NOT NULL DEFAULT '', days REAL NOT NULL DEFAULT 0, err TEXT NOT NULL DEFAULT '', checked_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    await OFF.init();
+    if (await kv.get('guide_v7') !== '1') { const st = await getSettings(); if (String(st.guide_days || '') === '4') await setSettings({ guide_days: '7' }); await kv.set('guide_v7', '1'); } // old default 4 → 7 days
     if (await kv.get('poster_v2') !== '1') { await pool.query(`DELETE FROM epg_poster`); await kv.set('poster_v2', '1'); }
     if (await kv.get('feeds_v2') !== '1') { // one-time: add the new feeds to a stored feed list
       const st = await getSettings(); if (st.epg_feeds) { const cur = feedsOf(st); await setSettings({ epg_feeds: [...new Set([...cur, ...FEEDS_V2])].slice(0, 30).join(',') }); }
@@ -229,8 +234,10 @@ module.exports = function install(ctx) {
     await pool.query(`DELETE FROM epg_prog WHERE e < $1 OR epg_id NOT IN (SELECT epg_id FROM epg_map WHERE epg_id <> '')`, [new Date(from)]);
     await pool.query(`DELETE FROM dnes_hide WHERE k LIKE 'p:%' AND created_at < now() - interval '3 days'`);
     await pool.query(`DELETE FROM dnes_pin WHERE e < now() - interval '1 day'`);
+    status.phase = 'oficiálne programy'; status.feed = '';
+    try { await OFF.merge(far, !!opt.offForce); } catch (e) { console.error('EPG official merge', e.message); }
     await kv.set('last_run', new Date().toISOString()); await kv.set('last_ms', Date.now() - t0); await kv.set('report', JSON.stringify(report));
-    if (!opt.feeds) await kv.set('last_full', new Date().toISOString());
+    if (!opt.feeds) { await kv.set('last_full', new Date().toISOString()); await kv.set('data_v', DATA_V); }
     await kv.set('last_err', '');
     dropCaches(); postersSoon();
   }
@@ -241,7 +248,7 @@ module.exports = function install(ctx) {
       try {
         const c = cfg(await getSettings()); if (c.epg_on !== '1' && c.dnes_on !== '1') return;
         const last = Date.parse(await kv.get('last_full') || 0) || 0, h = Math.max(2, Math.min(24, +c.epg_hours || 6));
-        if (Date.now() - last > h * 3600e3 - 60e3) refresh();
+        if (Date.now() - last > h * 3600e3 - 60e3 || (await kv.get('data_v')) !== DATA_V) refresh();
       } catch (e) { console.error('EPG tick', e.message); }
     };
     setTimeout(tick, 45e3).unref(); timer = setInterval(tick, 15 * 60e3); timer.unref();
@@ -344,12 +351,15 @@ module.exports = function install(ctx) {
     return b;
   }
   // pick the public list with variety: each further item of the same kind costs 10 points
-  function diverse(list, n) {
-    const left = list.slice(), out = [], cnt = {};
+  // pick n by score with variety by kind; dy = { cap, pre } → at most `cap` items per calendar day (pre = already chosen), fewer same-day picks preferred
+  function diverse(list, n, dy) {
+    const left = list.slice(), out = [], cnt = {}, dc = new Map(), dk = (x) => dayStart(x.s);
+    if (dy) for (const x of dy.pre || []) dc.set(dk(x), (dc.get(dk(x)) || 0) + 1);
     while (out.length < n && left.length) {
-      let bi = 0, bv = -1e9;
-      left.forEach((x, i) => { const v = x.score - 10 * (cnt[x.kind] || 0); if (v > bv) { bv = v; bi = i; } });
-      const x = left.splice(bi, 1)[0]; cnt[x.kind] = (cnt[x.kind] || 0) + 1; out.push(x);
+      let bi = -1, bv = -1e9;
+      left.forEach((x, i) => { const d = dy ? dc.get(dk(x)) || 0 : 0; if (dy && d >= dy.cap) return; const v = x.score - 10 * (cnt[x.kind] || 0) - 30 * d; if (v > bv) { bv = v; bi = i; } });
+      if (bi < 0) break;
+      const x = left.splice(bi, 1)[0]; cnt[x.kind] = (cnt[x.kind] || 0) + 1; out.push(x); if (dy) dc.set(dk(x), (dc.get(dk(x)) || 0) + 1);
     }
     return out;
   }
@@ -405,7 +415,11 @@ module.exports = function install(ctx) {
         if (seen.has(x.tk)) { x.dupe = true; continue; } if (x.hidden) continue; seen.add(x.tk);
         const k = perCh.get(x.ch.id) || 0; perCh.set(x.ch.id, k + 1); if (k === 0) first.push(x); else if (k === 1) second.push(x);
       }
-      let picked = diverse(first, n - ps.length); if (picked.length < n - ps.length) picked = picked.concat(diverse(second, n - ps.length - picked.length));
+      let picked;
+      if (sec === 'w') { // Top týždňa: spread over the days (prefer one per day, max 2 per day; 3 only if the EPG has too few days)
+        const pool2 = first.concat(second); picked = [];
+        for (const cap of [1, 2, 3]) { if (picked.length >= n - ps.length) break; picked = picked.concat(diverse(pool2.filter((x) => !picked.includes(x) && (cap > 1 || first.includes(x))), n - ps.length - picked.length, { cap, pre: ps.concat(picked) })); }
+      } else { picked = diverse(first, n - ps.length); if (picked.length < n - ps.length) picked = picked.concat(diverse(second, n - ps.length - picked.length)); }
       const items = ps.concat(picked);
       if (items.length < MIN_N) return { items: [], list, pins: ps };
       const best = items.slice().sort((a, b) => b.score - a.score || a.s - b.s)[0];
@@ -574,6 +588,21 @@ module.exports = function install(ctx) {
     await pool.query(`UPDATE epg_map SET epg_id='', score=0 WHERE NOT manual AND epg_id LIKE $1`, [`src${id}:%`]);
     srcCache = null; dropCaches(); refreshAll(); srcBack(res, 'del');
   }));
+  // official broadcaster schedules card (epgoff.js)
+  let offRun = null;
+  async function offCard(req) {
+    const st = await getSettings(), on = OFF.on(st), want = OFF.srcOn(st), x = await OFF.status();
+    const per = new Map(x.per.map((r) => [r.src, r])), ids = Object.entries((x.merge && x.merge.ids) || {});
+    const rows = Object.entries(OFFICIAL.SOURCES).map(([k, src]) => { const r = (x.report || {})[k] || {}, p = per.get(k);
+      return `<label class="ck"><input type="checkbox" name="src_${k}" value="1"${want.has(k) ? ' checked' : ''}> ${esc(src.name)} <span class="hint">${r.err ? '⚠ ' + esc(r.err) + ' · ' : ''}${p ? `${p.n} rel. do ${esc(dayLbl(+p.b, false))}` : 'zatiaľ bez údajov'}${r.days ? ` · ${r.days} dní` : ''}</span></label>`; }).join('');
+    return `<form method="post" action="/admin/epg/off" class="card" id="oficialne">${hid(req)}<h2>🏛 Oficiálne programy TV staníc (až 7 dní)</h2>
+<p class="hint">Bezplatné XMLTV súbory majú pre SK/CZ kanály program len na ~3–4 dni. Ďalšie dni sa dopĺňajú z verejných programov priamo od staníc (iba čas, názov, epizóda, žáner; žiadne streamy). Načítava sa max. 2× denne, s pauzami medzi požiadavkami. Doplní sa iba to, čo je po konci programu z XMLTV.</p>
+<label class="ck"><input type="checkbox" name="off_on" value="1"${on ? ' checked' : ''}> Dopĺňať program z oficiálnych zdrojov</label>${rows}
+<p class="hint">Posledné načítanie: ${esc(ago(x.at))}${x.merge && x.merge.n != null ? ` · doplnených relácií: ${x.merge.n} pre ${ids.length} EPG kanálov` : ''}${offRun ? ' · <b>práve beží…</b>' : ''}</p>
+${ids.length ? `<details><summary>Doplnené kanály</summary><p class="hint">${ids.map(([id, ch]) => esc(id) + ' ← ' + esc(ch)).join(' · ')}</p></details>` : ''}
+<p class="hint">Nedostupné: <b>ČT</b> (XML export vyžaduje bezplatnú registráciu na ceskatelevize.cz – zatiaľ nepoužité), <b>Markíza</b> a <b>Nova</b> (stránky programu blokujú automatické čítanie). Tieto kanály majú program z XMLTV (~3–4 dni).</p>
+<div class="row"><button>Uložiť</button><button name="now" value="1">🔄 Uložiť a načítať teraz</button></div></form>`;
+  }
   async function srcCard(req, report) {
     const list = await sources(), miss = await noProgChannels(), err = await kv.get('src_err');
     const sel = +req.query.src || 0;
@@ -619,6 +648,7 @@ ${list.length < SRC_MAX ? `<form method="post" action="/admin/epg/src" class="sr
 ${lastErr ? `<p class="err">Chyba: ${esc(lastErr)}</p>` : ''}${Object.keys(report).length ? `<p class="hint">${Object.entries(report).map(([k, v]) => `${esc(isSrcFeed(k) ? ((srcs.find((x) => 'src:' + x.id === k) || {}).name || k) : k)}: ${v.err ? '⚠ ' + esc(v.err) : `${v.ch != null ? v.ch + ' kan., ' : ''}${v.progs || 0} rel.${v.days ? ' · ' + v.days + ' d' : ''}`}`).join(' · ')}</p>` : ''}
 <div class="row"><form method="post" action="/admin/epg/refresh">${hid(req)}<button>🔄 Obnoviť teraz</button></form><form method="post" action="/admin/epg/remap">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> potvrdiť</label><button>🔁 Znovu automaticky spárovať (ručné ostanú)</button></form></div></div>
 ${await srcCard(req, report)}
+${await offCard(req)}
 <form method="post" action="/admin/epg/settings" class="card" id="nast">${hid(req)}<h2>⚙ Nastavenia TV programu</h2>
 <label class="ck"><input type="checkbox" name="epg_on" value="1"${c.epg_on === '1' ? ' checked' : ''}> Zobraziť TV program pri kanáloch (Teraz / Potom / celý deň)</label>
 <label>Zdroje (krajiny epgshare01, oddelené čiarkou) <span class="hint">dostupné: ${FEEDS_ALL.join(', ')}</span></label><input name="epg_feeds" maxlength="200" value="${esc(c.epg_feeds)}">
@@ -675,6 +705,11 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
     const b = req.body; const clean = (v, d) => String(v || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60) || d;
     await setSettings({ dnes_on: b.dnes_on ? '1' : '0', dnes_kinds: KINDS.map(([k]) => k).filter((k) => b['kind_' + k]).join(',') || 'film', top_title: clean(b.top_title, D.top_title), top_title_en: clean(b.top_title_en, D.top_title_en), top_n: String(clampN(b.top_n)), week_on: b.week_on ? '1' : '0', week_title: clean(b.week_title, D.week_title), week_title_en: clean(b.week_title_en, D.week_title_en), week_n: String(clampN(b.week_n)), dnes_scope: b.dnes_scope === 'all' ? 'all' : 'skcz', top_move: b.top_move ? '1' : '0', dnes_speed: String(Math.max(1, Math.min(5, parseInt(b.dnes_speed, 10) || 3))) });
     dropCaches(); back(res, 'ok', 'dnes');
+  }));
+  admin.post('/epg/off', needAuth, csrf, wrap(async (req, res) => {
+    const b = req.body; await setSettings({ off_on: b.off_on ? '1' : '0', off_src: Object.keys(OFFICIAL.SOURCES).filter((k) => b['src_' + k]).join(',') || '-' });
+    if (!offRun && !running) { const far = dayStart(Date.now()) + 8 * 86400e3 + 6 * 3600e3; offRun = OFF.merge(far, b.now === '1').catch((e) => console.error('EPG official', e.message)).finally(() => { offRun = null; dropCaches(); }); }
+    back(res, 'ok', 'oficialne');
   }));
   admin.post('/epg/refresh', needAuth, csrf, wrap(async (req, res) => { if (running) return back(res, 'busy'); refresh(); back(res, 'run'); }));
   admin.post('/epg/remap', needAuth, csrf, wrap(async (req, res) => { if (req.body.confirm !== '1') return back(res, 'ok'); await pool.query('DELETE FROM epg_map WHERE NOT manual'); dropCaches(); if (!running) refresh(); back(res, 'remap'); }));

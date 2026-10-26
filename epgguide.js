@@ -32,7 +32,7 @@ module.exports = function guide(ctx, h) {
   Object.assign(MS, { gok: 'Uložené. Zmena počtu dní sa prejaví po najbližšej obnove programu.' });
   const on = (c) => c.epg_on === '1' && c.guide_on === '1';
   const enabled = (c) => { const s = new Set(String(c.guide_genres || '').split(',')); return GENRES.map((g) => g[0]).filter((g) => s.has(g)); };
-  const ndays = (c) => Math.max(1, Math.min(7, parseInt(c.guide_days, 10) || 4));
+  const ndays = (c) => Math.max(1, Math.min(7, parseInt(c.guide_days, 10) || 7));
   let cache = new Map(), avail = null; const drop = () => { cache = new Map(); avail = null; };
 
   const chType = (ch) => { const t = ch.name + ' ' + ch.category; for (const [g, r] of CHT) if (r.test(t)) return g; return /filmy a seri/i.test(ch.category) ? 'film' : ''; };
@@ -62,7 +62,7 @@ module.exports = function guide(ctx, h) {
       const edges = []; for (let d = 0; d <= n; d++) edges.push(new Date(d === n ? bounds(d - 1).b : bounds(d).a));
       const q = await pool.query(`SELECT width_bucket(s, $2::timestamptz[]) AS k, count(*)::int AS n FROM epg_prog WHERE epg_id = ANY($1) AND s >= $3 AND s < $4 GROUP BY 1`, [ids, edges, edges[0], edges[n]]);
       const cnt = new Map(q.rows.map((r) => [r.k, r.n])); const base = cnt.get(1) || 0;
-      for (let d = 0; d < n; d++) if ((cnt.get(d + 1) || 0) >= Math.max(200, base * 0.15)) out.push(d);
+      for (let d = 0; d < n; d++) if ((cnt.get(d + 1) || 0) >= Math.max(150, base * 0.05)) out.push(d); // days 4–7 come mostly from the official SK/CZ schedules (fewer channels)
     }
     if (!out.includes(0)) out.unshift(0);
     avail = { t: Date.now(), d: out }; return out;
@@ -145,7 +145,7 @@ ${rows ? `<h3>Počty položiek (SK/CZ / všetky)</h3><div class="tblw"><table cl
   }
   admin.post('/epg/guide', needAuth, csrf, wrap(async (req, res) => {
     const b = req.body, gs = GENRES.map((g) => g[0]).filter((g) => b['g_' + g]);
-    await setSettings({ guide_on: b.guide_on ? '1' : '0', guide_genres: gs.join(',') || 'sport', guide_def: GL.has(b.guide_def) ? b.guide_def : 'sport', guide_days: String(Math.max(1, Math.min(7, parseInt(b.guide_days, 10) || 4))), guide_scope: b.guide_scope === 'all' ? 'all' : 'skcz' });
+    await setSettings({ guide_on: b.guide_on ? '1' : '0', guide_genres: gs.join(',') || 'sport', guide_def: GL.has(b.guide_def) ? b.guide_def : 'sport', guide_days: String(Math.max(1, Math.min(7, parseInt(b.guide_days, 10) || 7))), guide_scope: b.guide_scope === 'all' ? 'all' : 'skcz' });
     drop(); back(res, 'gok', 'zanre');
   }));
   return { drop, attrs, card, genreOf, dayData, days };
