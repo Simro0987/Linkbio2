@@ -253,14 +253,14 @@ module.exports = function install(ctx) {
         const c = cfg(await getSettings()); if (c.epg_on !== '1' && c.dnes_on !== '1') return;
         const last = Date.parse(await kv.get('last_full') || 0) || 0, h = Math.max(2, Math.min(24, +c.epg_hours || 6));
         // official SK/CZ schedules (light: a few small HTTP requests + SQL) run on their own, independent of the heavy XMLTV refresh
-        if (!running && !offRun && (await kv.get('off_v')) !== DATA_V) {
+        if (!running && !offRun && ((await kv.get('off_v')) !== DATA_V || Date.now() - (Date.parse(await kv.get('off_at') || 0) || 0) > 12 * 3600e3)) {
           const far = dayStart(Date.now()) + 8 * 86400e3 + 6 * 3600e3;
           offRun = OFF.merge(far, false).then(async (r) => { await kv.set('off_v', DATA_V); console.log(`EPG official merged ${r && r.n} rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`); })
             .catch((e) => console.error('EPG official', e.message)).finally(() => { offRun = null; dropCaches(); });
           return;
         }
-        // an attempt started < 20 min ago (e.g. interrupted by a deploy/restart): wait, so a failing refresh can never loop on every boot
-        const tried = Date.parse(await kv.get('try_at') || 0) || 0; if (Date.now() - tried < 20 * 60e3) return;
+        // no refresh loop on boot: last attempt never finished (crash/restart/deploy) → back off 3 h, otherwise 20 min
+        const tried = Date.parse(await kv.get('try_at') || 0) || 0; if (Date.now() - tried < (tried > last + 60e3 ? 3 * 3600e3 : 20 * 60e3)) return;
         if (Date.now() - last > h * 3600e3 - 60e3 || (await kv.get('data_v')) !== DATA_V) refresh();
       } catch (e) { console.error('EPG tick', e.message); }
     };
