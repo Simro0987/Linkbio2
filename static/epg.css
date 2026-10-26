@@ -192,3 +192,11 @@
 .evadm{align-items:flex-start;gap:12px;flex-wrap:wrap}.evadm img{border-radius:8px;object-fit:cover;flex:none}.evbtns{display:flex;flex-direction:column;gap:6px}
 .evx{display:block;margin-top:4px;line-height:1.5}.evlog{margin:4px 0;font-size:.78rem;color:#9a9aa8}.evlog ol{margin:4px 0 0;padding-left:18px}.evdesc{display:flex;gap:6px;align-items:flex-start;margin-top:6px}.evdesc textarea{flex:1;min-width:0;font:inherit;font-size:.85rem}
 .evbig{font-family:ui-monospace,monospace;font-size:.78rem;white-space:pre;overflow:auto}
+/* external sport schedule (channel without TV guide): subtle, never looks like a confirmed listing */
+.tpx,.tpq{display:inline-block;margin-left:6px;padding:0 5px;border-radius:6px;font-size:.68rem;font-weight:500;line-height:1.5;opacity:.75;border:1px dashed currentColor;white-space:nowrap;vertical-align:middle}
+.tpq{font-style:italic}
+.tdt .tpx,.tdt .tpq{align-self:flex-start;margin:2px 0 0}
+.evh-pq,.tevq{display:inline-block;margin-left:8px;padding:0 6px;border:1px dashed rgba(255,255,255,.6);border-radius:6px;font-size:.72rem;font-weight:500;font-style:italic;opacity:.85;white-space:nowrap}
+.tevq{border-color:currentColor;margin-left:4px;font-size:.66rem;flex:none}
+.extadm .row{align-items:center}.extadm select{max-width:220px}.extadm .hint b{font-weight:600}
+.txq{margin:-2px 0 2px}.txq .tpq{margin-left:0}

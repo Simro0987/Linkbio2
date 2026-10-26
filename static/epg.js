@@ -5,6 +5,9 @@ function t(k,d){return L[k]||d;}
 var fmt;try{fmt=new Intl.DateTimeFormat('sk-SK',{timeZone:'Europe/Bratislava',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});}catch(e){fmt=new Intl.DateTimeFormat('sk-SK',{hour:'2-digit',minute:'2-digit'});}
 var skew=0;function now(){return Date.now()/1000+skew;}
 function hm(s){return fmt.format(new Date(s*1000));}
+var fmtD;try{fmtD=new Intl.DateTimeFormat(document.documentElement.lang==='en'?'en-GB':'sk-SK',{timeZone:'Europe/Bratislava',weekday:'short',day:'numeric',month:'numeric'});}catch(e){fmtD=null;}
+// sparse external-schedule channels list the next 7 days: prefix entries that are not today with the day
+function dhm(s){if(!fmtD||fmtD.format(new Date(s*1000))===fmtD.format(new Date(now()*1000)))return hm(s);return fmtD.format(new Date(s*1000))+' '+hm(s);}
 function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
 // link back to Česká televize for ČT programmes (ČT terms of the XML export)
 function ctl(u){var a=el('a','ctl','ČT');if(!/^https:\/\/www\.ceskatelevize\.cz\//.test(u))return document.createTextNode('');a.href=u;a.target='_blank';a.rel='noopener';a.title='Program: Česká televize';return a;}
@@ -83,12 +86,14 @@ function render(li,list){
   var day=box.querySelector('.tday'),btn=box.querySelector('.tdb');
   [].slice.call(box.querySelectorAll('.ten,.tpw,.tnx')).forEach(function(x){x.remove();});
   var cur=list[0],first=box.firstChild,on=cur[0]<=n;
-  var r1=el('div','ten');r1.appendChild(el('span','tel'+(on?'':' tel2'),on?t('now','Teraz'):t('next','Potom')));r1.appendChild(el('span','tetm',hm(cur[0])));var tt=el('b','tet',(ICON[cur[3]]?ICON[cur[3]]+' ':'')+cur[2]);tt.title=cur[2];r1.appendChild(tt);
-  box.insertBefore(r1,first);
+  var r1=el('div','ten');r1.appendChild(el('span','tel'+(on?'':' tel2'),on?t('now','Teraz'):t('next','Potom')));r1.appendChild(el('span','tetm',cur[4]?dhm(cur[0]):hm(cur[0])));var tt=el('b','tet',(ICON[cur[3]]?ICON[cur[3]]+' ':'')+cur[2]);tt.title=cur[2];r1.appendChild(tt);box.insertBefore(r1,first);
+  if(cur[4]==='q'){var rq=el('div','tnx txq');rq.appendChild(xtag('q'));box.insertBefore(rq,first);} /* own line: keeps the title readable on mobile */
   if(on){var pw=el('div','tpw'),pb=el('div','tpb'),i=el('i');i.style.width=pct(cur[0],cur[1])+'%';pb.appendChild(i);pw.appendChild(pb);pw.appendChild(el('span','tlf',t('left','ešte')+' '+left(cur[1])+' '+t('min','min')));box.insertBefore(pw,first);}
-  list.slice(1,on?3:2).forEach(function(p,ix){var r=el('div','tnx');if(ix===0)r.appendChild(el('span','tel tel2',t('next','Potom')));else r.appendChild(el('span','tel tel3',''));r.appendChild(el('span','tetm',hm(p[0])));var b=el('span','tnt',p[2]);b.title=p[2];r.appendChild(b);r.appendChild(remLink('trm',li.getAttribute('data-id'),p[0]));box.insertBefore(r,first);});
-  if(!btn){btn=el('button','tdb','📅 '+t('day','Celý program dnes'));btn.type='button';btn.setAttribute('aria-expanded','false');day=el('ol','tday');day.hidden=true;box.appendChild(btn);box.appendChild(day);btn.addEventListener('click',function(){openDay(li,btn,day);});}
+  list.slice(1,on?3:2).forEach(function(p,ix){var r=el('div','tnx');if(ix===0)r.appendChild(el('span','tel tel2',t('next','Potom')));else r.appendChild(el('span','tel tel3',''));r.appendChild(el('span','tetm',p[4]?dhm(p[0]):hm(p[0])));var b=el('span','tnt',p[2]);b.title=p[2];r.appendChild(b);r.appendChild(remLink('trm',li.getAttribute('data-id'),p[0]));box.insertBefore(r,first);});
+  if(!btn){btn=el('button','tdb','📅 '+(cur[4]?t('dayx','Rozpis zápasov na 7 dní'):t('day','Celý program dnes')));btn.type='button';btn.setAttribute('aria-expanded','false');day=el('ol','tday');day.hidden=true;box.appendChild(btn);box.appendChild(day);btn.addEventListener('click',function(){openDay(li,btn,day);});}
 }
+/* external sport schedule (no TV guide for the channel): 'x' = from the competition/platform schedule, 'q' = channel predicted */
+function xtag(f){var q=f==='q',s=el('small',q?'tpq':'tpx',q?t('pred','predpokladaný kanál'):t('ext','podľa rozpisu'));s.title=q?t('predh','Zdroj uvádza len platformu – číslo kanála je odhad'):t('exth','Z verejného rozpisu súťaže / platformy');return s;}
 function openDay(li,btn,day){
   var open=day.hidden;day.hidden=!open;btn.setAttribute('aria-expanded',open?'true':'false');if(!open||day.getAttribute('data-ok'))return markDay(day);
   day.textContent='';day.appendChild(el('li','tdl',t('load','Načítavam…')));
@@ -96,7 +101,7 @@ function openDay(li,btn,day){
   var id=li.getAttribute('data-id');
   fetch('/api/epg/day/'+id,{credentials:'omit'}).then(function(r){return r.ok?r.json():{p:[]};}).then(function(d){
     day.textContent='';if(!d.p||!d.p.length)return gone();
-    d.p.forEach(function(p){var x=el('li','tdi');x.setAttribute('data-s',p[0]);x.setAttribute('data-e',p[1]);x.appendChild(el('span','tetm',hm(p[0])));var b=el('span','tdt');b.appendChild(el('b',null,(ICON[p[3]]?ICON[p[3]]+' ':'')+p[2]));if(p[4])b.appendChild(el('span','tds',' – '+p[4]));if(p[5]||p[6])b.appendChild(el('small','tdd',[p[5],p[6]].filter(Boolean).join(' · ')));if(p[7])b.appendChild(ctl(p[7]));x.appendChild(b);if(p[0]>now())x.appendChild(remLink('tdr',id,p[0]));day.appendChild(x);});
+    d.p.forEach(function(p){var x=el('li','tdi');x.setAttribute('data-s',p[0]);x.setAttribute('data-e',p[1]);x.appendChild(el('span','tetm',p[8]?dhm(p[0]):hm(p[0])));var b=el('span','tdt');b.appendChild(el('b',null,(ICON[p[3]]?ICON[p[3]]+' ':'')+p[2]));if(p[4])b.appendChild(el('span','tds',' – '+p[4]));if(p[5]||p[6])b.appendChild(el('small','tdd',[p[5],p[6]].filter(Boolean).join(' · ')));if(p[7])b.appendChild(ctl(p[7]));if(p[8])b.appendChild(xtag(p[8]));x.appendChild(b);if(p[0]>now())x.appendChild(remLink('tdr',id,p[0]));day.appendChild(x);});
     day.setAttribute('data-ok','1');markDay(day,true);
   }).catch(gone);
 }
@@ -132,7 +137,7 @@ if(L.guide&&cat){(function(){
       li.appendChild(el('span','tetm',hm(x[1])));
       if(x[6]){var p=el('img','gpo');p.src=x[6];p.alt='';p.width=36;p.height=52;p.loading='lazy';p.referrerPolicy='no-referrer';li.appendChild(p);}
       var m=el('span','spm'),tt=el('b','spt2');if(f.indexOf('h')>=0)tt.appendChild(el('span','gtip','★ '+t('gtop','Tip')));tt.appendChild(document.createTextNode(x[3]));m.appendChild(tt);if(x[4])m.appendChild(el('span','gsub',x[4]));
-      var ch=el('span','spc');if(c[1]){var im=el('img');im.src=c[1];im.alt='';im.width=18;im.height=18;im.loading='lazy';ch.appendChild(im);}ch.appendChild(document.createTextNode(c[0]));if(f.indexOf('l')>=0&&!live)ch.appendChild(el('span','glv',t('glive','Naživo')));if(x[7])ch.appendChild(ctl(x[7]));m.appendChild(ch);li.appendChild(m);
+      var ch=el('span','spc');if(c[1]){var im=el('img');im.src=c[1];im.alt='';im.width=18;im.height=18;im.loading='lazy';ch.appendChild(im);}ch.appendChild(document.createTextNode(c[0]));if(f.indexOf('l')>=0&&!live)ch.appendChild(el('span','glv',t('glive','Naživo')));if(x[7])ch.appendChild(ctl(x[7]));if(f.indexOf('q')>=0)ch.appendChild(xtag('q'));m.appendChild(ch);li.appendChild(m);
       if(live)li.appendChild(el('span','tel',t('now','Teraz')));else li.appendChild(remLink('tdr',x[0],x[1]));ol.appendChild(li);});
     box.appendChild(ol);
     if(lst.length>st.n){var mb=el('button','gmore',t('gmore','Zobraziť ďalšie')+' ('+(lst.length-st.n)+')');mb.type='button';mb.addEventListener('click',function(){st.n+=80;draw();});box.appendChild(mb);}

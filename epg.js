@@ -10,6 +10,7 @@ const C = require('./epgcore');
 const POSTER = require('./wdposter');
 const FETCH = require('./epgfetch');
 const OFFICIAL = require('./epgoff');
+const EXTERNAL = require('./epgext');
 
 const TZ = 'Europe/Bratislava';
 const FEED_URL = (f) => `https://epgshare01.online/epgshare01/epg_ripper_${f}.xml.gz`;
@@ -55,9 +56,13 @@ module.exports = function install(ctx) {
   let G = null, E = null; // genre guide (epgguide.js), top events (epgevents.js)
   const channels = async () => (ctx.tvchAll ? ctx.tvchAll() : (await pool.query('SELECT id,name,category,logo,ord,visible FROM tv_channels ORDER BY ord,id')).rows);
   const loadMap = async () => mapCache || (mapCache = new Map((await pool.query('SELECT channel_id,epg_id,manual,score,shift FROM epg_map')).rows.map((r) => [r.channel_id, r])));
+  // external sport schedules (oneplay.cz, nikeliga.sk, chanceliga.cz, hokej.cz) → 'ext:<channel_id>' rows for channels without EPG (epgext.js)
+  const EXT = EXTERNAL.install({ pool, kv, channels, loadMap, onChange: () => dropCaches(), imp: (x) => (E && E.bigPts ? E.bigPts(x) : 0) });
+  ctx.epgExt = EXT;
 
   ctx.epgInit = async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS epg_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL DEFAULT '')`);
+    await EXT.init();
     await pool.query(`CREATE TABLE IF NOT EXISTS epg_chan (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', names TEXT NOT NULL DEFAULT '', feed TEXT NOT NULL DEFAULT '', n INT NOT NULL DEFAULT -1, seen_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS epg_map (channel_id INT PRIMARY KEY, epg_id TEXT NOT NULL DEFAULT '', manual BOOLEAN NOT NULL DEFAULT false, score REAL NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS epg_prog (epg_id TEXT NOT NULL, s TIMESTAMPTZ NOT NULL, e TIMESTAMPTZ NOT NULL, title TEXT NOT NULL, sub TEXT NOT NULL DEFAULT '', cat TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '', descr TEXT NOT NULL DEFAULT '', yr TEXT NOT NULL DEFAULT '', fl TEXT NOT NULL DEFAULT '', PRIMARY KEY (epg_id, s))`);
@@ -236,7 +241,7 @@ module.exports = function install(ctx) {
     epgRows = (await pool.query('SELECT id,name,names,feed,n FROM epg_chan')).rows;
     const fin = await computeMap(c, chans, epgRows); await saveMap(fin.res);
     await pool.query(`DELETE FROM epg_map WHERE channel_id NOT IN (SELECT id FROM tv_channels)`);
-    await pool.query(`DELETE FROM epg_prog WHERE e < $1 OR epg_id NOT IN (SELECT epg_id FROM epg_map WHERE epg_id <> '')`, [new Date(from)]);
+    await pool.query(`DELETE FROM epg_prog WHERE e < $1 OR (epg_id NOT LIKE 'ext:%' AND epg_id NOT IN (SELECT epg_id FROM epg_map WHERE epg_id <> ''))`, [new Date(from)]);
     await pool.query(`DELETE FROM dnes_hide WHERE k LIKE 'p:%' AND created_at < now() - interval '3 days'`);
     await pool.query(`DELETE FROM dnes_pin WHERE e < now() - interval '1 day'`);
     status.phase = 'oficiálne programy'; status.feed = ''; mlog('official');
@@ -245,6 +250,7 @@ module.exports = function install(ctx) {
     if (!opt.feeds) { await kv.set('last_full', new Date().toISOString()); await kv.set('data_v', DATA_V); }
     await kv.set('last_err', ''); mlog('done');
     dropCaches(); postersSoon();
+    EXT.apply().catch((e) => console.error('EXT apply', e.message)); // a channel that now has real EPG drops its external rows
   }
   let timer = null;
   function schedule() {
@@ -252,6 +258,7 @@ module.exports = function install(ctx) {
     const tick = async () => {
       try {
         const c = cfg(await getSettings()); if (c.epg_on !== '1' && c.dnes_on !== '1') return;
+        if (!running && !offRun && (await EXT.due())) EXT.run(); // light: ~11 small page reads every 6 h
         const last = Date.parse(await kv.get('last_full') || 0) || 0, h = Math.max(2, Math.min(24, +c.epg_hours || 6));
         // official SK/CZ schedules (light: a few small HTTP requests + SQL) run on their own, independent of the heavy XMLTV refresh
         if (!running && !offRun && ((await kv.get('off_v')) !== DATA_V || Date.now() - (Date.parse(await kv.get('off_at') || 0) || 0) > 12 * 3600e3)) {
@@ -272,7 +279,8 @@ module.exports = function install(ctx) {
   // ---------- read side ----------
   async function visibleMapped() {
     const c = cfg(await getSettings()), sk = skipOf(c), m = await loadMap();
-    return (await channels()).filter((r) => r.visible && !skipped(r.category, sk) && m.get(r.id) && m.get(r.id).epg_id).map((r) => ({ ...r, epg: m.get(r.id).epg_id, sh: (m.get(r.id).shift || 0) * 60e3 }));
+    const ext = await EXT.extIds(); // channels filled from an external schedule (no real EPG) – shown even in skipped categories
+    return (await channels()).filter((r) => r.visible && (ext.has(r.id) || (!skipped(r.category, sk) && m.get(r.id) && m.get(r.id).epg_id))).map((r) => (ext.has(r.id) ? { ...r, epg: 'ext:' + r.id, sh: 0, ext: true } : { ...r, epg: m.get(r.id).epg_id, sh: (m.get(r.id).shift || 0) * 60e3 }));
   }
   async function nowData() {
     if (nowCache && Date.now() - nowCache.t < 60e3) return nowCache.d;
@@ -280,8 +288,8 @@ module.exports = function install(ctx) {
     const out = {}, nowS = Date.now() / 1000;
     if (byEpg.size) {
       const shOf = new Map(); for (const r of vm) shOf.set(r.epg, Math.max(shOf.get(r.epg) || 0, r.sh)); const ks = [...byEpg.keys()];
-      const q = await pool.query(`SELECT epg_id, s, e, title, kind FROM (SELECT p.epg_id,p.s,p.e,p.title,p.kind, row_number() OVER (PARTITION BY p.epg_id ORDER BY p.s) AS rn FROM epg_prog p JOIN unnest($1::text[],$2::int[]) AS u(id,sh) ON p.epg_id = u.id WHERE p.e > now() - make_interval(secs => u.sh / 1000) AND p.s < now() + interval '12 hours') x WHERE rn <= 6 ORDER BY epg_id, s`, [ks, ks.map((k) => shOf.get(k))]);
-      for (const r of q.rows) for (const ch of byEpg.get(r.epg_id)) { const e = Math.round((+r.e + ch.sh) / 1000); if (e <= nowS) continue; const l = (out[ch.id] = out[ch.id] || []); if (l.length < 4) l.push([Math.round((+r.s + ch.sh) / 1000), e, r.title, r.kind === 'adult' ? '' : r.kind]); }
+      const q = await pool.query(`SELECT epg_id, s, e, title, kind, fl FROM (SELECT p.epg_id,p.s,p.e,p.title,p.kind,p.fl, row_number() OVER (PARTITION BY p.epg_id ORDER BY p.s) AS rn FROM epg_prog p JOIN unnest($1::text[],$2::int[]) AS u(id,sh) ON p.epg_id = u.id WHERE p.e > now() - make_interval(secs => u.sh / 1000) AND p.s < now() + CASE WHEN u.id LIKE 'ext:%' THEN interval '8 days' ELSE interval '12 hours' END) x WHERE rn <= 6 ORDER BY epg_id, s`, [ks, ks.map((k) => shOf.get(k))]);
+      for (const r of q.rows) for (const ch of byEpg.get(r.epg_id)) { const e = Math.round((+r.e + ch.sh) / 1000); if (e <= nowS) continue; const l = (out[ch.id] = out[ch.id] || []); if (l.length < 4) l.push([Math.round((+r.s + ch.sh) / 1000), e, r.title, r.kind === 'adult' ? '' : r.kind, xfl(r.fl)]); }
     }
     const d = { t: Math.round(Date.now() / 1000), c: out };
     nowCache = { t: Date.now(), d }; return d;
@@ -290,10 +298,11 @@ module.exports = function install(ctx) {
     const hit = dayCache.get(id); if (hit && Date.now() - hit.t < 300e3) return hit.d;
     const vm = (await visibleMapped()).find((r) => r.id === id); if (!vm) return null;
     const ds = dayStart(Date.now());
-    const q = await pool.query(`SELECT s,e,title,sub,cat,kind,descr,lnk FROM epg_prog WHERE epg_id=$1 AND e > $2 AND s < $3 ORDER BY s LIMIT 200`, [vm.epg, new Date(ds - vm.sh), new Date(ds + 27 * 3600e3 - vm.sh)]);
-    const d = { id, name: vm.name, p: q.rows.map((r) => [Math.round((+r.s + vm.sh) / 1000), Math.round((+r.e + vm.sh) / 1000), r.title, r.kind === 'adult' ? '' : r.kind, r.sub, r.cat, r.descr, ctLink(r.lnk)]) };
+    const q = await pool.query(`SELECT s,e,title,sub,cat,kind,descr,lnk,fl FROM epg_prog WHERE epg_id=$1 AND e > $2 AND s < $3 ORDER BY s LIMIT 200`, [vm.epg, new Date(ds - vm.sh), new Date(ds + (vm.ext ? 8 * 86400e3 : 27 * 3600e3) - vm.sh)]); // external-schedule channels: whole next week (a few matches)
+    const d = { id, name: vm.name, p: q.rows.map((r) => [Math.round((+r.s + vm.sh) / 1000), Math.round((+r.e + vm.sh) / 1000), r.title, r.kind === 'adult' ? '' : r.kind, r.sub, r.cat, r.descr, ctLink(r.lnk), xfl(r.fl)]) };
     if (dayCache.size > 1000) dayCache.clear(); dayCache.set(id, { t: Date.now(), d }); return d;
   }
+  const xfl = (f) => (/q/.test(f || '') ? 'q' : /x/.test(f || '') ? 'x' : ''); // external schedule: 'x', predicted channel: 'q'
   const ctLink = (u) => (/^https:\/\/www\.ceskatelevize\.cz\//.test(u || '') ? u : ''); // ČT terms: every ČT programme links back to ČT
   const jsonOut = (res, d, age = 60) => { res.set({ 'Cache-Control': `public, max-age=${age}`, 'X-Content-Type-Options': 'nosniff' }); res.json(d); };
   app.get('/api/epg/now', wrap(async (req, res) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return jsonOut(res, { t: Math.round(Date.now() / 1000), c: {} }); jsonOut(res, await nowData()); }));
@@ -345,7 +354,7 @@ module.exports = function install(ctx) {
     }
     jsonOut(res, sportCache.d, 120);
   }));
-  ctx.epgAssets = async (req) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return ''; const en = req.lang === 'en'; return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div id="epgcfg" hidden data-l="${en ? 'en' : 'sk'}" data-now="${esc(tx(en, 'Teraz', 'Now'))}" data-next="${esc(tx(en, 'Potom', 'Next'))}" data-day="${esc(tx(en, 'Celý program dnes', 'Full schedule today'))}" data-min="${esc(tx(en, 'min', 'min'))}"${G ? G.attrs(en, c) : ''} data-fav="${esc(tx(en, 'Obľúbené', 'Favourites'))}" data-favadd="${esc(tx(en, 'Pridať do obľúbených', 'Add to favourites'))}" data-favdel="${esc(tx(en, 'Odobrať z obľúbených', 'Remove from favourites'))}" data-rem="${esc(tx(en, 'Pripomenúť', 'Remind me'))}" data-load="${esc(tx(en, 'Načítavam…', 'Loading…'))}" data-left="${esc(tx(en, 'ešte', 'left'))}"></div><script src="/static/epg.js?v=${ASSET_V}" defer></script><p class="hint epgsrc">${esc(tx(en, 'TV program: epgshare01.online (orientačný, môže sa líšiť); oficiálne programy STVR, JOJ, Prima a Česká televize (odkaz „ČT“ vedie na ceskatelevize.cz).', 'TV schedule: epgshare01.online (indicative, may differ); official schedules from STVR, JOJ, Prima and Česká televize (the “ČT” link leads to ceskatelevize.cz).'))}</p>`; };
+  ctx.epgAssets = async (req) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return ''; const en = req.lang === 'en'; return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div id="epgcfg" hidden data-l="${en ? 'en' : 'sk'}" data-now="${esc(tx(en, 'Teraz', 'Now'))}" data-next="${esc(tx(en, 'Potom', 'Next'))}" data-day="${esc(tx(en, 'Celý program dnes', 'Full schedule today'))}" data-min="${esc(tx(en, 'min', 'min'))}"${G ? G.attrs(en, c) : ''} data-fav="${esc(tx(en, 'Obľúbené', 'Favourites'))}" data-favadd="${esc(tx(en, 'Pridať do obľúbených', 'Add to favourites'))}" data-favdel="${esc(tx(en, 'Odobrať z obľúbených', 'Remove from favourites'))}" data-rem="${esc(tx(en, 'Pripomenúť', 'Remind me'))}" data-load="${esc(tx(en, 'Načítavam…', 'Loading…'))}" data-left="${esc(tx(en, 'ešte', 'left'))}" data-dayx="${esc(tx(en, 'Rozpis zápasov na 7 dní', 'Match schedule, next 7 days'))}" data-pred="${esc(tx(en, 'predpokladaný kanál', 'expected channel'))}" data-predh="${esc(tx(en, 'Zdroj uvádza len platformu – číslo kanála je odhad', 'The source names only the platform – the channel number is an estimate'))}" data-ext="${esc(tx(en, 'podľa rozpisu', 'per fixture list'))}" data-exth="${esc(tx(en, 'Z verejného rozpisu súťaže / platformy', 'From the public competition / platform schedule'))}"></div><script src="/static/epg.js?v=${ASSET_V}" defer></script><p class="hint epgsrc">${esc(tx(en, 'TV program: epgshare01.online (orientačný, môže sa líšiť); oficiálne programy STVR, JOJ, Prima a Česká televize (odkaz „ČT“ vedie na ceskatelevize.cz).', 'TV schedule: epgshare01.online (indicative, may differ); official schedules from STVR, JOJ, Prima and Česká televize (the “ČT” link leads to ceskatelevize.cz).'))}</p>`; };
 
   // ---------- Dnes v TV ----------
   const CATW = [[/sloven/i, 12], [/česk|cesk/i, 9], [/filmy a seri/i, 7], [/^šport$|^sport$/i, 6], [/dokument/i, 2]];
@@ -742,6 +751,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
   G = require('./epgguide')(ctx, { cfg, D, visibleMapped, skcz, dayStart, dayLbl, hm, localHour, jsonOut, scoreOf, topBoost, posterKey, posterInfo, posterMap, posterOne, tnorm, JUNK, ADULT, DOCCH, back, MS });
   E = require('./epgevents')(ctx, { visibleMapped, skcz, dayStart, dayLbl, hm, localHour, tnorm, JUNK, ADULT, channels, fromLocal, toLocal, ASSET_V, kv });
   ctx.eventsBlock = (req, s, where) => E.block(req, s, where);
+  ctx.extAdminHtml = EXT.mountAdmin({ admin, needAuth, csrf, wrap, esc, hid });
   ctx.eventsHero = (req, s, where) => E.hero(req, s, where);
   ctx.epgRefresh = refresh;
 };

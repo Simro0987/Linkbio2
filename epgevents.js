@@ -186,7 +186,7 @@ module.exports = function events(ctx, h) {
     for (const p of q.rows) {
       const chs = byEpg.get(p.epg_id); const ch = chs.find((x) => skcz(x)) || chs[0];
       const r = score(p, ch, c, kws, wide); if (!r) continue;
-      cand.push({ k: 'p:' + p.epg_id + '|' + +p.s, tk: 't:' + tnorm(p.title), title: p.title, sub: p.sub || '', descr: wide ? p.descr || '' : '', s: +p.s, e: +p.e, kind: p.kind, ch, chName: ch.name, score: r.score, kw: r.kw, big: r.big, bigStrong: r.bigStrong, why: r.why, live: r.live, rerun: r.rerun });
+      cand.push({ k: 'p:' + p.epg_id + '|' + +p.s, tk: 't:' + tnorm(p.title), title: p.title, sub: p.sub || '', descr: wide ? p.descr || '' : '', s: +p.s, e: +p.e, kind: p.kind, ch, chName: ch.name, pred: /q/.test(p.fl || ''), ext: /x/.test(p.fl || ''), score: r.score, kw: r.kw, big: r.big, bigStrong: r.bigStrong, why: r.why, live: r.live, rerun: r.rerun });
     }
     return cand;
   }
@@ -227,7 +227,7 @@ module.exports = function events(ctx, h) {
         const on = x.s <= now, soon = !on && x.s - now < 12 * 3600e3 && dayStart(x.s) === dayStart(now);
         const badge = on ? `● ${tx(en, 'NAŽIVO', 'LIVE')}` : soon ? until(x.s, en) : `${dayLbl(x.s, en)} ${hm(x.s)}`;
         const img = x.img ? `<img class="tevi" src="${esc(x.img)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">` : x.ch ? `<img class="tevi tevl" src="${esc(logo(x.ch))}" alt="" loading="lazy" decoding="async" width="72" height="72">` : '<span class="tevi tevx">📺</span>';
-        return `<li class="tev${x.pin ? ' pin' : ''}${x.best ? ' best' : ''}${on ? ' on' : ''}" data-s="${Math.round(x.s / 1000)}" data-e="${Math.round(x.e / 1000)}">${img}<div class="tevb"><div class="tevt"><span class="tevbg" data-l="${esc(tx(en, 'NAŽIVO', 'LIVE'))}" data-o="${esc(tx(en, 'o ', 'in '))}" data-d="${esc(dayLbl(x.s, en))} ${esc(hm(x.s))}">${esc(badge)}</span>${x.pin ? `<span class="tevp">📌 ${esc(tx(en, 'Odporúčame', 'Featured'))}</span>` : x.best ? `<span class="tevp">★ ${esc(tx(en, 'Top', 'Top'))}</span>` : ''}</div><div class="tevn">${esc(x.title)}</div><div class="tevc">${x.ch ? `<img src="${esc(logo(x.ch))}" alt="" width="20" height="20" loading="lazy" decoding="async">` : ''}<b>${esc(x.chName || '')}</b><span class="tevh"><time datetime="${new Date(x.s).toISOString()}">${esc(hm(x.s))}</time>–${esc(hm(x.e))}</span></div>${x.note ? `<div class="tevd">${esc(x.note)}</div>` : ''}<div class="tevpr"${on ? '' : ' hidden'}><i></i></div></div></li>`;
+        return `<li class="tev${x.pin ? ' pin' : ''}${x.best ? ' best' : ''}${on ? ' on' : ''}" data-s="${Math.round(x.s / 1000)}" data-e="${Math.round(x.e / 1000)}">${img}<div class="tevb"><div class="tevt"><span class="tevbg" data-l="${esc(tx(en, 'NAŽIVO', 'LIVE'))}" data-o="${esc(tx(en, 'o ', 'in '))}" data-d="${esc(dayLbl(x.s, en))} ${esc(hm(x.s))}">${esc(badge)}</span>${x.pin ? `<span class="tevp">📌 ${esc(tx(en, 'Odporúčame', 'Featured'))}</span>` : x.best ? `<span class="tevp">★ ${esc(tx(en, 'Top', 'Top'))}</span>` : ''}</div><div class="tevn">${esc(x.title)}</div><div class="tevc">${x.ch ? `<img src="${esc(logo(x.ch))}" alt="" width="20" height="20" loading="lazy" decoding="async">` : ''}<b>${esc(x.chName || '')}</b>${x.pred ? `<small class="tevq">${esc(tx(en, 'predpokladaný kanál', 'expected channel'))}</small>` : ''}<span class="tevh"><time datetime="${new Date(x.s).toISOString()}">${esc(hm(x.s))}</time>–${esc(hm(x.e))}</span></div>${x.note ? `<div class="tevd">${esc(x.note)}</div>` : ''}<div class="tevpr"${on ? '' : ' hidden'}><i></i></div></div></li>`;
       };
       const title = (en && c.ev_title_en) || c.ev_title;
       return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><section class="tevs" aria-labelledby="tev-h-${where}"><h2 class="tevh2" id="tev-h-${where}"><span class="tevdot">●</span> ${esc(title)}</h2><ol class="tevl">${list.map(card).join('')}</ol><p class="tevf">${esc(tx(en, 'Iba TV program (čas a kanál) – orientačné údaje z EPG.', 'TV schedule info only (time and channel) – indicative EPG data.'))}</p></section><script src="/static/tev.js?v=${ASSET_V}" defer></script>`;
@@ -309,6 +309,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((x) => `<div class="row"><s
   }));
 
   H = require('./epghero')(ctx, h, { cfg, kwOf, scan, score, pinsList, setOkt, setBig, D, back, up, noUrl, MSG });
-  return { init, block, drop, items, hero: H.render, _score: score, _parseKw: parseKw, _hero: H };
+  const bigPts = (p) => { try { return bigCtx ? BIG.detect(bigCtx, p).pts : 0; } catch { return 0; } }; // importance for external-schedule channel prediction
+  return { init, block, drop, items, bigPts, hero: H.render, _score: score, _parseKw: parseKw, _hero: H };
 };
 module.exports.parseKw = parseKw; module.exports.hits = hits; module.exports.DEF_KW = DEF_KW;
