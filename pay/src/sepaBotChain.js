@@ -449,7 +449,7 @@ function renderTemplate(tpl, ctx) {
 function formatAmountWithCurrency(amount, currency) {
   const n = Number(String(amount == null ? '' : amount).replace(',', '.'));
   if (!Number.isFinite(n)) return String(amount == null ? '' : amount);
-  const txt = Number.isInteger(n) ? String(n) : n.toFixed(2);
+  const txt = n.toFixed(2);
   return txt + ' ' + String(currency || 'EUR').toUpperCase();
 }
 
