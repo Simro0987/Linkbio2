@@ -47,7 +47,7 @@ module.exports = function install(ctx) {
   const skipped = (cat, sk) => { const c = String(cat || '').toLowerCase(); return sk.some((x) => c.includes(x)); };
   const kv = { get: async (k) => ((await pool.query('SELECT v FROM epg_kv WHERE k=$1', [k])).rows[0] || {}).v, set: (k, v) => pool.query('INSERT INTO epg_kv (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=$2', [k, String(v)]) };
   const OFF = OFFICIAL.install({ pool, kv, getSettings, C, ADULT, JUNK }); // official broadcaster schedules (STVR, JOJ, Prima) → days 4–7
-  const DATA_V = '5'; // bump when stored EPG data needs a rebuild after deploy (refresh runs on the first tick)
+  const DATA_V = '6'; // bump when stored EPG data needs a rebuild after deploy (refresh runs on the first tick)
   let mapCache = null, nowCache = null, dnesCache = null, srcCache = null; const dayCache = new Map();
   const sources = async () => srcCache || (srcCache = (await pool.query('SELECT * FROM epg_src ORDER BY id')).rows);
   let sportCache = null;
