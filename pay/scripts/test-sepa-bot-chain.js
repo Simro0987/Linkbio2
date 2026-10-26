@@ -128,7 +128,7 @@ async function main() {
         ltcAddress: 'ltc1qtje26zd6eg7vpjnce2m5lumc256e5rttmkymml',
       }
     );
-    assert.equal(withLtc, '25\nltc1qtje26zd6eg7vpjnce2m5lumc256e5rttmkymml');
+    assert.equal(withLtc, '25 EUR\nltc1qtje26zd6eg7vpjnce2m5lumc256e5rttmkymml');
     assert.ok(!withLtc.includes('#ORDER'));
     assert.ok(!withLtc.includes('ord_1'));
     assert.ok(!withLtc.includes('C'));
@@ -137,12 +137,15 @@ async function main() {
       { name: 'Bot1', template: chain.DEFAULT_TEMPLATE },
       { orderId: 'ord_1', amount: '25', currency: 'EUR', customerName: 'C', email: '', prevReply: '', stepIndex: 1, ltcAddress: '' }
     );
-    assert.equal(onlyAmt.trim(), '25');
+    assert.equal(onlyAmt.trim(), '25 EUR');
     const custom = chain.buildChannelMessage(
       { name: 'Bot1', template: 'Amt {amount} for {order_id}' },
       { orderId: 'ord_1', amount: '5.00', currency: 'EUR', customerName: 'C', email: '', prevReply: '', stepIndex: 2, stepName: 'Bot1' }
     );
-    assert.ok(custom.includes('Amt 5.00'));
+    assert.ok(custom.includes('Amt 5 EUR'));
+    assert.equal(chain.buildChannelMessage({ name: 'B', template: '{amount}' }, { amount: '12.5', currency: 'EUR' }), '12.50 EUR');
+    assert.equal(chain.buildChannelMessage({ name: 'B', template: '{amount} {currency}' }, { amount: '10', currency: 'EUR' }), '10 EUR');
+    assert.equal(chain.normalizeAmountKey('10 EUR'), '10.00');
     assert.ok(!custom.includes('#ORDER'));
     const m = chain.parseOrderMarker('#ORDER ord_1 #STEP 2\nAmt 5.00');
     assert.equal(m.orderId, 'ord_1');
@@ -239,7 +242,7 @@ async function main() {
         assert.ok(!String(body.text).includes(o.orderId));
         assert.ok(!String(body.text).includes('Ján'));
         const lines = String(body.text).trim().split('\n');
-        assert.equal(lines[0], '25.00');
+        assert.equal(lines[0], '25 EUR');
         assert.ok(/^ltc1|^[LM3]/i.test(lines[1]), 'expected LTC address line, got ' + lines[1]);
         assert.equal(lines.length, 2);
         const mid = 2000 + sent.length;
@@ -669,7 +672,7 @@ async function main() {
     global.fetch = realFetch;
     const channelPosts = alerts.filter((b) => String(b.chat_id) === '-100999888777');
     assert.ok(channelPosts.length >= 1);
-    assert.equal(String(channelPosts[0].text).trim(), '12.00');
+    assert.equal(String(channelPosts[0].text).trim(), '12 EUR');
     assert.ok(!String(channelPosts[0].text).includes('ltc'));
     const ryanAlerts = alerts.filter((b) => String(b.chat_id) !== '-100999888777');
     assert.ok(ryanAlerts.some((b) => /LTC|ltc|adresa/i.test(String(b.text))));

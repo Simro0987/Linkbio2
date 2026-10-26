@@ -446,10 +446,20 @@ function renderTemplate(tpl, ctx) {
  * No order id, name, or #ORDER/#STEP tags (matching uses reply_to / FIFO).
  * If ltcAddress is empty, trailing blank line is trimmed → amount only.
  */
+function formatAmountWithCurrency(amount, currency) {
+  const n = Number(String(amount == null ? '' : amount).replace(',', '.'));
+  if (!Number.isFinite(n)) return String(amount == null ? '' : amount);
+  const txt = Number.isInteger(n) ? String(n) : n.toFixed(2);
+  return txt + ' ' + String(currency || 'EUR').toUpperCase();
+}
+
 function buildChannelMessage(step, ctx) {
-  const body = renderTemplate(step.template || DEFAULT_TEMPLATE, {
+  const tpl = step.template || DEFAULT_TEMPLATE;
+  // Ryan: the amount must clearly say the currency, e.g. "10 EUR".
+  const hasCurrency = /\{currency\}/i.test(tpl);
+  const body = renderTemplate(tpl, {
     orderId: ctx.orderId,
-    amount: ctx.amount,
+    amount: hasCurrency ? ctx.amount : formatAmountWithCurrency(ctx.amount, ctx.currency),
     currency: ctx.currency || 'EUR',
     customerName: ctx.customerName,
     email: ctx.email || '',
