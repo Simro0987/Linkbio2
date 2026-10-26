@@ -15,7 +15,7 @@ const { tx } = require('./uitext');
 const S = require('./evsources');
 const path = require('path');
 
-const HD = { evh_on: '1', evh_cards_home: '0', evh_gem: '1', evh_okt: '1', evh_okt_ch: 'Premier Sport 3 Extra', evh_ch: '' };
+const HD = { evh_on: '1', evh_cards_home: '0', evh_gem: '1', evh_okt: '1', evh_okt_ch: 'Premier Sport 3 Extra', evh_ch: '', evh_big: '' };
 // SK/CZ only: the Kanály catalogue has no country field → category + name allowlist (evsources CHANNELS + admin lines) + EPG id country
 const NOT_SKCZ_CAT = /maďar|madar|poľs|pols|nemec|rusk|ukrajin|švajč|svajc|khl|dospel|18\+|vod|rádi|radi|webkam/i; // 'zahraničný' šport: only known SK/CZ feeds (Arena Sport 1/2 …)
 const SKCZ_CAT = /sloven|česk|cesk|lokáln|lokaln/i;
@@ -47,7 +47,10 @@ const MINOR = /\b(volejbal|volleyball|futsal|bedminton|badminton|curling|snooker
 // background category: films/series/docs by EPG kind, everything else by title keywords (default: generic stadium)
 const catOf = (t, kind) => { if (/^(film|series|doc)$/.test(kind || '')) return KINDCAT[kind]; for (const [k, re] of CATS) if (re.test(t)) return k; return KINDCAT[kind] || 'stadium'; };
 const gmodels = () => [...new Set((process.env.EVH_GEMINI_MODELS || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.8-flash').split(',').map((x) => x.trim()).filter((x) => /^[\w.-]{3,60}$/.test(x)))].slice(0, 4);
-const RV = 3; // bump to re-resolve cached images/descriptions after resolver changes
+const RV = 4;
+const BIG = require('./evbig');
+// league tables for „top of the table“ clashes (TheSportsDB free key; top 4 per league, cached 12 h)
+const LEAGUES = [[4328, 'Premier League'], [4335, 'LaLiga'], [4331, 'Bundesliga'], [4332, 'Serie A'], [4334, 'Ligue 1'], [4672, 'Niké liga'], [4631, 'Chance liga']]; // bump to re-resolve cached images/descriptions after resolver changes
 const sha = (v) => crypto.createHash('sha1').update(String(v)).digest('hex');
 // "OKTAGON 96: GOGOLADZE VS. KLINKHAMMER" → "OKTAGON 96: Gogoladze vs. Klinkhammer"
 const prettyOkt = (t) => { const i = t.indexOf(':'); if (i < 0) return t; const tail = t.slice(i + 1).toLowerCase().replace(/(^|[\s\-–(])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()).replace(/\bVs\./g, 'vs.'); return t.slice(0, i + 1) + tail; };
@@ -117,6 +120,16 @@ module.exports = function hero(ctx, h, E) {
     return { k, v: r.v };
   }
   const ovKey = (tk) => 'o-' + sha(tk).slice(0, 24);
+  async function standings() {
+    try { const c = JSON.parse((await kv.get('evh_tbl')) || 'null'); if (c && Date.now() - c.t < 12 * 3600e3) return c.top || []; } catch {}
+    const d = new Date(), y = d.getUTCMonth() >= 6 ? d.getUTCFullYear() : d.getUTCFullYear() - 1, top = [];
+    for (const [id, league] of LEAGUES) {
+      try { const r = await get(`https://www.thesportsdb.com/api/v1/json/123/lookuptable.php?l=${id}&s=${y}-${y + 1}`, 'application/json', 1e6); const j = JSON.parse(r.buf.toString('utf8'));
+        const teams = ((j && j.table) || []).slice(0, 4).map((x) => BIG.norm(x.strTeam)).filter(Boolean); if (teams.length) top.push({ league, teams }); } catch {}
+    }
+    await kv.set('evh_tbl', JSON.stringify({ t: Date.now(), top })).catch(() => {});
+    return top;
+  }
   // SK/CZ channels of the Kanály catalogue (read live from tv_channels each refresh → channels added in admin are included automatically)
   async function skczChannels(hc) {
     const rows = (await pool.query(`SELECT c.id, c.name, c.category, COALESCE(m.epg_id,'') AS epg, COALESCE(m.shift,0) AS sh, p.last FROM tv_channels c
@@ -196,8 +209,11 @@ module.exports = function hero(ctx, h, E) {
     // 2) EPG – everything running now or starting within 7 days
     const hidden = new Set((await pool.query('SELECT k FROM ev_hide')).rows.map((r) => r.k));
     const chs = await skczChannels(hc), allow = new Set(chs.ok.map((r) => r.id));
+    const bigCfg = BIG.parse(hc.evh_big || S.BIG_DEFAULT), bigTop = (await standings()).map((L) => Object.assign({}, L, { tids: L.teams.map((n) => BIG.teamsIn(bigCfg, n)) }));
+    E.setBig({ cfg: bigCfg, top: bigTop });
     const cand = await E.scan(c, kws, now + 60e3, now + WEEK, true, allow);
-    for (const x of cand) if (MINOR.test(x.title + ' ' + (x.sub || ''))) { x.score -= 15; x.why.push('menší šport/súťaž −15'); }
+    // a minor sport/competition is penalised – unless the big-match detector recognised a specific match/athlete (Vlhová slalom, SK/CZ team, rivalry…)
+    for (const x of cand) if (!x.bigStrong && MINOR.test(x.title + ' ' + (x.sub || ''))) { x.score -= 15; x.why.push('menší šport/súťaž −15'); }
     // 3) OKTAGON events this week → EPG airing if the guide has it, else the calendar time on Premier Sport 3 Extra
     const all = await channels(), oktCh = all.find((r) => r.name.toLowerCase() === hc.evh_okt_ch.toLowerCase()) || all.find((r) => /premier sport 3 extra/i.test(r.name));
     for (const ev of (okt && okt.events) || []) {
@@ -219,8 +235,8 @@ module.exports = function hero(ctx, h, E) {
     // 5) optional Gemini re-ranking of the top 12 (memoized per candidate set; deterministic score order on any failure)
     let rank = { by: 'score', model: '', err: '', why: {} }, order = top.map((x) => x.id);
     if (hc.evh_gem === '1' && top.length > 1) {
-      const list = top.map((x) => ({ id: x.id, title: x.title, channel: x.chName, when: new Date(x.s).toISOString(), genre: x.kind || '', score: x.score, keywords: x.kw.join(', ') }));
-      const hsh = sha(JSON.stringify(list.map((x) => [x.title, x.channel, x.when]))).slice(0, 16);
+      const list = top.map((x) => ({ id: x.id, title: x.title, channel: x.chName, when: new Date(x.s).toISOString(), genre: x.kind || '', score: x.score, keywords: x.kw.join(', '), big_match: x.big ? x.big.join(', ') : '' }));
+      const hsh = sha(S.PROMPTS.rank + JSON.stringify(list.map((x) => [x.title, x.channel, x.when, x.big_match]))).slice(0, 16);
       let memo = null; try { memo = JSON.parse((await kv.get('evh_gem')) || 'null'); } catch {}
       if (memo && memo.h === hsh && now - memo.t < 12 * 3600e3) rank = { by: 'gemini', model: memo.model, err: '', why: memo.why || {}, cached: true }, order = memo.top;
       else if (now - lastGem < 5 * 60e3) rank.err = 'Gemini – pauza medzi volaniami';
@@ -312,7 +328,7 @@ module.exports = function hero(ctx, h, E) {
     const w = await ensure(), sd = await sideData(), now = Date.now(), all = await channels();
     const out = [], ovImg = (tk) => { const o = sd.ov.get(ovKey(tk)); return o ? { img: '/ev-img/c/' + ovKey(tk) + '?v=' + o, imgM: '/ev-img/m/' + ovKey(tk) + '?v=' + o, imgSrc: 'admin (vlastný obrázok)', credit: '', imgPage: '' } : null; };
     for (const p of sd.pins.filter((x) => x.e > now).slice(0, MAXS)) {
-      const tk = 't:' + tnorm(p.title), cat = catOf(p.title + ' ' + (p.note || ''), 'sport'), dv = sd.dov.get(tk);
+      const tk = 't:' + tnorm(p.title), pk = ((w && w.picks) || []).find((y) => y.tk === tk), cat = (pk && pk.cat) || catOf(p.title + ' ' + (p.note || ''), 'sport'), dv = sd.dov.get(tk);
       out.push(Object.assign({ pin: p.id, tk, title: p.title, s: p.s, e: p.e, ch: p.ch, chName: p.chName, sub: '', desc: dv || p.note || '', descSrc: dv ? 'admin' : p.note ? 'admin (pin)' : '', img: p.img || '', imgM: '', cat, src: 'pin', imgSrc: p.img ? 'admin (pin)' : '' }, ovImg(tk) || {}));
     }
     for (const x of (w && w.picks) || []) {
@@ -402,6 +418,7 @@ ${((okt && okt.events) || []).slice(0, 6).map((x) => `<div class="row"><span><b>
 <label class="ck"><input type="checkbox" name="evh_okt" value="1"${hc.evh_okt === '1' ? ' checked' : ''}> Načítavať kalendár OKTAGON MMA</label>
 <label>Kanál pre OKTAGON</label><input name="evh_okt_ch" maxlength="60" value="${esc(hc.evh_okt_ch)}">
 <label>Kanály pre Top udalosti – iba SK/CZ (doplnky k vstavanému zoznamu; jeden názov / časť názvu na riadok, <code>-názov</code> = vylúčiť)</label><textarea name="evh_ch" rows="3" maxlength="2000" placeholder="napr.&#10;Nova Sport 5 CZ&#10;-Story 4">${esc(hc.evh_ch)}</textarea>
+<label>⚽🏒🎾 Detektor veľkých zápasov – všetky športy (tímy, rivality, skupiny, mená, pravidlá; prázdne = predvolené)${(() => { const e = BIG.parse(hc.evh_big || S.BIG_DEFAULT).errors; return e.length ? ' – ⚠ neplatné riadky: ' + esc(e.slice(0, 3).join(' | ')) : ''; })()}</label><textarea name="evh_big" rows="12" maxlength="20000" class="evbig">${esc(hc.evh_big || S.BIG_DEFAULT)}</textarea>
 <label>TMDB API kľúč (nepovinné – lepšie obrázky a popisy filmov/seriálov; v3 kľúč alebo v4 token)</label><input type="password" name="evh_tmdb" maxlength="400" autocomplete="off" placeholder="${process.env.TMDB_API_KEY ? 'nastavené cez env TMDB_API_KEY' : tmdbSet ? '•••••• uložený (prázdne = ponechať)' : 'nenastavené'}">${tmdbSet ? '<label class="ck"><input type="checkbox" name="evh_tmdb_del" value="1"> vymazať uložený TMDB kľúč</label>' : ''}<button>Uložiť</button></form></div>`;
   }
   const back = (res, m) => E.back(res, m, 'hero');
@@ -409,7 +426,9 @@ ${((okt && okt.events) || []).slice(0, 6).map((x) => `<div class="row"><span><b>
   admin.post('/udalosti/hero/settings', needAuth, csrf, wrap(async (req, res) => {
     const b = req.body, ch = String(b.evh_okt_ch || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60) || HD.evh_okt_ch;
     const chTxt = String(b.evh_ch || '').replace(/[\u0000-\u0009\u000b-\u001f<>]/g, '').split(/\r?\n/).map((x) => x.trim().slice(0, 60)).filter(Boolean).slice(0, 60).join('\n');
-    const upd = { evh_ch: chTxt, evh_on: b.evh_on ? '1' : '0', evh_cards_home: b.evh_cards_home ? '1' : '0', evh_gem: b.evh_gem ? '1' : '0', evh_okt: b.evh_okt ? '1' : '0', evh_okt_ch: ch };
+    let bigTxt = String(b.evh_big || '').replace(/\r/g, '').replace(/[\u0000-\u0009\u000b-\u001f]/g, '').slice(0, 20000).trim();
+    if (bigTxt === S.BIG_DEFAULT.trim()) bigTxt = ''; // unchanged → keep following the built-in defaults
+    const upd = { evh_big: bigTxt, evh_ch: chTxt, evh_on: b.evh_on ? '1' : '0', evh_cards_home: b.evh_cards_home ? '1' : '0', evh_gem: b.evh_gem ? '1' : '0', evh_okt: b.evh_okt ? '1' : '0', evh_okt_ch: ch };
     const tm = String(b.evh_tmdb || '').trim(); if (b.evh_tmdb_del) upd.evh_tmdb = ''; else if (tm) { if (!/^[\w.\-]{16,400}$/.test(tm)) return back(res, 'bad'); upd.evh_tmdb = tm; }
     await setSettings(upd); if (upd.evh_tmdb != null) tmdbSet = upd.evh_tmdb;
     await refresh('force'); back(res, 'ok');

@@ -70,6 +70,144 @@ const OFFICIAL = {
   concert: ['eurovision.tv', 'grammy.com', 'livenation.com', 'o2arena.cz', 'tipsportarena.sk'],
   royal: ['royal.uk', 'kongehuset.dk', 'kungahuset.se', 'monarchie.lu'],
 };
+// „Veľký zápas“ detector defaults (evbig.js format) – admin can edit/override in /admin/udalosti (evh_big). All sports, equal footing.
+const BIG_DEFAULT = String.raw`# ── Futbal: kluby (alias / alias; diakritika sa ignoruje) ──
+tim real: Real Madrid / Real Madrid CF / Real / Realu Madrid / Realom Madrid
+tim barca: FC Barcelona / Barcelona / Barca / Barcelony / Barcelonou / FCB
+tim atletico: Atletico Madrid / Atletico de Madrid / Atletico / Atl Madrid
+tim rsociedad: Real Sociedad
+tim betis: Real Betis / Betis
+tim bayern: Bayern Mnichov / Bayern Munchen / Bayern Munich / FC Bayern / Bayern
+tim dortmund: Borussia Dortmund / Dortmund / BVB
+tim juventus: Juventus / Juventus Turin / Juve
+tim inter: Inter Milan / Inter Milano / Internazionale / Inter
+tim milan: AC Milan / AC Milano / Milan
+tim napoli: SSC Napoli / Napoli / Neapol
+tim roma: AS Roma / Roma / AS Rim
+tim lazio: Lazio Rim / Lazio
+tim mancity: Manchester City / Man City / Man. City
+tim manutd: Manchester United / Manchester Utd / Man United / Man Utd
+tim liverpool: Liverpool FC / Liverpool
+tim everton: Everton
+tim arsenal: Arsenal FC / Arsenal
+tim tottenham: Tottenham Hotspur / Tottenham / Spurs
+tim chelsea: Chelsea FC / Chelsea
+tim psg: Paris Saint Germain / Paris SG / PSG / Paris St Germain
+tim marseille: Olympique Marseille / Marseille / OM
+tim celtic: Celtic Glasgow / Celtic FC / Celtic
+tim grangers: Glasgow Rangers / Rangers FC / Rangers
+tim benfica: Benfica Lisabon / Benfica
+tim porto: FC Porto / Porto
+tim ajax: Ajax Amsterdam / Ajax
+tim leverkusen: Bayer Leverkusen / Leverkusen
+tim sparta: AC Sparta Praha / Sparta Praha / Sparta Prague / HC Sparta / Sparta
+tim slavia: SK Slavia Praha / Slavia Praha / Slavia Prague / HC Slavia / Slavia
+tim plzen: Viktoria Plzen / Plzen
+tim slovan: SK Slovan Bratislava / Slovan Bratislava / HC Slovan / Slovan
+tim trnava: Spartak Trnava / Trnava
+tim dac: DAC Dunajska Streda / Dunajska Streda / DAC
+# ── Hokej ──
+tim kosice: HC Kosice / Kosice
+tim kometa: Kometa Brno / HC Kometa / Kometa
+tim trinec: Ocelari Trinec / HC Ocelari / Trinec
+tim pardubice: Dynamo Pardubice / Pardubice
+tim nitra: HK Nitra / Nitra
+tim zvolen: HKM Zvolen / Zvolen
+tim bos: Boston Bruins / Bruins
+tim mtl: Montreal Canadiens / Canadiens
+tim tor: Toronto Maple Leafs / Maple Leafs
+tim det: Detroit Red Wings / Red Wings
+tim chi: Chicago Blackhawks / Blackhawks
+tim nyr: New York Rangers / NY Rangers / N Y Rangers
+tim col: Colorado Avalanche / Avalanche
+tim vgk: Vegas Golden Knights / Golden Knights
+tim van: Vancouver Canucks / Canucks
+tim njd: New Jersey Devils / NJ Devils
+tim wsh: Washington Capitals / Capitals
+tim tbl: Tampa Bay Lightning / Lightning
+tim ana: Anaheim Ducks / Ducks
+tim phi: Philadelphia Flyers / Flyers
+tim cgy: Calgary Flames / Flames
+tim min: Minnesota Wild
+tim edm: Edmonton Oilers / Oilers
+tim fla: Florida Panthers / Panthers
+tim ska: SKA Petrohrad / SKA St Petersburg / SKA
+tim cska: CSKA Moskva / CSKA Moscow / CSKA
+# ── Basketbal ──
+tim lakers: Los Angeles Lakers / LA Lakers / Lakers
+tim celtics: Boston Celtics / Celtics
+tim warriors: Golden State Warriors / Warriors
+# ── Národné tímy SK/CZ ──
+tim sk: Slovensko / Slovakia / Slovakei / Slovaquie
+tim cz: Cesko / Ceska republika / Czechia / Czech Republic / Tschechien
+#
+# ── Rivality (oba tímy v názve alebo názov rivality) ──
+rivalita El Clásico = 50: real + barca
+rivalita Madridské derby = 35: real + atletico
+rivalita Der Klassiker = 40: bayern + dortmund
+rivalita Derby d'Italia = 40: inter + juventus
+rivalita Milánske derby (Derby della Madonnina) = 40: inter + milan
+rivalita Rímske derby = 30: roma + lazio
+rivalita Manchesterské derby = 40: mancity + manutd
+rivalita Severolondýnske derby = 35: arsenal + tottenham
+rivalita Merseyside derby = 35: liverpool + everton
+rivalita Liverpool – Manchester United = 40: liverpool + manutd
+rivalita Le Classique = 35: psg + marseille
+rivalita Old Firm = 35: celtic + grangers
+rivalita Pražské derby (S–S) = 45: sparta + slavia
+rivalita Slovan – Spartak Trnava = 40: slovan + trnava
+rivalita Slovan – Košice (hokej) = 35: slovan + kosice
+rivalita Kometa – Třinec = 35: kometa + trinec
+rivalita Slovensko – Česko = 50: sk + cz
+rivalita Lakers – Celtics = 30: lakers + celtics
+#
+# ── Zápas dvoch tímov zo skupiny ──
+skupina Veľkokluby Európy = 28: real, barca, atletico, bayern, dortmund, juventus, inter, milan, napoli, mancity, manutd, liverpool, arsenal, chelsea, tottenham, psg, benfica, porto, leverkusen
+skupina Original Six (NHL) = 22: bos, mtl, tor, det, chi, nyr
+skupina Top SK/CZ kluby = 22: sparta, slavia, plzen, slovan, trnava, dac, kosice, kometa, trinec, pardubice, nitra, zvolen
+skupina KHL top = 12: ska, cska
+#
+# ── Tím s SK/CZ hviezdami (NHL) – stačí jeden ──
+hviezdy NHL s SK/CZ hviezdou (Pastrňák, Slafkovský, Nečas, Hertl, Nemec, Černák…) = 14: bos, mtl, col, vgk, van, njd, wsh, tbl, ana, phi, cgy, min
+hviezdy Reprezentácia SK/CZ = 30: sk, cz
+#
+# ── Športovci (meno v názve/popise) ──
+mena SK/CZ športovci = 22: Vlhova / Pastrnak / Slafkovsky / Necas / Hertl / Machac / Mensik / Lehecka / Muchova / Krejcikova / Noskova / Bouzkova / Siniakova / Vondrousova / Kvitova / Schmiedlova / Sramkova / Molcan / Klizan / Davidova / Fialkova / Vitkova / Kuzmina / Sagan / Vingegaard / Vojtek / Zlocha / Kozubik / Shiffrinova / Hamilton / Hurtova / Batovsky / Vadlejch / Spotakova / Juraj Slafkovsky / Adam Lisko / Kristian Vaculik
+mena Svetové hviezdy = 14: Sinner / Alcaraz / Djokovic / Zverev / Medvedev / Sabalenka / Swiatek / Swiatekova / Gauff / Rybakina / Verstappen / Norris / Leclerc / Piastri / Marquez / Bagnaia / Ovechkin / Ovecjkin / Crosby / McDavid / LeBron / Jokic / Doncic / Wembanyama / Pogacar / Duplantis / Messi / Ronaldo / Mbappe / Haaland / Kane / Odegaard / Shiffrin / Odermatt / Kristoffersen / Boe / Littler / Humphries / O Sullivan
+#
+# ── Pravidlá (regex na názov + podtitul + kategóriu; malé písmená bez diakritiky) ──
+pravidlo Finále = 20: \b(finale|final|finala|final four|super bowl|grand final)\b
+pravidlo Semifinále = 12: \b(semifinale|semifinal|semi final|semifinala|polofinale)\b
+pravidlo Štvrťfinále / play-off = 7: \b(stvrtfinale|ctvrtfinale|quarter ?final|play ?off|playoff|vyrazovacia|knockout|osemfinale|osmifinale|round of 16)\b
+pravidlo Liga majstrov – vyraďovacia fáza = 22: ^(?!.*\b(volejbal|volleyball|hadzana|hazena|handball|basketbal|basketball|florbal|futsal|zeny|zien|women|u19|u21|mladez|dorast|youth)\b)(?:(liga majstrov|liga mistru|champions league|uefa cl).*(osemfinale|osmifinale|stvrtfinale|ctvrtfinale|semifinale|finale|play ?off|knockout|round of 16)|(osemfinale|osmifinale|stvrtfinale|ctvrtfinale|semifinale|finale|play ?off).*(liga majstrov|liga mistru|champions league))
+pravidlo Liga majstrov (futbal) = 10: ^(?!.*\b(volejbal|volleyball|hadzana|hazena|handball|basketbal|basketball|florbal|futsal|zeny|zien|women|u19|u21|mladez|dorast|youth)\b)\b(liga majstrov|liga mistru|champions league)\b
+pravidlo MS / ME / olympiáda = 30: \b(ms|me|majstrovstva sveta|majstrovstva europy|mistrovstvi sveta|mistrovstvi evropy|world championships?|european championships?|olympi\w*|zoh|loh|world cup final)\b
+pravidlo Hokej – MS IIHF / olympiáda = 35: (hokej|hockey|iihf).*\b(ms|majstrovstva sveta|mistrovstvi sveta|world championship|olympi\w*|zoh)\b|\b(ms|majstrovstva sveta|mistrovstvi sveta|zoh)\b.*(hokej|hockey)
+pravidlo Hokej – NHL = 8: \bnhl\b
+pravidlo Hokej – NHL play-off / Stanley Cup = 25: stanley cup|\bnhl\b.*(play ?off|finale|final)
+pravidlo Hokej – KHL = 5: \bkhl\b
+pravidlo Hokej – Liga majstrov CHL = 10: \bchl\b|champions hockey league|hokejova liga majstrov
+pravidlo Hokej – Extraliga / Tipsport liga = 6: extraliga|tipsport liga|tipos extraliga|niké extraliga|nike extraliga
+pravidlo Tenis – Grand Slam = 20: australian open|roland garros|french open|wimbledon|us open|grand slam
+pravidlo Tenis – Grand Slam – záver = 18: (australian open|roland garros|french open|wimbledon|us open).*(finale|final|semifinale|semifinal|stvrtfinale|quarter)|(finale|final|semifinale|semifinal|stvrtfinale).*(australian open|roland garros|wimbledon|us open)
+pravidlo Tenis – ATP/WTA Finals = 22: atp finals|wta finals|turnaj majstrov|turnaj majsteriek|nitto atp
+pravidlo Tenis – Davis Cup / BJK Cup = 15: davis ?cup|davisov pohar|billie jean king|bjk cup|pohar billie
+pravidlo F1 – Veľká cena – preteky = 30: ^(?!.*f1 academy)(?:.*)(formula 1|formula one|\bf1\b).*(velka cena|vc |grand prix|gp |preteky|zavod|race)|^(?!.*f1 academy).*(velka cena|grand prix).*(formula 1|\bf1\b)
+pravidlo F1 – kvalifikácia / šprint = 15: ^(?!.*f1 academy)(?:.*)(formula 1|\bf1\b).*(kvalifikac|qualifying|sprint)
+pravidlo MotoGP – preteky = 18: motogp|moto gp
+pravidlo MMA – OKTAGON (číslovaný turnaj) = 30: \boktagon \d{2,3}\b
+pravidlo MMA – UFC číslovaný event = 25: \bufc \d{3}\b
+pravidlo Box / MMA – titulový zápas = 20: (titul|title fight|title bout|o pas|majstra sveta|wbc|wba|ibf|wbo).*(box|boxing|mma|zapas|fight)|(box|boxing).*(titul|title|wbc|wba|ibf|wbo)
+pravidlo Basketbal – NBA finále / play-off = 22: \bnba\b.*(finale|final|play ?off|playoff|conference)|nba finals
+pravidlo Basketbal – Euroliga Final Four = 25: (euroliga|euroleague).*(final four|finale|final)|final four
+pravidlo Basketbal – NBA = 6: \bnba\b
+pravidlo Cyklistika – Grand Tour / MS = 18: tour de france|giro d ?italia|vuelta|okolo francuzska|kolo francie|(cyklistika|cycling|uci).*(ms|majstrovstva sveta|world championships)
+pravidlo Atletika – MS / Diamantová liga finále = 20: (atletika|athletics).*(ms|majstrovstva sveta|mistrovstvi sveta|world championships|halove)|diamond league final|diamantova liga.*finale|zlata tretra
+pravidlo Lyžovanie / biatlon – SP so SK/CZ = 14: (alpske lyzovanie|lyzovanie|slalom|obrovsky slalom|zjazd|super g|biatlon|biathlon|beh na lyziach|skoky na lyziach).*(svetovy pohar|sp |world cup|ms|majstrovstva sveta|mistrovstvi sveta)|(svetovy pohar|world cup).*(slalom|biatlon|lyzovanie)
+pravidlo Hádzaná / volejbal – šampionát = 15: (hadzana|hazena|handball|volejbal|volleyball).*(ms|me|majstrovstva|mistrovstvi|championship|final|finale|final four)
+pravidlo Šípky / snooker – finále = 15: (sipky|sipky pdc|darts|pdc|snooker).*(finale|final|world championship|ms )|world darts championship|world snooker championship
+pravidlo Super Bowl = 25: super bowl`;
+
 // SK/CZ channels of the "Kanály" list → official channel/broadcaster domains (only SK/CZ broadcasters – foreign feeds are never
 // used for selection nor as a source). pattern = case-insensitive regex on the channel name in the Kanály catalogue (tv_channels);
 // channels added later in admin are matched automatically. Admin can add/deny more names in /admin/udalosti (evh_ch).
@@ -206,7 +344,14 @@ const PROMPTS = {
     'national teams, Champions League top games, numbered OKTAGON cards, Olympics, F1 deciders), blockbuster film TV premieres, premieres and finales of ' +
     'popular series, finales/premieres of big reality and entertainment shows (Farma, SuperStar, Let\'s Dance, Survivor…), big concerts, Eurovision, Oscars, ' +
     'Grammys and other award galas, elections and big debates, New Year\'s Eve, big documentaries, royal events. Prefer live / first-run broadcasts; avoid reruns, ' +
-    'magazines, studio talk and minor matches. Use ONLY ids from the list. Answer with JSON only: {"top":["id1","id2","id3"],"why":{"id1":"short reason in Slovak, max 12 words"}}',
+    'magazines, studio talk and minor matches. ALL SPORTS ARE ON EQUAL FOOTING – judge importance, not the sport: recognise iconic matches and rivalries yourself, ' +
+    'also ones not flagged in big_match (El Clásico Real Madrid–Barcelona, Der Klassiker, Derby d\'Italia, Milan/Manchester/North London/Merseyside derbies, ' +
+    'Liverpool–Man Utd, Le Classique, Old Firm, Sparta–Slavia, Slovan–Spartak Trnava; hockey Slovan–Košice, Kometa–Třinec, Original Six NHL games, NHL games with ' +
+    'Slovak/Czech stars such as Pastrňák or Slafkovský, IIHF Worlds, Olympics), Champions League knockouts and clashes of big clubs, finals and semifinals of any ' +
+    'competition, Slovak and Czech national teams in any sport, top-of-the-table clashes, Grand Slam late rounds and ATP/WTA Finals, Davis/BJK Cup with SK/CZ, ' +
+    'SK/CZ athletes (Vlhová in a World Cup slalom, Czech/Slovak tennis players), F1/MotoGP races and qualifying, numbered UFC/OKTAGON cards and title fights, ' +
+    'NBA Finals/playoffs, EuroLeague Final Four, Grand Tours, athletics and biathlon/ski worlds, handball/volleyball championships, darts and snooker finals. ' +
+    'big_match lists what the automatic detector found – a hint, not a rule. Use ONLY ids from the list. Answer with JSON only: {"top":["id1","id2","id3"],"why":{"id1":"short reason in Slovak, max 12 words"}}',
 };
 
-module.exports = { GENRES, IMG_ORDER, DESC_ORDER, OFFICIAL, CHANNELS, CHANNEL_DENY, chanSites, chanOf, BROADCASTER, BLOCKED, GUIDE, VERIFY_MIN, MIN_W, MIN_RATIO, MAX_BYTES, VARIANTS, GROUND, FALLBACK, EXTRA_KW, PROMPTS };
+module.exports = { GENRES, IMG_ORDER, DESC_ORDER, OFFICIAL, BIG_DEFAULT, CHANNELS, CHANNEL_DENY, chanSites, chanOf, BROADCASTER, BLOCKED, GUIDE, VERIFY_MIN, MIN_W, MIN_RATIO, MAX_BYTES, VARIANTS, GROUND, FALLBACK, EXTRA_KW, PROMPTS };

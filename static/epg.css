@@ -191,3 +191,4 @@
 @media (prefers-reduced-motion:reduce){.evh-s,.evh-s.on,.evh-bg,.evh-nav{transition:none}.evh-bg{transform:none}.evh-s.live .evh-b{animation:none}}
 .evadm{align-items:flex-start;gap:12px;flex-wrap:wrap}.evadm img{border-radius:8px;object-fit:cover;flex:none}.evbtns{display:flex;flex-direction:column;gap:6px}
 .evx{display:block;margin-top:4px;line-height:1.5}.evlog{margin:4px 0;font-size:.78rem;color:#9a9aa8}.evlog ol{margin:4px 0 0;padding-left:18px}.evdesc{display:flex;gap:6px;align-items:flex-start;margin-top:6px}.evdesc textarea{flex:1;min-width:0;font:inherit;font-size:.85rem}
+.evbig{font-family:ui-monospace,monospace;font-size:.78rem;white-space:pre;overflow:auto}

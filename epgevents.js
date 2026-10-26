@@ -115,6 +115,9 @@ module.exports = function events(ctx, h) {
   let cache = null, kwCache = null, oktNums = null, H = null;
   const drop = () => { cache = null; if (H) H.stale(); };
   const setOkt = (nums) => { oktNums = nums && nums.size ? nums : null; };
+  // „veľký zápas“ detector context (hero only: parsed evh_big config + league top-4 standings)
+  let bigCtx = null; const setBig = (x) => { bigCtx = x || null; };
+  const BIG = require('./evbig'), SPORTCAT = /sport|šport|futbal|hokej|tenis|mma|box|formula|motogp|basketbal|cykl|atlet|lyž|biatlon|hádzan|volejbal|šípk|snooker|olymp/i;
   const kwOf = (c) => { if (!kwCache || kwCache.src !== c.ev_kw) kwCache = { src: c.ev_kw, l: parseKw(c.ev_kw) }; return kwCache.l; };
 
   async function init() {
@@ -134,7 +137,8 @@ module.exports = function events(ctx, h) {
     const hr0 = localHour(s), prem = (p.fl || '').includes('p') && !(p.fl || '').includes('r');
     // first-run film/series/show/documentary in prime time on a major SK/CZ channel = a candidate even without keywords
     const primeP = !!wide && prem && /^(film|series|show|doc|music)$/.test(p.kind || '') && hr0 >= 19.5 && hr0 < 23 && MAJOR.test(ch.name) && dur >= 40;
-    if (!ht.length && !hd.length && !primeP) return null;
+    const bg = bigCtx && (p.kind === 'sport' || SPORTCH.test(ch.name + ' ' + ch.category) || SPORTCAT.test((p.cat || '') + ' ' + p.title)) ? BIG.detect(bigCtx, p) : { pts: 0, why: [] };
+    if (!ht.length && !hd.length && !primeP && !bg.pts) return null;
     // title: best keyword + half of a second, different one (final/finále count once); description/category: only strong
     // keywords (weight ≥ 45, e.g. Ballon d'Or, Liga majstrov, olympiáda) at 60 % – generic words there (finále, derby…) are noise
     const ov = (a, b) => a.k.startsWith(b.k) || b.k.startsWith(a.k);
@@ -142,14 +146,16 @@ module.exports = function events(ctx, h) {
     let kw = ht.length ? ht[0].w + (t2 ? Math.round(t2.w * 0.5) : 0) : 0;
     const dBest = hd.find((x) => x.w >= 45 && !ht.some((y) => ov(x, y))); if (dBest) kw += Math.round(dBest.w * (ht.length ? 0.3 : 0.6));
     let pk = false; if (primeP && kw < 33) { kw = 33; pk = true; }
-    if (!kw) return null;
+    if (!kw && !bg.pts) return null;
     kw = Math.min(kw, 95);
-    let sc = kw;
+    // big match: keyword score and detector overlap (both see „finále“) → detector adds 70 % on top of keywords, full when no keyword
+    const bp = kw ? Math.round(bg.pts * 0.5) : bg.pts; // keywords often already describe the same thing (MS, finále…)
+    let sc = kw + bp;
     const head = p.title + ' ' + (p.sub || '') + ' ' + String(p.descr || '').slice(0, 60);
     // OKTAGON <n> where n is not an upcoming card in the official calendar = archive fight night (Premier Sport reruns)
     const on = /\boktagon\s*(\d{1,3})\b/i.exec(p.title), arch = !!(on && oktNums && oktNums.size && !oktNums.has(+on[1]));
     const live = (p.fl || '').includes('l') || LIVEW.test(head), rerun = (p.fl || '').includes('r') || RERUN.test(head) || arch;
-    const why = [(pk ? 'premiéra v hlavnom čase +' : 'kľúč. slová +') + kw], spb = wide ? 3 : 8, prb = wide ? 10 : 5;
+    const why = [...(kw ? [(pk ? 'premiéra v hlavnom čase +' : 'kľúč. slová +') + kw] : []), ...(bp ? ['veľký zápas +' + bp + ' (' + bg.why.join(', ') + ')'] : [])], spb = wide ? 3 : 8, prb = wide ? 10 : 5;
     if (SPORTCH.test(ch.name + ' ' + ch.category) || p.kind === 'sport') { sc += spb; why.push('šport +' + spb); }
     if (live && !rerun) { sc += 15; why.push('naživo +15'); } if (rerun) { sc -= 30; why.push((arch ? 'archív' : 'záznam') + ' −30'); } else if ((p.fl || '').includes('p')) { sc += prb; why.push('premiéra +' + prb); }
     if (MAG.test(p.title) && !(wide && (p.kind === 'doc' || BIGNEWS.test(head)))) { sc -= 15; why.push('štúdio/magazín −15'); }
@@ -157,7 +163,7 @@ module.exports = function events(ctx, h) {
     if (tb) { sc += tb; why.push((tb > 0 ? 'večer +' : 'ráno ') + tb); }
     if (c.ev_scope === 'all') sc += skcz(ch) ? 8 : -8;
     if (s <= Date.now() && e > Date.now()) sc += 5;
-    return { score: sc, kw: [...new Set([...ht, ...(dBest ? [dBest] : [])].map((x) => x.label))].slice(0, 3), live: live && !rerun, rerun, why };
+    return { score: sc, kw: [...new Set([...ht, ...(dBest ? [dBest] : [])].map((x) => x.label))].slice(0, 3), big: bg.pts ? bg.why : null, bigStrong: !!(bg.pts && bg.strong), live: live && !rerun, rerun, why };
   }
 
   async function pinsList(until) {
@@ -180,7 +186,7 @@ module.exports = function events(ctx, h) {
     for (const p of q.rows) {
       const chs = byEpg.get(p.epg_id); const ch = chs.find((x) => skcz(x)) || chs[0];
       const r = score(p, ch, c, kws, wide); if (!r) continue;
-      cand.push({ k: 'p:' + p.epg_id + '|' + +p.s, tk: 't:' + tnorm(p.title), title: p.title, sub: p.sub || '', descr: wide ? p.descr || '' : '', s: +p.s, e: +p.e, kind: p.kind, ch, chName: ch.name, score: r.score, kw: r.kw, why: r.why, live: r.live, rerun: r.rerun });
+      cand.push({ k: 'p:' + p.epg_id + '|' + +p.s, tk: 't:' + tnorm(p.title), title: p.title, sub: p.sub || '', descr: wide ? p.descr || '' : '', s: +p.s, e: +p.e, kind: p.kind, ch, chName: ch.name, score: r.score, kw: r.kw, big: r.big, bigStrong: r.bigStrong, why: r.why, live: r.live, rerun: r.rerun });
     }
     return cand;
   }
@@ -302,7 +308,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((x) => `<div class="row"><s
     await setSettings({ ev_kw: v || DEF_KW }); drop(); back(res, 'kw', 'kw');
   }));
 
-  H = require('./epghero')(ctx, h, { cfg, kwOf, scan, score, pinsList, setOkt, D, back, up, noUrl, MSG });
+  H = require('./epghero')(ctx, h, { cfg, kwOf, scan, score, pinsList, setOkt, setBig, D, back, up, noUrl, MSG });
   return { init, block, drop, items, hero: H.render, _score: score, _parseKw: parseKw, _hero: H };
 };
 module.exports.parseKw = parseKw; module.exports.hits = hits; module.exports.DEF_KW = DEF_KW;
