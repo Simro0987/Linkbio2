@@ -256,6 +256,8 @@ const loc = (req, s, k) => (req && req.lang === 'en' && s[k + '_en']) || s[k];
 const langHref = req => { const u = new URL(req.originalUrl, 'http://x'); u.searchParams.set('lang', req.lang === 'en' ? 'sk' : 'en'); return u.pathname.replace(/^[/\\]+/, '/') + u.search; };
 const langSw = req => `<a class="langsw" href="${esc(langHref(req))}" hreflang="${req.lang === 'en' ? 'sk' : 'en'}">🌐 ${req.lang === 'en' ? 'SK' : 'EN'}</a>`;
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
+// warm the checkout while a visitor browses lnkbio (fire-and-forget, max once per 5 min)
+app.use((req, res, next) => { if (req.method === 'GET' && process.env.RENDER) require('./keepawake').wake((process.env.PEER_URL || CHECKOUT_ORIGIN) + '/health'); next(); });
 app.get('/robots.txt', (req, res) => res.type('text').set('Cache-Control', 'public, max-age=86400').send(`User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: ${pubOrigin(req)}/sitemap.xml\n`));
 app.get('/sitemap.xml', wrap(async (req, res) => { const s = await getSettings(), o = pubOrigin(req), xe = v => String(v).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
   const paths = ['', ...Object.values(PAGES).map(p => p[1]).filter(Boolean)], now = new Date().toISOString().slice(0, 10);
@@ -1076,10 +1078,7 @@ app.use((err, req, res, next) => { console.error(err && err.message); res.status
 
 init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => features.epgInit()).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
-  // keep-awake self-ping through the public Render URL every 10 min
-  // + cross-ping the checkout service so waking one wakes the other
-  const targets = [process.env.RENDER_EXTERNAL_URL && process.env.RENDER_EXTERNAL_URL + '/healthz',
-    (process.env.PEER_URL || CHECKOUT_ORIGIN) + '/health'].filter(Boolean);
-  const ping = () => targets.forEach(u => fetch(u, { signal: AbortSignal.timeout(60e3) }).catch(() => {}));
-  setTimeout(ping, 30e3).unref(); setInterval(ping, 10 * 60e3).unref();
+  // Render free tier: lnkbio sleeps when idle (KEEP_AWAKE default off) so the checkout can stay awake 24/7
+  // within the shared 750 free instance-hours. Visitors wake the checkout on demand (see middleware above).
+  require('./keepawake').start({ selfUrl: process.env.RENDER_EXTERNAL_URL && process.env.RENDER_EXTERNAL_URL + '/healthz', def: 'off', log: console.log });
 }).catch(e => { console.error('init failed', e.message); process.exit(1); });

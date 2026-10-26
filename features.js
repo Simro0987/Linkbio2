@@ -229,7 +229,10 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
   let mcache = null;
   const getMon = async () => mcache || (mcache = (await pool.query(`SELECT id,pos,name,url,channel,show_home,msg_up,msg_slow,msg_down,status,ms,checked_at,hist FROM monitors ORDER BY pos,id`)).rows);
   async function checkOne(m) {
-    const r = await probe(m.url);
+    // a monitor of lnkbio itself would keep this free Render service awake forever (shared 750 h/month);
+    // if we are running, we are up – answer locally instead of hitting our own public URL.
+    let self = false; try { self = !!process.env.RENDER_EXTERNAL_HOSTNAME && new URL(m.url).hostname === process.env.RENDER_EXTERNAL_HOSTNAME && require('./keepawake').mode('off') !== 'always'; } catch {}
+    const r = self ? { ok: true, code: 200, ms: 1 } : await probe(m.url);
     const status = !r.ok ? 'down' : r.ms > 3000 ? 'slow' : 'up';
     const cutoff = Date.now() - 24 * 3600e3;
     const hist = (Array.isArray(m.hist) ? m.hist : []).filter((h) => h[0] > cutoff).slice(-299);
