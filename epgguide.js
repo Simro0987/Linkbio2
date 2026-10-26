@@ -79,7 +79,7 @@ module.exports = function guide(ctx, h) {
     for (const r of vm) { const l = byEpg.get(r.epg); if (!l) byEpg.set(r.epg, [r]); else if (!skcz(l[0]) && skcz(r)) l.unshift(r); }
     const ct = new Map(vm.map((r) => [r.id, chType(r)])), items = new Map(GENRES.map((g) => [g[0], []])), seen = new Set(), perT = new Map();
     if (byEpg.size && gs.size) {
-      const q = await pool.query(`SELECT epg_id,s,e,title,sub,cat,kind,yr,fl FROM epg_prog WHERE epg_id = ANY($1) AND s < $3 AND ${d ? 's >= $2' : 'e > $2'} AND e - s >= interval '10 minutes' ORDER BY s`, [[...byEpg.keys()], new Date(d ? a : now), new Date(b)]);
+      const q = await pool.query(`SELECT epg_id,s,e,title,sub,cat,kind,yr,fl,lnk FROM epg_prog WHERE epg_id = ANY($1) AND s < $3 AND ${d ? 's >= $2' : 'e > $2'} AND e - s >= interval '10 minutes' ORDER BY s`, [[...byEpg.keys()], new Date(d ? a : now), new Date(b)]);
       for (const p of q.rows) {
         if (JUNK.test(p.title) || GJUNK.test(p.title)) continue;
         const ch = byEpg.get(p.epg_id)[0], dur = (p.e - p.s) / 60e3, g = genreOf(p, ch, ct.get(ch.id), dur);
@@ -91,7 +91,7 @@ module.exports = function guide(ctx, h) {
         const k = g + '|' + sk + '|' + tn + '|' + (g === 'film' || g === 'doc' ? '' : g === 'news' ? ch.id + '|' + Math.floor(+p.s / 108e5) : tnorm(p.sub));
         if (seen.has(k)) continue; seen.add(k);
         const kt = g + '|' + ch.id + '|' + tn, nt = perT.get(kt) || 0; if (nt >= 2) continue; perT.set(kt, nt + 1);
-        items.get(g).push({ ch, sk, g, s: +p.s, e: +p.e, title: p.title, sub: C.clip(p.sub, 80), kind: g === 'film' ? 'film' : p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '' });
+        items.get(g).push({ ch, sk, g, s: +p.s, e: +p.e, title: p.title, sub: C.clip(p.sub, 80), kind: g === 'film' ? 'film' : p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '', lnk: /^https:\/\/www\.ceskatelevize\.cz\//.test(p.lnk || '') ? p.lnk : '' });
       }
     }
     const films = items.get('film'), info = await posterInfo(films), pm = await posterMap(films), out = {}, chs = {}, cnt = {};
@@ -105,7 +105,7 @@ module.exports = function guide(ctx, h) {
       const keep = [...list.filter((x) => x.sk).slice(0, MAXL), ...list.filter((x) => !x.sk).slice(0, MAXL)].sort((p, q) => p.s - q.s || q.sk - p.sk);
       out[g] = keep.map((x) => { if (!chs[x.ch.id]) chs[x.ch.id] = [x.ch.name, ctx.tvchLogoSrc ? ctx.tvchLogoSrc(x.ch) : '/tvlogo/' + x.ch.id, x.sk];
         const live = g === 'sport' && (C.LIVE.test(x.title) || x.fl.includes('l'));
-        return [x.ch.id, Math.round(x.s / 1000), Math.round(x.e / 1000), x.title, x.sub, (top.has(x) ? 'h' : '') + (live ? 'l' : '') + (x.fl.includes('p') && !x.fl.includes('r') ? 'p' : ''), g === 'film' ? pm.get(posterKey(x)) || '' : ''];
+        return [x.ch.id, Math.round(x.s / 1000), Math.round(x.e / 1000), x.title, x.sub, (top.has(x) ? 'h' : '') + (live ? 'l' : '') + (x.fl.includes('p') && !x.fl.includes('r') ? 'p' : ''), g === 'film' ? pm.get(posterKey(x)) || '' : '', x.lnk]; // [7] = link back to ČT (ČT terms)
       });
       cnt[g] = [list.filter((x) => x.sk).length, list.length];
     }

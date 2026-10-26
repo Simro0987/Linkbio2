@@ -104,13 +104,53 @@ const SOURCES = {
       return out;
     },
   },
+  // Česká televize: official XML export (registered account, login only in env CT_XML_USER). Terms: max. 1 request / minute,
+  // data unmodified, link back to ČT for every programme, no redistribution in machine-readable form → slow rolling queue below.
+  ct: {
+    name: 'Česká televize (oficiálny XML export ceskatelevize.cz)',
+    queue: true, prio: true,
+    chans: { ct1: [/^(ČT|CT)1(\.(JM|SM))?(\.HD)?\.(cz|sk)$/i], ct2: [/^(ČT|CT)2(\.HD)?\.(cz|sk)$/i], ct24: [/^(ČT|CT)24(\.HD)?\.(cz|sk|be)$/i], ct4: [/^(ČT|CT)\.?sport(\.HD)?\.(cz|sk)$/i], ct5: [/^(ČT|CT)\.?:D(\.HD)?\.(cz|sk)$/i], ct6: [/^(ČT|CT)\.?art(\.HD)?\.(cz|sk)$/i], ct7: [/^(ČT|CT)\.?3(\.HD)?\.(cz|sk)$/i] },
+    // ČT :D and ČT art share one broadcast slot (:D by day, art in the evening): :D fills the gaps of ČT art on "ČT :D / ČT art" ids
+    fill: { ct5: [/^(ČT|CT)\.?art(\.HD)?\.(cz|sk)$/i, /^(ČT|CT)\.?:D\.-\.(ČT|CT)\.?Art(\.HD)?\.(cz|sk)$/i], ct6: [/^(ČT|CT)\.?:D\.-\.(ČT|CT)\.?Art(\.HD)?\.(cz|sk)$/i] },
+    dflt: { ct4: 'sport', ct5: 'děti', ct24: 'zpravodajství' },
+  },
 };
+const CT_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+const CT_GAP = 70e3; // ČT allows one download per minute → keep a margin, persisted across restarts (kv ct_last)
+const xtag = (b, t) => { const m = b.match(new RegExp('<' + t + '>([\\s\\S]*?)</' + t + '>')); return m ? ent(m[1].replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/, '$1')) : ''; };
+// one ČT broadcast day (06:00 → 06:00) for one channel; dateStr YYYY-MM-DD
+function parseCt(xml, key) {
+  if (!/<program[\s>]/.test(xml)) throw new Error(/1 minut/i.test(xml) ? 'limit 1/min' : 'neočakávaná odpoveď');
+  const its = [];
+  for (const b of xml.split('<porad>').slice(1)) {
+    const d = xtag(b, 'datum'), t = xtag(b, 'cas'), title = xtag(b, 'nazev'); if (!/^\d{4}-\d\d-\d\d$/.test(d) || !/^\d\d?:\d\d$/.test(t) || !title) continue;
+    if (/^(A|Y|1|ANO)$/i.test(xtag(b, 'alternativa'))) continue; // regional alternative broadcasts overlap the main programme
+    const lk = xtag(b, 'linky').match(/https:\/\/www\.ceskatelevize\.cz\/[^\s<"]+/), st = xtag(b, 'stopaz').match(/^(\d+):(\d\d)/);
+    const live = xtag(b, 'live') === '1', prem = xtag(b, 'premiera') === '1';
+    its.push({ ch: 'ct:' + key, s: local(d, t.padStart(5, '0')), dur: st ? +st[1] + (+st[2] > 0 ? 1 : 0) : 0, title: title.slice(0, 200), sub: (xtag(b, 'nazev_casti') || xtag(b, 'dil')).slice(0, 120), cat: xtag(b, 'zanr') || SOURCES.ct.dflt[key] || '', descr: xtag(b, 'noticka').slice(0, 1500), fl: (live ? 'l' : '') + (prem ? 'p' : ''), lnk: lk ? lk[0].slice(0, 300) : '' });
+  }
+  its.sort((a, b) => a.s - b.s);
+  const out = [];
+  its.forEach((x, i) => { const n = its[i + 1]; x.e = n && n.s > x.s && n.s - x.s < 8 * 3600e3 ? n.s : x.s + Math.max(5, x.dur || 30) * 60e3; if (n && n.s === x.s) return; delete x.dur; out.push(x); });
+  return out;
+}
+async function getCt(user, key, date, signal) {
+  const [y, m, d] = date.split('-');
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), 40e3), on = () => ac.abort(); if (signal) signal.addEventListener('abort', on, { once: true });
+  try {
+    const r = await fetch(`https://www.ceskatelevize.cz/services-old/programme/xml/schedule.php?user=${encodeURIComponent(user)}&date=${d}.${m}.${y}&channel=${key}`, { signal: ac.signal, headers: { 'User-Agent': CT_UA, Accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8', 'Accept-Language': 'cs,sk;q=0.9,en;q=0.5' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const rd = r.body.getReader(), parts = []; let n = 0;
+    for (;;) { const { done, value } = await rd.read(); if (done) break; n += value.length; if (n > MAX) { ac.abort(); throw new Error('príliš veľké'); } parts.push(value); }
+    return Buffer.concat(parts).toString('utf8');
+  } finally { clearTimeout(t); if (signal) signal.removeEventListener('abort', on); }
+}
 
 // fetch days [today … today+days-1] from every source; returns { rows, report }
 async function fetchAll(days, signal, only) {
   const today = ymd(Date.now()), rows = [], report = {};
   for (const [id, src] of Object.entries(SOURCES)) {
-    if (only && !only.includes(id)) continue;
+    if ((only && !only.includes(id)) || src.queue) continue;
     const r = report[id] = { name: src.name, days: 0, n: 0, err: '' }; const got = [];
     for (let i = 0; i < days; i++) {
       if (signal && signal.aborted) break;
@@ -131,21 +171,93 @@ async function fetchAll(days, signal, only) {
 const targets = () => { const t = []; for (const [sid, src] of Object.entries(SOURCES)) for (const [k, res] of Object.entries(src.chans)) t.push({ ch: sid + ':' + k, res }); return t; };
 
 // DB side: cache table epg_off + merge into epg_prog after each EPG refresh (only beyond the last programme of each XMLTV channel)
-function install({ pool, kv, getSettings, C, ADULT, JUNK }) {
+function install({ pool, kv, getSettings, C, ADULT, JUNK, onChange }) {
   const on = (st) => st.off_on !== '0';
   const srcOn = (st) => { const v = st.off_src == null || st.off_src === '' ? Object.keys(SOURCES).join(',') : String(st.off_src); return new Set(v.split(',').filter((k) => SOURCES[k])); };
   let ready = null;
-  const init = () => ready || (ready = pool.query(`CREATE TABLE IF NOT EXISTS epg_off (ch TEXT NOT NULL, s TIMESTAMPTZ NOT NULL, e TIMESTAMPTZ NOT NULL, title TEXT NOT NULL, sub TEXT NOT NULL DEFAULT '', cat TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '', yr TEXT NOT NULL DEFAULT '', fl TEXT NOT NULL DEFAULT '', PRIMARY KEY (ch, s))`));
+  const init = () => ready || (ready = pool.query(`CREATE TABLE IF NOT EXISTS epg_off (ch TEXT NOT NULL, s TIMESTAMPTZ NOT NULL, e TIMESTAMPTZ NOT NULL, title TEXT NOT NULL, sub TEXT NOT NULL DEFAULT '', cat TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT '', yr TEXT NOT NULL DEFAULT '', fl TEXT NOT NULL DEFAULT '', PRIMARY KEY (ch, s))`)
+    .then(() => pool.query(`ALTER TABLE epg_off ADD COLUMN IF NOT EXISTS descr TEXT NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS lnk TEXT NOT NULL DEFAULT ''`))
+    .then(() => pool.query(`ALTER TABLE epg_prog ADD COLUMN IF NOT EXISTS lnk TEXT NOT NULL DEFAULT ''`))
+    .then(() => pool.query(`CREATE TABLE IF NOT EXISTS epg_ctq (ch TEXT NOT NULL, day DATE NOT NULL, at TIMESTAMPTZ NOT NULL DEFAULT now(), n INT NOT NULL DEFAULT 0, err TEXT NOT NULL DEFAULT '', PRIMARY KEY (ch, day))`))
+    .catch((e) => { ready = null; throw e; }));
+  const row = (x) => {
+    if (JUNK.test(x.title)) return null; const dur = (x.e - x.s) / 60e3; if (dur < 3 || dur > 14 * 60) return null;
+    let kind = ADULT.test(x.cat) ? 'adult' : C.classify(x.cat, x.title); if (kind === 'film' && dur < 65) kind = dur < 20 ? '' : 'series';
+    // ČT: data are kept as published (title, episode, description, link); only the genre → kind mapping is ours
+    const ct = x.ch.startsWith('ct:');
+    return [x.ch, new Date(x.s), new Date(x.e), ct ? x.title : C.clip(x.title, 200), ct ? x.sub || '' : C.clip(x.sub || '', 80), String(x.cat || '').slice(0, 60), kind, String(x.yr || '').slice(0, 4), x.fl || '', x.descr || '', x.lnk || ''];
+  };
+  // ---- ČT rolling queue: one (channel, day) per step, ≥ 70 s apart (also across restarts), today/tomorrow every 6 h, other days daily ----
+  const CT = SOURCES.ct, CTK = Object.keys(CT.chans);
+  let ctTimer = null, ctBusy = false, ctStop = null;
+  async function ctIds(key, fill) { const ids = (await pool.query(`SELECT DISTINCT epg_id FROM epg_map WHERE epg_id <> ''`)).rows.map((r) => r.epg_id); return ids.filter((id) => (fill ? CT.fill[key] || [] : CT.chans[key]).some((re) => re.test(id))); }
+  // ČT has priority over the general feed: remove feed rows overlapping the ČT schedule, then insert ČT rows (with the link back to ČT)
+  // fill = only where no other ČT programme is stored on that id (shared :D / art slot)
+  async function mergeCt(key, far, fill) {
+    let n = 0; const done = {};
+    for (const id of await ctIds(key, fill)) {
+      const cl = await pool.connect();
+      try {
+        await cl.query('BEGIN');
+        const keep = fill ? `AND NOT EXISTS (SELECT 1 FROM epg_prog q WHERE q.epg_id = $1 AND q.lnk <> '' AND q.lnk NOT IN (SELECT lnk FROM epg_off WHERE ch = $2) AND q.s < o.e AND q.e > o.s)` : '';
+        if (fill) await cl.query(`DELETE FROM epg_prog p WHERE p.epg_id = $1 AND p.lnk = '' AND EXISTS (SELECT 1 FROM epg_off o WHERE o.ch = $2 AND o.s < p.e AND o.e > p.s AND o.s < $3 ${keep})`, [id, 'ct:' + key, new Date(far)]);
+        else await cl.query(`DELETE FROM epg_prog p WHERE p.epg_id = $1 AND EXISTS (SELECT 1 FROM epg_off o WHERE o.ch = $2 AND o.s < p.e AND o.e > p.s AND o.s < $3)`, [id, 'ct:' + key, new Date(far)]);
+        const r = await cl.query(`INSERT INTO epg_prog (epg_id,s,e,title,sub,cat,kind,descr,yr,fl,lnk) SELECT $1,o.s,o.e,o.title,o.sub,o.cat,o.kind,o.descr,o.yr,o.fl || 'o',o.lnk FROM epg_off o WHERE o.ch = $2 AND o.e > now() - interval '6 hours' AND o.s < $3 ${keep}
+          ON CONFLICT (epg_id,s) DO UPDATE SET e=EXCLUDED.e,title=EXCLUDED.title,sub=EXCLUDED.sub,cat=EXCLUDED.cat,kind=EXCLUDED.kind,descr=EXCLUDED.descr,yr=EXCLUDED.yr,fl=EXCLUDED.fl,lnk=EXCLUDED.lnk`, [id, 'ct:' + key, new Date(far)]);
+        await cl.query('COMMIT'); n += r.rowCount; done[id] = 'ct:' + key;
+      } catch (e) { await cl.query('ROLLBACK').catch(() => {}); throw e; } finally { cl.release(); }
+    }
+    return { n, done };
+  }
+  const ctFar = () => { const t = ymd(Date.now()); return local(addDays(t, 8), '06:00') + 3600e3; };
+  async function ctNext() {
+    const today = ymd(Date.now()), have = new Map((await pool.query(`SELECT ch, to_char(day,'YYYY-MM-DD') AS d, at, err FROM epg_ctq WHERE day >= $1::date`, [today])).rows.map((r) => [r.ch + '|' + r.d, r]));
+    let best = null, bs = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      const d = addDays(today, i);
+      CTK.forEach((k, j) => {
+        const q = have.get(k + '|' + d), ttl = (q && q.err ? 2 : i <= 1 ? 6 : 24) * 3600e3;
+        const sc = !q ? 1e12 - i * 100 - j : Date.now() - +q.at - ttl; // never fetched first (nearest day first), then the most overdue
+        if (sc > 0 && sc > bs) { bs = sc; best = { k, d }; }
+      });
+    }
+    return best;
+  }
+  async function ctStep() {
+    const user = String(process.env.CT_XML_USER || '').trim(); if (!user || ctBusy) return;
+    const st = await getSettings(); if (!on(st) || !srcOn(st).has('ct')) return;
+    ctBusy = true;
+    try {
+      await init();
+      const last = Date.parse(await kv.get('ct_last') || 0) || 0; if (Date.now() - last < CT_GAP) return;
+      const job = await ctNext(); if (!job) return;
+      await kv.set('ct_last', new Date().toISOString()); // before the request: a crash right after it still counts
+      let list = null, err = '';
+      try { ctStop = new AbortController(); list = parseCt(await getCt(user, job.k, job.d, ctStop.signal), job.k); } catch (e) { err = String(e.message || e).replace(user, '***').slice(0, 120); } finally { ctStop = null; }
+      if (err === 'limit 1/min') { console.log('EPG ČT rate limited, waiting'); return; }
+      if (list && list.length) {
+        const ins = list.map(row).filter(Boolean), a = local(job.d, '06:00'), b = local(addDays(job.d, 1), '06:00'), lo = Math.min(a, list[0].s), hi = Math.max(b, list[list.length - 1].s + 1);
+        const cl = await pool.connect();
+        try {
+          await cl.query('BEGIN');
+          await cl.query(`DELETE FROM epg_off WHERE ch = $1 AND s >= $2 AND s < $3`, ['ct:' + job.k, new Date(lo), new Date(hi)]);
+          if (ins.length) await cl.query(`INSERT INTO epg_off (ch,s,e,title,sub,cat,kind,yr,fl,descr,lnk) SELECT * FROM unnest($1::text[],$2::timestamptz[],$3::timestamptz[],$4::text[],$5::text[],$6::text[],$7::text[],$8::text[],$9::text[],$10::text[],$11::text[]) ON CONFLICT (ch,s) DO UPDATE SET e=EXCLUDED.e,title=EXCLUDED.title,sub=EXCLUDED.sub,cat=EXCLUDED.cat,kind=EXCLUDED.kind,yr=EXCLUDED.yr,fl=EXCLUDED.fl,descr=EXCLUDED.descr,lnk=EXCLUDED.lnk`, Array.from({ length: 11 }, (_, j) => ins.map((r) => r[j])));
+          await cl.query('COMMIT');
+        } catch (e) { await cl.query('ROLLBACK').catch(() => {}); throw e; } finally { cl.release(); }
+      } else if (!err) err = 'prázdny program';
+      await pool.query(`INSERT INTO epg_ctq (ch,day,at,n,err) VALUES ($1,$2::date,now(),$3,$4) ON CONFLICT (ch,day) DO UPDATE SET at=now(), n=CASE WHEN $4 = '' THEN $3 ELSE epg_ctq.n END, err=$4`, [job.k, job.d, list ? list.length : 0, err]);
+      if (list && list.length) { const m = await mergeCt(job.k, ctFar()), f = await mergeCt(job.k, ctFar(), true); if (onChange) onChange(); console.log(`EPG ČT ${job.k} ${job.d}: ${list.length} items, merged ${m.n}+${f.n} into ${[...Object.keys(m.done), ...Object.keys(f.done).map((x) => x + '(fill)')].join(',') || '-'} rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`); }
+      else console.log(`EPG ČT ${job.k} ${job.d}: ${err}`);
+      if (Math.random() < 0.05) { await pool.query(`DELETE FROM epg_ctq WHERE day < (now() - interval '2 days')::date`); await pool.query(`DELETE FROM epg_off WHERE e < now() - interval '1 day'`); }
+    } catch (e) { console.error('EPG ČT', String(e.message || e).slice(0, 160)); } finally { ctBusy = false; }
+  }
+  function ctStart() { if (ctTimer || !process.env.CT_XML_USER) return; ctTimer = setInterval(() => { ctStep(); }, 15e3); ctTimer.unref(); }
   async function fetchStore(st, signal) {
     const want = srcOn(st), { rows, report } = await fetchAll(8, signal, [...want]);
     const by = new Map(); for (const x of rows) { const src = x.ch.split(':')[0]; if (!by.has(src)) by.set(src, []); by.get(src).push(x); }
     for (const [src, l] of by) { // replace a source only when it returned data
       const ins = [];
-      for (const x of l) {
-        if (JUNK.test(x.title)) continue; const dur = (x.e - x.s) / 60e3; if (dur < 3 || dur > 14 * 60) continue;
-        let kind = ADULT.test(x.cat) ? 'adult' : C.classify(x.cat, x.title); if (kind === 'film' && dur < 65) kind = dur < 20 ? '' : 'series';
-        ins.push([x.ch, new Date(x.s), new Date(x.e), C.clip(x.title, 200), C.clip(x.sub || '', 80), String(x.cat || '').slice(0, 60), kind, String(x.yr || '').slice(0, 4), x.fl || '']);
-      }
+      for (const x of l) { const r = row(x); if (r) ins.push(r.slice(0, 9)); }
       const cl = await pool.connect();
       try {
         await cl.query('BEGIN'); await cl.query(`DELETE FROM epg_off WHERE ch LIKE $1`, [src + ':%']);
@@ -166,8 +278,9 @@ function install({ pool, kv, getSettings, C, ADULT, JUNK }) {
     if (force || Date.now() - last > 12 * 3600e3 - 60e3) { try { await fetchStore(st, signal); } catch (e) { console.error('EPG official', e.message); } }
     const ids = (await pool.query(`SELECT DISTINCT epg_id FROM epg_map WHERE epg_id <> ''`)).rows.map((r) => r.epg_id);
     const want = srcOn(st), done = {}; let n = 0;
+    if (want.has('ct')) for (const fill of [false, true]) for (const k of CTK) { try { const m = await mergeCt(k, far, fill); n += m.n; for (const [id, c] of Object.entries(m.done)) done[id] = done[id] ? done[id] + '+' + c : c; } catch (e) { console.error('EPG ČT merge', e.message); } }
     for (const t of targets()) {
-      if (!want.has(t.ch.split(':')[0])) continue;
+      if (!want.has(t.ch.split(':')[0]) || SOURCES[t.ch.split(':')[0]].queue) continue;
       for (const id of ids) {
         if (!t.res.some((re) => re.test(id))) continue;
         const r = await pool.query(`WITH l AS (SELECT COALESCE(MAX(e), now()) AS m FROM epg_prog WHERE epg_id = $1)
@@ -183,8 +296,11 @@ function install({ pool, kv, getSettings, C, ADULT, JUNK }) {
     const [at, rep, mg] = await Promise.all(['off_at', 'off_report', 'off_merge'].map((k) => kv.get(k)));
     const per = (await pool.query(`SELECT split_part(ch, ':', 1) AS src, COUNT(*)::int AS n, MAX(s) AS b FROM epg_off GROUP BY 1`)).rows;
     let report = {}, m = {}; try { report = JSON.parse(rep || '{}'); m = JSON.parse(mg || '{}'); } catch { /* ignore */ }
+    const q = (await pool.query(`SELECT count(*)::int AS n, count(*) FILTER (WHERE err = '')::int AS ok, max(at) AS at, max(err) AS err FROM epg_ctq WHERE day >= $1::date`, [ymd(Date.now())])).rows[0];
+    const cd = (await pool.query(`SELECT count(DISTINCT (s AT TIME ZONE 'Europe/Prague')::date)::int AS d FROM epg_off WHERE ch LIKE 'ct:%' AND e > now()`)).rows[0];
+    report.ct = { name: CT.name, days: cd.d, err: !process.env.CT_XML_USER ? 'chýba prihlasovacie meno (CT_XML_USER)' : q.err || '', queue: `${q.ok}/${CTK.length * 8} kanál-dní` };
     return { at, report, merge: m, per };
   }
-  return { merge, status, srcOn, on, init };
+  return { merge, status, srcOn, on, init, ctStart };
 }
-module.exports = { fetchAll, targets, SOURCES, install, _local: local };
+module.exports = { fetchAll, targets, SOURCES, install, _local: local, _parseCt: parseCt };

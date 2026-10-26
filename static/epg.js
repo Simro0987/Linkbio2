@@ -6,6 +6,8 @@ var fmt;try{fmt=new Intl.DateTimeFormat('sk-SK',{timeZone:'Europe/Bratislava',ho
 var skew=0;function now(){return Date.now()/1000+skew;}
 function hm(s){return fmt.format(new Date(s*1000));}
 function el(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e;}
+// link back to Česká televize for ČT programmes (ČT terms of the XML export)
+function ctl(u){var a=el('a','ctl','ČT');if(!/^https:\/\/www\.ceskatelevize\.cz\//.test(u))return document.createTextNode('');a.href=u;a.target='_blank';a.rel='noopener';a.title='Program: Česká televize';return a;}
 function pct(s,e){var n=now();return Math.max(0,Math.min(100,(n-s)/(e-s)*100));}
 function left(e){return Math.max(1,Math.round((e-now())/60));}
 function remLink(cls,id,s){var a=el('a',cls,'🔔');a.href='/api/epg/ics/'+id+'/'+s;a.rel='nofollow';a.setAttribute('download','');a.title=t('rem','Pripomenúť');a.setAttribute('aria-label',t('rem','Pripomenúť'));return a;}
@@ -94,7 +96,7 @@ function openDay(li,btn,day){
   var id=li.getAttribute('data-id');
   fetch('/api/epg/day/'+id,{credentials:'omit'}).then(function(r){return r.ok?r.json():{p:[]};}).then(function(d){
     day.textContent='';if(!d.p||!d.p.length)return gone();
-    d.p.forEach(function(p){var x=el('li','tdi');x.setAttribute('data-s',p[0]);x.setAttribute('data-e',p[1]);x.appendChild(el('span','tetm',hm(p[0])));var b=el('span','tdt');b.appendChild(el('b',null,(ICON[p[3]]?ICON[p[3]]+' ':'')+p[2]));if(p[4])b.appendChild(el('span','tds',' – '+p[4]));if(p[5]||p[6])b.appendChild(el('small','tdd',[p[5],p[6]].filter(Boolean).join(' · ')));x.appendChild(b);if(p[0]>now())x.appendChild(remLink('tdr',id,p[0]));day.appendChild(x);});
+    d.p.forEach(function(p){var x=el('li','tdi');x.setAttribute('data-s',p[0]);x.setAttribute('data-e',p[1]);x.appendChild(el('span','tetm',hm(p[0])));var b=el('span','tdt');b.appendChild(el('b',null,(ICON[p[3]]?ICON[p[3]]+' ':'')+p[2]));if(p[4])b.appendChild(el('span','tds',' – '+p[4]));if(p[5]||p[6])b.appendChild(el('small','tdd',[p[5],p[6]].filter(Boolean).join(' · ')));if(p[7])b.appendChild(ctl(p[7]));x.appendChild(b);if(p[0]>now())x.appendChild(remLink('tdr',id,p[0]));day.appendChild(x);});
     day.setAttribute('data-ok','1');markDay(day,true);
   }).catch(gone);
 }
@@ -130,7 +132,7 @@ if(L.guide&&cat){(function(){
       li.appendChild(el('span','tetm',hm(x[1])));
       if(x[6]){var p=el('img','gpo');p.src=x[6];p.alt='';p.width=36;p.height=52;p.loading='lazy';p.referrerPolicy='no-referrer';li.appendChild(p);}
       var m=el('span','spm'),tt=el('b','spt2');if(f.indexOf('h')>=0)tt.appendChild(el('span','gtip','★ '+t('gtop','Tip')));tt.appendChild(document.createTextNode(x[3]));m.appendChild(tt);if(x[4])m.appendChild(el('span','gsub',x[4]));
-      var ch=el('span','spc');if(c[1]){var im=el('img');im.src=c[1];im.alt='';im.width=18;im.height=18;im.loading='lazy';ch.appendChild(im);}ch.appendChild(document.createTextNode(c[0]));if(f.indexOf('l')>=0&&!live)ch.appendChild(el('span','glv',t('glive','Naživo')));m.appendChild(ch);li.appendChild(m);
+      var ch=el('span','spc');if(c[1]){var im=el('img');im.src=c[1];im.alt='';im.width=18;im.height=18;im.loading='lazy';ch.appendChild(im);}ch.appendChild(document.createTextNode(c[0]));if(f.indexOf('l')>=0&&!live)ch.appendChild(el('span','glv',t('glive','Naživo')));if(x[7])ch.appendChild(ctl(x[7]));m.appendChild(ch);li.appendChild(m);
       if(live)li.appendChild(el('span','tel',t('now','Teraz')));else li.appendChild(remLink('tdr',x[0],x[1]));ol.appendChild(li);});
     box.appendChild(ol);
     if(lst.length>st.n){var mb=el('button','gmore',t('gmore','Zobraziť ďalšie')+' ('+(lst.length-st.n)+')');mb.type='button';mb.addEventListener('click',function(){st.n+=80;draw();});box.appendChild(mb);}

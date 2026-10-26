@@ -104,3 +104,7 @@
 .hls.mv .hli{flex:none;width:300px;grid-column:auto}
 .hls.mv .hli.best{width:420px}
 @media (max-width:600px){.hls.mv .hli{width:250px}.hls.mv .hli.best{width:300px}}
+/* link back to Česká televize on ČT programmes (ČT XML terms) */
+.ctl{display:inline-block;flex:none;font-size:.62rem;font-weight:800;line-height:1.4;letter-spacing:.02em;color:#fff;background:#0b4ea2;border-radius:4px;padding:0 5px;margin-left:6px;text-decoration:none;vertical-align:middle}
+.ctl:hover,.ctl:focus-visible{background:#1a66c9;text-decoration:underline}
+.tdt .ctl{margin-left:0;margin-top:2px;align-self:flex-start}

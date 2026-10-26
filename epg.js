@@ -46,7 +46,7 @@ module.exports = function install(ctx) {
   const skipOf = (c) => String(c.epg_skip || '').split(/\r?\n/).map((x) => x.trim().toLowerCase()).filter((x) => x && x !== '-');
   const skipped = (cat, sk) => { const c = String(cat || '').toLowerCase(); return sk.some((x) => c.includes(x)); };
   const kv = { get: async (k) => ((await pool.query('SELECT v FROM epg_kv WHERE k=$1', [k])).rows[0] || {}).v, set: (k, v) => pool.query('INSERT INTO epg_kv (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=$2', [k, String(v)]) };
-  const OFF = OFFICIAL.install({ pool, kv, getSettings, C, ADULT, JUNK }); // official broadcaster schedules (STVR, JOJ, Prima) → days 4–7
+  const OFF = OFFICIAL.install({ pool, kv, getSettings, C, ADULT, JUNK, onChange: () => dropCaches() }); // official broadcaster schedules (STVR, JOJ, Prima) → days 4–7
   const DATA_V = '5'; // bump when stored EPG data needs a rebuild after deploy (refresh runs on the first tick)
   let mapCache = null, nowCache = null, dnesCache = null, srcCache = null; const dayCache = new Map();
   const sources = async () => srcCache || (srcCache = (await pool.query('SELECT * FROM epg_src ORDER BY id')).rows);
@@ -265,6 +265,7 @@ module.exports = function install(ctx) {
       } catch (e) { console.error('EPG tick', e.message); }
     };
     setTimeout(tick, 45e3).unref(); timer = setInterval(tick, 10 * 60e3); timer.unref();
+    setTimeout(() => OFF.ctStart(), 90e3).unref(); // ČT XML queue (1 request / 70 s)
   }
 
   // ---------- read side ----------
@@ -288,10 +289,11 @@ module.exports = function install(ctx) {
     const hit = dayCache.get(id); if (hit && Date.now() - hit.t < 300e3) return hit.d;
     const vm = (await visibleMapped()).find((r) => r.id === id); if (!vm) return null;
     const ds = dayStart(Date.now());
-    const q = await pool.query(`SELECT s,e,title,sub,cat,kind,descr FROM epg_prog WHERE epg_id=$1 AND e > $2 AND s < $3 ORDER BY s LIMIT 200`, [vm.epg, new Date(ds - vm.sh), new Date(ds + 27 * 3600e3 - vm.sh)]);
-    const d = { id, name: vm.name, p: q.rows.map((r) => [Math.round((+r.s + vm.sh) / 1000), Math.round((+r.e + vm.sh) / 1000), r.title, r.kind === 'adult' ? '' : r.kind, r.sub, r.cat, r.descr]) };
+    const q = await pool.query(`SELECT s,e,title,sub,cat,kind,descr,lnk FROM epg_prog WHERE epg_id=$1 AND e > $2 AND s < $3 ORDER BY s LIMIT 200`, [vm.epg, new Date(ds - vm.sh), new Date(ds + 27 * 3600e3 - vm.sh)]);
+    const d = { id, name: vm.name, p: q.rows.map((r) => [Math.round((+r.s + vm.sh) / 1000), Math.round((+r.e + vm.sh) / 1000), r.title, r.kind === 'adult' ? '' : r.kind, r.sub, r.cat, r.descr, ctLink(r.lnk)]) };
     if (dayCache.size > 1000) dayCache.clear(); dayCache.set(id, { t: Date.now(), d }); return d;
   }
+  const ctLink = (u) => (/^https:\/\/www\.ceskatelevize\.cz\//.test(u || '') ? u : ''); // ČT terms: every ČT programme links back to ČT
   const jsonOut = (res, d, age = 60) => { res.set({ 'Cache-Control': `public, max-age=${age}`, 'X-Content-Type-Options': 'nosniff' }); res.json(d); };
   app.get('/api/epg/now', wrap(async (req, res) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return jsonOut(res, { t: Math.round(Date.now() / 1000), c: {} }); jsonOut(res, await nowData()); }));
   app.get('/api/epg/day/:id(\\d+)', wrap(async (req, res) => { const c = cfg(await getSettings()); const d = c.epg_on === '1' ? await dayData(+req.params.id) : null; if (!d) return res.status(404).json({ p: [] }); jsonOut(res, d, 300); }));
@@ -302,7 +304,7 @@ module.exports = function install(ctx) {
   const fold = (l) => { const out = []; let cur = '', n = 0; for (const ch of l) { const b = Buffer.byteLength(ch); if (n + b > 73) { out.push(cur); cur = ' '; n = 1; } cur += ch; n += b; } out.push(cur); return out.join('\r\n'); };
   function icsOut(res, x) {
     const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//lnkbio//TV program//SK', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT', 'UID:' + x.uid + '@lnkbio.onrender.com', 'DTSTAMP:' + icsT(Date.now()), 'DTSTART:' + icsT(x.s), 'DTEND:' + icsT(x.e),
-      'SUMMARY:' + icsEsc(x.title + ' – ' + x.ch), 'DESCRIPTION:' + icsEsc(`${x.title}\nKanál: ${x.ch}${x.sub ? '\n' + x.sub : ''}\nTV program: epgshare01.online (orientačný)`), 'LOCATION:' + icsEsc(x.ch),
+      'SUMMARY:' + icsEsc(x.title + ' – ' + x.ch), 'DESCRIPTION:' + icsEsc(`${x.title}\nKanál: ${x.ch}${x.sub ? '\n' + x.sub : ''}${x.lnk ? '\nProgram: Česká televize – ' + x.lnk : '\nTV program: epgshare01.online (orientačný)'}`), 'LOCATION:' + icsEsc(x.ch),
       'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:' + icsEsc(x.title + ' – ' + x.ch), 'TRIGGER:-PT15M', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'];
     const fn = 'tv-' + (tnorm(x.title).replace(/ /g, '-').slice(0, 40) || 'program') + '.ics';
     res.set({ 'Content-Type': 'text/calendar; charset=utf-8', 'Content-Disposition': `attachment; filename="${fn}"`, 'Cache-Control': 'public, max-age=300', 'X-Content-Type-Options': 'nosniff', 'X-Robots-Tag': 'noindex' });
@@ -310,9 +312,9 @@ module.exports = function install(ctx) {
   }
   app.get('/api/epg/ics/:id(\\d+)/:s(\\d{9,11})', wrap(async (req, res) => {
     const vm = (await visibleMapped()).find((r) => r.id === +req.params.id); if (!vm) return res.status(404).type('text').send('Not found');
-    const r = (await pool.query('SELECT s,e,title,sub FROM epg_prog WHERE epg_id=$1 AND s=$2 LIMIT 1', [vm.epg, new Date(+req.params.s * 1000 - vm.sh)])).rows[0];
+    const r = (await pool.query('SELECT s,e,title,sub,lnk FROM epg_prog WHERE epg_id=$1 AND s=$2 LIMIT 1', [vm.epg, new Date(+req.params.s * 1000 - vm.sh)])).rows[0];
     if (!r) return res.status(404).type('text').send('Not found');
-    icsOut(res, { uid: 'tv-' + vm.id + '-' + req.params.s, s: +r.s + vm.sh, e: +r.e + vm.sh, title: r.title, sub: r.sub, ch: vm.name });
+    icsOut(res, { uid: 'tv-' + vm.id + '-' + req.params.s, s: +r.s + vm.sh, e: +r.e + vm.sh, title: r.title, sub: r.sub, lnk: ctLink(r.lnk), ch: vm.name });
   }));
   app.get('/api/epg/ics/pin/:id(\\d+)', wrap(async (req, res) => {
     const p = (await pool.query('SELECT id,channel_id,s,e,title FROM dnes_pin WHERE id=$1', [+req.params.id])).rows[0]; const ch = p && (await channels()).find((r) => r.id === p.channel_id && r.visible);
@@ -342,7 +344,7 @@ module.exports = function install(ctx) {
     }
     jsonOut(res, sportCache.d, 120);
   }));
-  ctx.epgAssets = async (req) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return ''; const en = req.lang === 'en'; return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div id="epgcfg" hidden data-l="${en ? 'en' : 'sk'}" data-now="${esc(tx(en, 'Teraz', 'Now'))}" data-next="${esc(tx(en, 'Potom', 'Next'))}" data-day="${esc(tx(en, 'Celý program dnes', 'Full schedule today'))}" data-min="${esc(tx(en, 'min', 'min'))}"${G ? G.attrs(en, c) : ''} data-fav="${esc(tx(en, 'Obľúbené', 'Favourites'))}" data-favadd="${esc(tx(en, 'Pridať do obľúbených', 'Add to favourites'))}" data-favdel="${esc(tx(en, 'Odobrať z obľúbených', 'Remove from favourites'))}" data-rem="${esc(tx(en, 'Pripomenúť', 'Remind me'))}" data-load="${esc(tx(en, 'Načítavam…', 'Loading…'))}" data-left="${esc(tx(en, 'ešte', 'left'))}"></div><script src="/static/epg.js?v=${ASSET_V}" defer></script><p class="hint epgsrc">${esc(tx(en, 'TV program: epgshare01.online (orientačný, môže sa líšiť).', 'TV schedule: epgshare01.online (indicative, may differ).'))}</p>`; };
+  ctx.epgAssets = async (req) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return ''; const en = req.lang === 'en'; return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div id="epgcfg" hidden data-l="${en ? 'en' : 'sk'}" data-now="${esc(tx(en, 'Teraz', 'Now'))}" data-next="${esc(tx(en, 'Potom', 'Next'))}" data-day="${esc(tx(en, 'Celý program dnes', 'Full schedule today'))}" data-min="${esc(tx(en, 'min', 'min'))}"${G ? G.attrs(en, c) : ''} data-fav="${esc(tx(en, 'Obľúbené', 'Favourites'))}" data-favadd="${esc(tx(en, 'Pridať do obľúbených', 'Add to favourites'))}" data-favdel="${esc(tx(en, 'Odobrať z obľúbených', 'Remove from favourites'))}" data-rem="${esc(tx(en, 'Pripomenúť', 'Remind me'))}" data-load="${esc(tx(en, 'Načítavam…', 'Loading…'))}" data-left="${esc(tx(en, 'ešte', 'left'))}"></div><script src="/static/epg.js?v=${ASSET_V}" defer></script><p class="hint epgsrc">${esc(tx(en, 'TV program: epgshare01.online (orientačný, môže sa líšiť); oficiálne programy STVR, JOJ, Prima a Česká televize (odkaz „ČT“ vedie na ceskatelevize.cz).', 'TV schedule: epgshare01.online (indicative, may differ); official schedules from STVR, JOJ, Prima and Česká televize (the “ČT” link leads to ceskatelevize.cz).'))}</p>`; };
 
   // ---------- Dnes v TV ----------
   const CATW = [[/sloven/i, 12], [/česk|cesk/i, 9], [/filmy a seri/i, 7], [/^šport$|^sport$/i, 6], [/dokument/i, 2]];
@@ -406,11 +408,11 @@ module.exports = function install(ctx) {
     const hidden = new Map((await pool.query('SELECT k,title FROM dnes_hide')).rows.map((r) => [r.k, r.title]));
     const cand = [];
     if (byEpg.size && kinds.length) {
-      const q = await pool.query(`SELECT epg_id,s,e,title,cat,kind,yr,fl FROM epg_prog WHERE epg_id = ANY($1) AND kind = ANY($2) AND e > $3 AND s < $4 AND s > $5`, [[...byEpg.keys()], kinds, new Date(now + 10 * 60e3), new Date(c.week_on === '1' ? wEnd : de), new Date(now - 40 * 60e3)]);
+      const q = await pool.query(`SELECT epg_id,s,e,title,cat,kind,yr,fl,lnk FROM epg_prog WHERE epg_id = ANY($1) AND kind = ANY($2) AND e > $3 AND s < $4 AND s > $5`, [[...byEpg.keys()], kinds, new Date(now + 10 * 60e3), new Date(c.week_on === '1' ? wEnd : de), new Date(now - 40 * 60e3)]);
       for (const p of q.rows) {
         const ch = byEpg.get(p.epg_id)[0]; const sc = scoreOf(p, ch, now); if (sc < 34) continue;
         const k = 'p:' + p.epg_id + '|' + +p.s, tk = 't:' + tnorm(p.title);
-        cand.push({ k, tk, sec: +p.s < de ? 'd' : 'w', s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '', ch, score: sc, hidden: hidden.has(k) || hidden.has(tk) });
+        cand.push({ k, tk, sec: +p.s < de ? 'd' : 'w', s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '', lnk: ctLink(p.lnk), ch, score: sc, hidden: hidden.has(k) || hidden.has(tk) });
       }
     }
     const info = await posterInfo(cand);
@@ -486,7 +488,7 @@ module.exports = function install(ctx) {
       const en = req.lang === 'en', pm = await posterMap([...t.day, ...t.week]), now = Date.now();
       const logo = (ch) => (ctx.tvchLogoSrc ? ctx.tvchLogoSrc(ch) : '/tvlogo/' + ch.id);
       const card = (x) => { const pu = x.kind === 'film' && pm.get(posterKey(x)); const ics = x.pin ? '/api/epg/ics/pin/' + x.pin : `/api/epg/ics/${x.ch.id}/${Math.round(x.s / 1000)}`;
-        return `<li class="hli dk-${esc(x.kind || 'x')}${x.best ? ' best' : ''}${x.s <= now ? ' live' : ''}" data-s="${Math.round(x.s / 1000)}" data-e="${Math.round(x.e / 1000)}" data-r="${x.rank || 9}">${pu ? `<img class="hlp" src="${esc(pu)}" alt="" loading="lazy" decoding="async" width="96" height="136" referrerpolicy="no-referrer">` : `<img class="hlp hlo" src="${esc(logo(x.ch))}" alt="" loading="lazy" decoding="async" width="80" height="80">`}<div class="hlb"><div class="hlt"><span class="hlbest">★ ${esc(tx(en, 'Naj', 'Top pick'))}</span><span class="hld">${esc(dayLbl(x.s, en))}</span><time datetime="${new Date(x.s).toISOString()}">${esc(hm(x.s))}</time><span class="hlk">${C.KIND_ICON[x.kind] || '📺'} ${esc(KL(en, x.kind))}</span><span class="hllive">${esc(tx(en, 'práve beží', 'on now'))}</span></div><div class="hln">${esc(x.title)}</div><div class="hlc"><img src="${esc(logo(x.ch))}" alt="" width="20" height="20" loading="lazy" decoding="async"><span>${esc(x.ch.name)}</span></div><a class="hlr" href="${ics}" rel="nofollow" download title="${esc(tx(en, 'Pripomenúť (pridať do kalendára)', 'Remind me (add to calendar)'))}">🔔 ${esc(tx(en, 'Pripomenúť', 'Remind me'))}</a></div></li>`; };
+        return `<li class="hli dk-${esc(x.kind || 'x')}${x.best ? ' best' : ''}${x.s <= now ? ' live' : ''}" data-s="${Math.round(x.s / 1000)}" data-e="${Math.round(x.e / 1000)}" data-r="${x.rank || 9}">${pu ? `<img class="hlp" src="${esc(pu)}" alt="" loading="lazy" decoding="async" width="96" height="136" referrerpolicy="no-referrer">` : `<img class="hlp hlo" src="${esc(logo(x.ch))}" alt="" loading="lazy" decoding="async" width="80" height="80">`}<div class="hlb"><div class="hlt"><span class="hlbest">★ ${esc(tx(en, 'Naj', 'Top pick'))}</span><span class="hld">${esc(dayLbl(x.s, en))}</span><time datetime="${new Date(x.s).toISOString()}">${esc(hm(x.s))}</time><span class="hlk">${C.KIND_ICON[x.kind] || '📺'} ${esc(KL(en, x.kind))}</span><span class="hllive">${esc(tx(en, 'práve beží', 'on now'))}</span></div><div class="hln">${esc(x.title)}</div><div class="hlc"><img src="${esc(logo(x.ch))}" alt="" width="20" height="20" loading="lazy" decoding="async"><span>${esc(x.ch.name)}</span>${x.lnk ? `<a class="ctl" href="${esc(x.lnk)}" target="_blank" rel="noopener" title="${esc(tx(en, 'Program: Česká televize', 'Schedule: Česká televize'))}">ČT</a>` : ''}</div><a class="hlr" href="${ics}" rel="nofollow" download title="${esc(tx(en, 'Pripomenúť (pridať do kalendára)', 'Remind me (add to calendar)'))}">🔔 ${esc(tx(en, 'Pripomenúť', 'Remind me'))}</a></div></li>`; };
       // moving strips (JS loops them seamlessly; without JS / with reduced motion they stay a static grid)
       const mv = c.top_move !== '0', sp = SPEED[Math.max(1, Math.min(5, +c.dnes_speed || 3))];
       const sec = (id, icon, title, items) => (items.length ? `<section class="hls" id="${id}" aria-labelledby="${id}-h"${mv ? ` data-speed="${sp}"` : ''}><div class="hlhd"><h2 class="hlh" id="${id}-h">${icon} ${esc(title)}</h2>${mv ? `<button type="button" class="dnpp" aria-pressed="false" data-pause="${esc(tx(en, '⏸ Zastaviť', '⏸ Pause'))}" data-play="${esc(tx(en, '▶ Spustiť', '▶ Play'))}" hidden>${esc(tx(en, '⏸ Zastaviť', '⏸ Pause'))}</button>` : ''}</div><div class="hlv" tabindex="0" aria-label="${esc(tx(en, 'Pás – posúvajte do strán', 'Strip – scroll sideways'))}"><ol class="hll">${items.map(card).join('')}</ol></div></section>` : '');
@@ -607,13 +609,14 @@ module.exports = function install(ctx) {
     const st = await getSettings(), on = OFF.on(st), want = OFF.srcOn(st), x = await OFF.status();
     const per = new Map(x.per.map((r) => [r.src, r])), ids = Object.entries((x.merge && x.merge.ids) || {});
     const rows = Object.entries(OFFICIAL.SOURCES).map(([k, src]) => { const r = (x.report || {})[k] || {}, p = per.get(k);
-      return `<label class="ck"><input type="checkbox" name="src_${k}" value="1"${want.has(k) ? ' checked' : ''}> ${esc(src.name)} <span class="hint">${r.err ? '⚠ ' + esc(r.err) + ' · ' : ''}${p ? `${p.n} rel. do ${esc(dayLbl(+p.b, false))}` : 'zatiaľ bez údajov'}${r.days ? ` · ${r.days} dní` : ''}</span></label>`; }).join('');
+      return `<label class="ck"><input type="checkbox" name="src_${k}" value="1"${want.has(k) ? ' checked' : ''}> ${esc(src.name)} <span class="hint">${r.err ? '⚠ ' + esc(r.err) + ' · ' : ''}${p ? `${p.n} rel. do ${esc(dayLbl(+p.b, false))}` : 'zatiaľ bez údajov'}${r.days ? ` · ${r.days} dní` : ''}${r.queue ? ` · fronta ${esc(r.queue)}` : ''}</span></label>`; }).join('');
     return `<form method="post" action="/admin/epg/off" class="card" id="oficialne">${hid(req)}<h2>🏛 Oficiálne programy TV staníc (až 7 dní)</h2>
 <p class="hint">Bezplatné XMLTV súbory majú pre SK/CZ kanály program len na ~3–4 dni. Ďalšie dni sa dopĺňajú z verejných programov priamo od staníc (iba čas, názov, epizóda, žáner; žiadne streamy). Načítava sa max. 2× denne, s pauzami medzi požiadavkami. Doplní sa iba to, čo je po konci programu z XMLTV.</p>
 <label class="ck"><input type="checkbox" name="off_on" value="1"${on ? ' checked' : ''}> Dopĺňať program z oficiálnych zdrojov</label>${rows}
 <p class="hint">Posledné načítanie: ${esc(ago(x.at))}${x.merge && x.merge.n != null ? ` · doplnených relácií: ${x.merge.n} pre ${ids.length} EPG kanálov` : ''}${offRun ? ' · <b>práve beží…</b>' : ''}</p>
 ${ids.length ? `<details><summary>Doplnené kanály</summary><p class="hint">${ids.map(([id, ch]) => esc(id) + ' ← ' + esc(ch)).join(' · ')}</p></details>` : ''}
-<p class="hint">Nedostupné: <b>ČT</b> (XML export vyžaduje bezplatnú registráciu na ceskatelevize.cz – zatiaľ nepoužité), <b>Markíza</b> a <b>Nova</b> (stránky programu blokujú automatické čítanie). Tieto kanály majú program z XMLTV (~3–4 dni).</p>
+<p class="hint"><b>ČT</b>: oficiálny XML export (registrovaný účet, meno iba v premennej prostredia CT_XML_USER). Podmienky ČT: max. 1 súbor za minútu (načítava sa postupne, 1 kanál-deň za ~70 s; dnes/zajtra každých 6 h, ostatné dni 1× denne), údaje sa nemenia, pri každej relácii je odkaz „ČT“ na ceskatelevize.cz, údaje sa ďalej nešíria (žiadny export). ČT má prednosť pred XMLTV.</p>
+<p class="hint">Nedostupné: <b>Markíza</b> a <b>Nova</b> (stránky programu blokujú automatické čítanie). Tieto kanály majú program z XMLTV (~3–4 dni).</p>
 <div class="row"><button>Uložiť</button><button name="now" value="1">🔄 Uložiť a načítať teraz</button></div></form>`;
   }
   async function srcCard(req, report) {
