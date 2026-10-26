@@ -189,7 +189,7 @@ module.exports = function install(ctx) {
     const c = cfg(await getSettings()); const t0 = Date.now();
     Object.assign(status, { running: true, started: t0, phase: 'kanály', feed: '' });
     // mark the attempt first: a crash/restart mid-refresh must not cause a refresh loop on every boot
-    if (!opt.feeds) { await kv.set('try_at', new Date(t0).toISOString()); await kv.set('data_v', DATA_V); }
+    if (!opt.feeds) await kv.set('try_at', new Date(t0).toISOString());
     const mlog = (w) => console.log(`EPG refresh ${w} ${Math.round((Date.now() - t0) / 1000)}s rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`);
     mlog('start');
     const allFeeds = [...feedsOf(c), ...(await sources()).filter((x) => x.enabled).map((x) => 'src:' + x.id)];
@@ -252,12 +252,12 @@ module.exports = function install(ctx) {
       try {
         const c = cfg(await getSettings()); if (c.epg_on !== '1' && c.dnes_on !== '1') return;
         const last = Date.parse(await kv.get('last_full') || 0) || 0, h = Math.max(2, Math.min(24, +c.epg_hours || 6));
-        const tried = Date.parse(await kv.get('try_at') || 0) || 0;
-        if (Date.now() - tried < 90 * 60e3) return; // an attempt started recently (maybe before a restart): wait
+        // an attempt started < 20 min ago (e.g. interrupted by a deploy/restart): wait, so a failing refresh can never loop on every boot
+        const tried = Date.parse(await kv.get('try_at') || 0) || 0; if (Date.now() - tried < 20 * 60e3) return;
         if (Date.now() - last > h * 3600e3 - 60e3 || (await kv.get('data_v')) !== DATA_V) refresh();
       } catch (e) { console.error('EPG tick', e.message); }
     };
-    setTimeout(tick, 45e3).unref(); timer = setInterval(tick, 15 * 60e3); timer.unref();
+    setTimeout(tick, 45e3).unref(); timer = setInterval(tick, 10 * 60e3); timer.unref();
   }
 
   // ---------- read side ----------
