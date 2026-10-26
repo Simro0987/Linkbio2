@@ -188,6 +188,10 @@ module.exports = function install(ctx) {
   async function doRefresh(opt) {
     const c = cfg(await getSettings()); const t0 = Date.now();
     Object.assign(status, { running: true, started: t0, phase: 'kanály', feed: '' });
+    // mark the attempt first: a crash/restart mid-refresh must not cause a refresh loop on every boot
+    if (!opt.feeds) { await kv.set('try_at', new Date(t0).toISOString()); await kv.set('data_v', DATA_V); }
+    const mlog = (w) => console.log(`EPG refresh ${w} ${Math.round((Date.now() - t0) / 1000)}s rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`);
+    mlog('start');
     const allFeeds = [...feedsOf(c), ...(await sources()).filter((x) => x.enabled).map((x) => 'src:' + x.id)];
     let feeds = allFeeds; if (opt.feeds) feeds = feeds.filter((f) => opt.feeds.includes(f));
     const report = {}; if (opt.feeds) { try { const o = JSON.parse((await kv.get('report')) || '{}'); for (const f of allFeeds) if (o[f] && !opt.feeds.includes(f)) report[f] = o[f]; } catch {} }
@@ -211,7 +215,7 @@ module.exports = function install(ctx) {
     status.phase = 'program';
     for (const f of feeds) {
       const ids = (byFeed.get(f) || []).filter((i) => want.has(i)); if (!ids.length) { (report[f] = report[f] || {}).progs = 0; continue; }
-      status.feed = f;
+      status.feed = f; mlog('feed ' + String(f).slice(0, 40));
       try {
         const { rows, counts, hl, slim } = await readProgs(f, new Set(ids), from, to, far, gEnd);
         const cl = await pool.connect();
@@ -227,18 +231,18 @@ module.exports = function install(ctx) {
       } catch (e) { (report[f] = report[f] || {}).err = String(e.message).slice(0, 120); }
     }
     // phase 4: final mapping now that we know which EPG channels really have data
-    status.phase = 'ukladanie';
+    status.phase = 'ukladanie'; mlog('save');
     epgRows = (await pool.query('SELECT id,name,names,feed,n FROM epg_chan')).rows;
     const fin = await computeMap(c, chans, epgRows); await saveMap(fin.res);
     await pool.query(`DELETE FROM epg_map WHERE channel_id NOT IN (SELECT id FROM tv_channels)`);
     await pool.query(`DELETE FROM epg_prog WHERE e < $1 OR epg_id NOT IN (SELECT epg_id FROM epg_map WHERE epg_id <> '')`, [new Date(from)]);
     await pool.query(`DELETE FROM dnes_hide WHERE k LIKE 'p:%' AND created_at < now() - interval '3 days'`);
     await pool.query(`DELETE FROM dnes_pin WHERE e < now() - interval '1 day'`);
-    status.phase = 'oficiálne programy'; status.feed = '';
-    try { await OFF.merge(far, !!opt.offForce); } catch (e) { console.error('EPG official merge', e.message); }
+    status.phase = 'oficiálne programy'; status.feed = ''; mlog('official');
+    try { const r = await OFF.merge(far, !!opt.offForce); mlog('official merged ' + (r && r.n)); } catch (e) { console.error('EPG official merge', e.message); }
     await kv.set('last_run', new Date().toISOString()); await kv.set('last_ms', Date.now() - t0); await kv.set('report', JSON.stringify(report));
     if (!opt.feeds) { await kv.set('last_full', new Date().toISOString()); await kv.set('data_v', DATA_V); }
-    await kv.set('last_err', '');
+    await kv.set('last_err', ''); mlog('done');
     dropCaches(); postersSoon();
   }
   let timer = null;
@@ -248,6 +252,8 @@ module.exports = function install(ctx) {
       try {
         const c = cfg(await getSettings()); if (c.epg_on !== '1' && c.dnes_on !== '1') return;
         const last = Date.parse(await kv.get('last_full') || 0) || 0, h = Math.max(2, Math.min(24, +c.epg_hours || 6));
+        const tried = Date.parse(await kv.get('try_at') || 0) || 0;
+        if (Date.now() - tried < 90 * 60e3) return; // an attempt started recently (maybe before a restart): wait
         if (Date.now() - last > h * 3600e3 - 60e3 || (await kv.get('data_v')) !== DATA_V) refresh();
       } catch (e) { console.error('EPG tick', e.message); }
     };
@@ -458,7 +464,7 @@ module.exports = function install(ctx) {
         const t = await topItems({ all: true }), pub = await topItems();
         const items = [...pub.day, ...pub.week, ...t.day.list.slice(0, 40), ...t.week.list.slice(0, 50)].filter((x) => x.kind === 'film');
         for (const x of items) if (await posterOne(x)) await new Promise((ok) => setTimeout(ok, 400));
-        dnesCache = null;
+        dnesCache = null; console.log(`EPG posters done (${items.length}) rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`);
       } catch (e) { console.error('EPG posters', e.message); } finally { posterBusy = false; }
     }, 2000).unref();
   }

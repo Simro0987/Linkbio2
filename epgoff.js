@@ -124,6 +124,7 @@ async function fetchAll(days, signal, only) {
       l.forEach((x, i) => { const n = l[i + 1]; if (!x.e) x.e = n && n.s - x.s < 6 * 3600e3 ? n.s : x.s + 60 * 60e3; if (x.e > x.s && x.title) rows.push(x); });
     }
     r.n = got.length; r.chans = by.size;
+    console.log(`EPG official ${id}: ${r.days} d, ${r.n} items${r.err ? ' (' + r.err + ')' : ''} rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`);
   }
   return { rows, report };
 }
