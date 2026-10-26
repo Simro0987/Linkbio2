@@ -8,12 +8,19 @@ const path = require('path');
 const { tx } = require('./uitext');
 const C = require('./epgcore');
 const POSTER = require('./wdposter');
+const FETCH = require('./epgfetch');
 
 const TZ = 'Europe/Bratislava';
 const FEED_URL = (f) => `https://epgshare01.online/epgshare01/epg_ripper_${f}.xml.gz`;
 const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1', 'RO1', 'RS1', 'GR1', 'BG1', 'LV1', 'IE1'];
 const FEEDS_V2 = ['BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1']; // added 2026-10: Deluxe/ANIXE+/Red Bull, MDR, Arena Sport 3, My Hits, Россия 24, TSN, Fox Sports; RAKUTEN1: Red Bull TV
-const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV' };
+const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV', top_n: '4', top_title: 'Top dnes', top_title_en: 'Top today', week_on: '1', week_n: '4', week_title: 'Top týždňa', week_title_en: 'Top this week' };
+// custom XMLTV sources added in admin: feed key "src:<id>", their channel ids are prefixed "src<id>:" (no collisions with epgshare ids)
+const SRC_RE = /^src(\d+):/;
+const isSrcFeed = (f) => /^src:\d+$/.test(String(f || ''));
+// IPTV playlists / Xtream panels are never accepted (only schedule files)
+const BADURL = /\.m3u8?(\?|#|$)|\bget\.php|player_api\.php|panel_api\.php|[?&](username|password|type=m3u)|output=(ts|m3u8|hls)/i;
+const SRC_MAX = 10;
 const UA = { 'user-agent': 'lnkbio-epg/1.0 (+https://lnkbio.onrender.com)' };
 const ASSET_V = (() => { try { return crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static/epg.js')) + fs.readFileSync(path.join(__dirname, 'static/epg.css'))).digest('hex').slice(0, 8); } catch { return '1'; } })();
 const ADULT = /pre dospelých|pro dospělé|erotic|erotik|\bxxx\b|\badult\b|18\+/i;
@@ -39,7 +46,8 @@ module.exports = function install(ctx) {
   const skipOf = (c) => String(c.epg_skip || '').split(/\r?\n/).map((x) => x.trim().toLowerCase()).filter((x) => x && x !== '-');
   const skipped = (cat, sk) => { const c = String(cat || '').toLowerCase(); return sk.some((x) => c.includes(x)); };
   const kv = { get: async (k) => ((await pool.query('SELECT v FROM epg_kv WHERE k=$1', [k])).rows[0] || {}).v, set: (k, v) => pool.query('INSERT INTO epg_kv (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=$2', [k, String(v)]) };
-  let mapCache = null, nowCache = null, dnesCache = null; const dayCache = new Map();
+  let mapCache = null, nowCache = null, dnesCache = null, srcCache = null; const dayCache = new Map();
+  const sources = async () => srcCache || (srcCache = (await pool.query('SELECT * FROM epg_src ORDER BY id')).rows);
   let sportCache = null;
   const dropCaches = () => { mapCache = null; nowCache = null; dnesCache = null; sportCache = null; dayCache.clear(); };
   const channels = async () => (ctx.tvchAll ? ctx.tvchAll() : (await pool.query('SELECT id,name,category,logo,ord,visible FROM tv_channels ORDER BY ord,id')).rows);
@@ -57,6 +65,7 @@ module.exports = function install(ctx) {
     await pool.query(`ALTER TABLE epg_map ADD COLUMN IF NOT EXISTS shift INT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE epg_poster ADD COLUMN IF NOT EXISTS pop INT NOT NULL DEFAULT 0`);
     await pool.query(`ALTER TABLE epg_poster ADD COLUMN IF NOT EXISTS rt INT NOT NULL DEFAULT 0`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS epg_src (id SERIAL PRIMARY KEY, name TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT true, pref BOOLEAN NOT NULL DEFAULT false, nch INT NOT NULL DEFAULT -1, nprog INT NOT NULL DEFAULT -1, ncover INT NOT NULL DEFAULT -1, cover TEXT NOT NULL DEFAULT '', days REAL NOT NULL DEFAULT 0, err TEXT NOT NULL DEFAULT '', checked_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     if (await kv.get('poster_v2') !== '1') { await pool.query(`DELETE FROM epg_poster`); await kv.set('poster_v2', '1'); }
     if (await kv.get('feeds_v2') !== '1') { // one-time: add the new feeds to a stored feed list
       const st = await getSettings(); if (st.epg_feeds) { const cur = feedsOf(st); await setSettings({ epg_feeds: [...new Set([...cur, ...FEEDS_V2])].slice(0, 30).join(',') }); }
@@ -68,38 +77,49 @@ module.exports = function install(ctx) {
   // ---------- fetching ----------
   const status = { running: false, phase: '', feed: '', started: 0 };
   async function open(feed, signal) {
+    if (isSrcFeed(feed)) { // admin-supplied URL → SSRF-safe fetcher (public IPs only, size limit)
+      const src = (await sources()).find((x) => 'src:' + x.id === feed); if (!src) throw new Error('zdroj neexistuje');
+      const r = await FETCH.open(src.url, { signal }); return { body: r.stream, gz: r.gz, pre: 'src' + src.id + ':', max: 300 * 1024 * 1024 };
+    }
     const r = await fetch(FEED_URL(feed), { headers: UA, signal, redirect: 'follow' });
     if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
-    return r.body;
+    return { body: r.body, gz: true, pre: '', max: 400 * 1024 * 1024 };
   }
   async function readChannels(feed) {
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), 120e3);
     const out = [];
-    try { await C.parseStream(await open(feed, ac.signal), { gz: true, channelsOnly: true, onChannel: (c) => { if (c.id && out.length < 5000) out.push({ id: C.clip(c.id, 120), names: c.names.slice(0, 4).map((n) => C.clip(n, 120)), feed }); } }); }
+    try { const o = await open(feed, ac.signal); await C.parseStream(o.body, { gz: o.gz, maxBytes: o.max, channelsOnly: true, onChannel: (c) => { if (c.id && out.length < 5000) out.push({ id: o.pre + C.clip(c.id, 120), names: c.names.slice(0, 4).map((n) => C.clip(n, 120)), feed }); } }); }
     finally { clearTimeout(t); ac.abort(); }
     return out;
   }
-  async function readProgs(feed, want, from, to, onBatch) {
+  // full detail from..to; to..far only highlight candidates (films, live sport, big shows) for "Top týždňa"
+  async function readProgs(feed, want, from, to, far) {
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), 300e3);
-    const counts = new Map(); let rows = [], kept = 0;
+    const counts = new Map(); let rows = [], kept = 0, hl = 0;
     try {
-      await C.parseStream(await open(feed, ac.signal), {
-        gz: true,
+      const o = await open(feed, ac.signal);
+      await C.parseStream(o.body, {
+        gz: o.gz, maxBytes: o.max,
         onProg: (p) => {
-          if (!p.ch || !(p.stop > from) || !(p.start < to) || !(p.stop > p.start)) return;
-          counts.set(p.ch, (counts.get(p.ch) || 0) + 1);
-          if (!want.has(p.ch)) return;
+          if (!p.ch || !(p.stop > from) || !(p.start < far) || !(p.stop > p.start)) return;
+          const id = o.pre ? o.pre + C.clip(p.ch, 120) : p.ch, near = p.start < to;
+          if (near) counts.set(id, (counts.get(id) || 0) + 1);
+          if (!want.has(id)) return;
+          if (!near && hl >= 40000) return;
           const d = C.progDetails(p); if (!d.title) return;
           const dur = (p.stop - p.start) / 60e3;
           let kind = ADULT.test(d.cat) ? 'adult' : C.classify(d.cat, d.title);
           if (kind === 'film' && dur < 65) kind = dur < 20 ? '' : 'series';
-          rows.push([p.ch, new Date(p.start), new Date(p.stop), d.title, d.sub, d.cat, kind, d.desc, d.year, (d.live ? 'l' : '') + (d.rerun ? 'r' : '') + (d.premiere ? 'p' : '')]); kept++;
+          const fl = (d.live ? 'l' : '') + (d.rerun ? 'r' : '') + (d.premiere ? 'p' : '');
+          if (!near) { if (scoreOf({ s: p.start, e: p.stop, title: d.title, kind, cat: d.cat, yr: d.year, fl }, FARCH, 0) < 22) return; hl++; }
+          rows.push([id, new Date(p.start), new Date(p.stop), d.title, d.sub, d.cat, kind, near ? d.desc : '', d.year, fl]); kept++;
           if (kept > 400000) return 'stop';
         },
       });
     } finally { clearTimeout(t); ac.abort(); }
-    return { rows, counts };
+    return { rows, counts, hl };
   }
+  const FARCH = { name: '', category: '' };
   async function insertProgs(c, rows) {
     // dedupe by (epg_id, s)
     const seen = new Set(); rows = rows.filter((r) => { const k = r[0] + '|' + +r[1]; if (seen.has(k)) return false; seen.add(k); return true; });
@@ -108,24 +128,40 @@ module.exports = function install(ctx) {
       await c.query(`INSERT INTO epg_prog (epg_id,s,e,title,sub,cat,kind,descr,yr,fl) SELECT * FROM unnest($1::text[],$2::timestamptz[],$3::timestamptz[],$4::text[],$5::text[],$6::text[],$7::text[],$8::text[],$9::text[],$10::text[]) ON CONFLICT (epg_id,s) DO NOTHING`, cols);
     }
   }
+  const idxOf = (rows) => (rows.length ? C.buildIndex(rows.map((r) => ({ id: r.id, names: r.names ? r.names.split('\n') : [r.name], feed: r.feed, n: r.n }))) : null);
+  // country guard; ids from custom sources often have no country suffix → allowed
+  const okCat = (cat, id) => { const raw = String(id).replace(SRC_RE, ''); return raw === id ? C.allowed(cat, id) : !C.idCountry(raw) || C.allowed(cat, raw); };
+  // fuzzy name match in one index (+ "+1" timeshift fallback: base channel shifted by 60 min); adds the top candidates to `want`
+  function fuzzy(ix, ch, w, want) {
+    if (!ix) return { best: null, top: null, shift: 0 };
+    const cands = (name) => C.candidates(ix, name, ch.category, 6).filter((x) => x.sim >= C.MATCH_MIN && okCat(ch.category, x.id));
+    const cand = cands(ch.name); cand.slice(0, w).forEach((x) => want.add(x.id));
+    let best = cand.find((x) => C.isMatch(x)) || null, shift = 0;
+    if (!best && /\+\s*1\b/.test(ch.name)) { const c2 = cands(ch.name.replace(/\+\s*1\b/, ' ')); c2.slice(0, 2).forEach((x) => want.add(x.id)); const b2 = c2.find((x) => C.isMatch(x)); if (b2) { best = b2; shift = 60; } }
+    return { best, top: cand[0] || null, shift };
+  }
+  // priority: manual → preferred custom sources → built-in mapping → epgshare (fuzzy, +1) → other custom sources (fill gaps)
   async function computeMap(c, chans, epgRows) {
-    const ix = C.buildIndex(epgRows.map((r) => ({ id: r.id, names: r.names ? r.names.split('\n') : [r.name], feed: r.feed, n: r.n })));
+    const pref = new Set((await sources()).filter((x) => x.enabled && x.pref).map((x) => 'src:' + x.id));
+    const T = { p: [], m: [], l: [] }; for (const r of epgRows) (isSrcFeed(r.feed) ? (pref.has(r.feed) ? T.p : T.l) : T.m).push(r);
+    const ixP = idxOf(T.p), ixM = idxOf(T.m), ixL = idxOf(T.l);
     const sk = skipOf(c), cur = await loadMap(), res = new Map(), want = new Set(), byId = new Map(epgRows.map((r) => [r.id, r]));
-    const cands = (name, cat) => C.candidates(ix, name, cat, 6).filter((x) => x.sim >= C.MATCH_MIN && C.allowed(cat, x.id));
+    const put = (ch, b, shift) => res.set(ch.id, { epg_id: b.id, score: b.sim, shift });
     for (const ch of chans) {
       const m = cur.get(ch.id);
       if (m && m.manual) { if (m.epg_id) want.add(m.epg_id); continue; }
       if (skipped(ch.category, sk)) { res.set(ch.id, { epg_id: '', score: 0, shift: 0 }); continue; }
+      const p = fuzzy(ixP, ch, 2, want); if (p.best) { put(ch, p.best, p.shift); continue; }
       // 1) built-in verified mapping
       const kn = C.known(ch.name), kr = kn && byId.get(kn.id);
       if (kr) { want.add(kn.id); if (kr.n !== 0) { res.set(ch.id, { epg_id: kn.id, score: 1, shift: kn.shift }); continue; } }
-      // 2) fuzzy name match
-      const cand = cands(ch.name, ch.category);
-      cand.slice(0, 3).forEach((x) => want.add(x.id));
-      let best = cand.find((x) => C.isMatch(x)), shift = 0;
-      // 3) "+1" timeshift channel without own data → base channel shifted by 60 min
-      if (!best && /\+\s*1\b/.test(ch.name)) { const c2 = cands(ch.name.replace(/\+\s*1\b/, ' '), ch.category); c2.slice(0, 2).forEach((x) => want.add(x.id)); const b2 = c2.find((x) => C.isMatch(x)); if (b2) { best = b2; shift = 60; } }
-      res.set(ch.id, best ? { epg_id: best.id, score: best.sim, shift } : { epg_id: '', score: cand[0] ? cand[0].sim : 0, shift: 0 });
+      // 2) fuzzy name match in the epgshare feeds, 3) custom sources for what is still missing
+      const a = fuzzy(ixM, ch, 3, want);
+      if (a.best && a.best.n > 0) { put(ch, a.best, a.shift); continue; }
+      const l = fuzzy(ixL, ch, 2, want);
+      const b = a.best && !(a.best.n < 0 && l.best && l.best.n > 0) ? a : l.best ? l : a;
+      const top = a.top || p.top || l.top;
+      res.set(ch.id, b.best ? { epg_id: b.best.id, score: b.best.sim, shift: b.shift } : { epg_id: '', score: top ? top.sim : 0, shift: 0 });
     }
     return { res, want };
   }
@@ -146,31 +182,32 @@ module.exports = function install(ctx) {
   async function doRefresh(opt) {
     const c = cfg(await getSettings()); const t0 = Date.now();
     Object.assign(status, { running: true, started: t0, phase: 'kanály', feed: '' });
-    let feeds = feedsOf(c); if (opt.feeds) feeds = feeds.filter((f) => opt.feeds.includes(f));
-    const report = {};
+    const allFeeds = [...feedsOf(c), ...(await sources()).filter((x) => x.enabled).map((x) => 'src:' + x.id)];
+    let feeds = allFeeds; if (opt.feeds) feeds = feeds.filter((f) => opt.feeds.includes(f));
+    const report = {}; if (opt.feeds) { try { const o = JSON.parse((await kv.get('report')) || '{}'); for (const f of allFeeds) if (o[f] && !opt.feeds.includes(f)) report[f] = o[f]; } catch {} }
     // phase 1: channel lists (download aborts at the first <programme>, only a few kB per feed)
     if (!opt.feeds) for (const f of feeds) {
       status.feed = f;
       try {
-        const list = await readChannels(f); report[f] = { ch: list.length };
+        const seenId = new Set(), list = (await readChannels(f)).filter((x) => x.id && !seenId.has(x.id) && seenId.add(x.id)); report[f] = { ch: list.length };
         if (list.length) await pool.query(`INSERT INTO epg_chan (id,name,names,feed,seen_at) SELECT a,b,c,d,now() FROM unnest($1::text[],$2::text[],$3::text[],$4::text[]) AS t(a,b,c,d) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,names=EXCLUDED.names,feed=EXCLUDED.feed,seen_at=now()`, [list.map((x) => x.id), list.map((x) => x.names[0] || x.id), list.map((x) => x.names.join('\n')), list.map((x) => f)]);
       } catch (e) { report[f] = { err: String(e.message).slice(0, 120) }; }
     }
-    await pool.query(`DELETE FROM epg_chan WHERE NOT (feed = ANY($1)) OR seen_at < now() - interval '14 days'`, [feedsOf(c)]);
+    await pool.query(`DELETE FROM epg_chan WHERE NOT (feed = ANY($1)) OR seen_at < now() - interval '14 days'`, [allFeeds]);
     const chans = await channels();
     let epgRows = (await pool.query('SELECT id,name,names,feed,n FROM epg_chan')).rows;
     // phase 2: provisional auto-mapping + candidate set
     status.phase = 'párovanie';
     let { want } = await computeMap(c, chans, epgRows);
     // phase 3: programmes, one feed at a time (streamed, only wanted channels within the window)
-    const now = Date.now(), from = Math.min(dayStart(now), now - 3 * 3600e3) - 3600e3, to = now + Math.max(12, Math.min(72, +c.epg_ahead || 36)) * 3600e3;
+    const now = Date.now(), from = Math.min(dayStart(now), now - 3 * 3600e3) - 3600e3, to = now + Math.max(12, Math.min(72, +c.epg_ahead || 36)) * 3600e3, far = dayStart(now) + 8 * 86400e3 + 6 * 3600e3;
     const byFeed = new Map(); for (const r of epgRows) { if (!byFeed.has(r.feed)) byFeed.set(r.feed, []); byFeed.get(r.feed).push(r.id); }
     status.phase = 'program';
     for (const f of feeds) {
       const ids = (byFeed.get(f) || []).filter((i) => want.has(i)); if (!ids.length) { (report[f] = report[f] || {}).progs = 0; continue; }
       status.feed = f;
       try {
-        const { rows, counts } = await readProgs(f, new Set(ids), from, to);
+        const { rows, counts, hl } = await readProgs(f, new Set(ids), from, to, far);
         const cl = await pool.connect();
         try {
           await cl.query('BEGIN');
@@ -179,7 +216,8 @@ module.exports = function install(ctx) {
           const all = byFeed.get(f); await cl.query('UPDATE epg_chan SET n = COALESCE(x.n, 0) FROM (SELECT a, b AS n FROM unnest($1::text[],$2::int[]) AS t(a,b)) x WHERE epg_chan.id = x.a', [all, all.map((i) => counts.get(i) || 0)]);
           await cl.query('COMMIT');
         } catch (e) { await cl.query('ROLLBACK').catch(() => {}); throw e; } finally { cl.release(); }
-        Object.assign(report[f] = report[f] || {}, { progs: rows.length, withData: [...counts.keys()].length });
+        let last = 0; for (const r of rows) if (+r[2] > last) last = +r[2];
+        Object.assign(report[f] = report[f] || {}, { progs: rows.length, hl, withData: [...counts.keys()].length, days: last ? +((last - now) / 86400e3).toFixed(1) : 0 });
       } catch (e) { (report[f] = report[f] || {}).err = String(e.message).slice(0, 120); }
     }
     // phase 4: final mapping now that we know which EPG channels really have data
@@ -218,7 +256,8 @@ module.exports = function install(ctx) {
     const vm = await visibleMapped(); const byEpg = new Map(); let maxSh = 0; for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); maxSh = Math.max(maxSh, r.sh); }
     const out = {}, nowS = Date.now() / 1000;
     if (byEpg.size) {
-      const q = await pool.query(`SELECT epg_id, s, e, title, kind FROM (SELECT epg_id,s,e,title,kind, row_number() OVER (PARTITION BY epg_id ORDER BY s) AS rn FROM epg_prog WHERE epg_id = ANY($1) AND e > $2 AND s < now() + interval '12 hours') x WHERE rn <= 6 ORDER BY epg_id, s`, [[...byEpg.keys()], new Date(Date.now() - maxSh)]);
+      const shOf = new Map(); for (const r of vm) shOf.set(r.epg, Math.max(shOf.get(r.epg) || 0, r.sh)); const ks = [...byEpg.keys()];
+      const q = await pool.query(`SELECT epg_id, s, e, title, kind FROM (SELECT p.epg_id,p.s,p.e,p.title,p.kind, row_number() OVER (PARTITION BY p.epg_id ORDER BY p.s) AS rn FROM epg_prog p JOIN unnest($1::text[],$2::int[]) AS u(id,sh) ON p.epg_id = u.id WHERE p.e > now() - make_interval(secs => u.sh / 1000) AND p.s < now() + interval '12 hours') x WHERE rn <= 6 ORDER BY epg_id, s`, [ks, ks.map((k) => shOf.get(k))]);
       for (const r of q.rows) for (const ch of byEpg.get(r.epg_id)) { const e = Math.round((+r.e + ch.sh) / 1000); if (e <= nowS) continue; const l = (out[ch.id] = out[ch.id] || []); if (l.length < 4) l.push([Math.round((+r.s + ch.sh) / 1000), e, r.title, r.kind === 'adult' ? '' : r.kind]); }
     }
     const d = { t: Math.round(Date.now() / 1000), c: out };
@@ -303,7 +342,6 @@ module.exports = function install(ctx) {
     if (x.fl && x.fl.includes('p') && !x.fl.includes('r')) b += 6;
     return b;
   }
-  const SPEED = [0, 18, 28, 40, 56, 80];
   // pick the public list with variety: each further item of the same kind costs 10 points
   function diverse(list, n) {
     const left = list.slice(), out = [], cnt = {};
@@ -331,41 +369,52 @@ module.exports = function install(ctx) {
     if (s < now) sc -= 6;
     return sc;
   }
-  async function dnesItems(opt = {}) {
+  // ---------- Top dnes / Top týždňa ----------
+  // two compact sections: today (now → 02:00) and the next 7 days; 3–5 items each, exactly one "best"; <3 good items → section hidden
+  const clampN = (v) => Math.max(3, Math.min(5, parseInt(v, 10) || 4));
+  const MIN_N = 3;
+  async function topItems(opt = {}) {
     if (!opt.all && dnesCache && Date.now() - dnesCache.t < 120e3) return dnesCache.d;
     const c = cfg(await getSettings()), now = Date.now(), ds = dayStart(now), de = ds + 26 * 3600e3;
+    const wEnd = dayStart(ds + 8 * 86400e3 + 6 * 3600e3) + 2 * 3600e3; // tomorrow … +7 days
     const kinds = String(c.dnes_kinds).split(',').map((x) => x.trim()).filter(Boolean);
     const vm = (await visibleMapped()).filter((r) => !ADULT.test(r.category) && !r.sh && (c.dnes_scope === 'all' || skcz(r))); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
     const hidden = new Map((await pool.query('SELECT k,title FROM dnes_hide')).rows.map((r) => [r.k, r.title]));
-    let cand = [];
+    const cand = [];
     if (byEpg.size && kinds.length) {
-      const q = await pool.query(`SELECT epg_id,s,e,title,cat,kind,yr,fl FROM epg_prog WHERE epg_id = ANY($1) AND kind = ANY($2) AND e > $3 AND s < $4 AND s > $5`, [[...byEpg.keys()], kinds, new Date(now + 10 * 60e3), new Date(de), new Date(now - 40 * 60e3)]);
+      const q = await pool.query(`SELECT epg_id,s,e,title,cat,kind,yr,fl FROM epg_prog WHERE epg_id = ANY($1) AND kind = ANY($2) AND e > $3 AND s < $4 AND s > $5`, [[...byEpg.keys()], kinds, new Date(now + 10 * 60e3), new Date(c.week_on === '1' ? wEnd : de), new Date(now - 40 * 60e3)]);
       for (const p of q.rows) {
         const ch = byEpg.get(p.epg_id)[0]; const sc = scoreOf(p, ch, now); if (sc < 34) continue;
         const k = 'p:' + p.epg_id + '|' + +p.s, tk = 't:' + tnorm(p.title);
-        cand.push({ k, tk, s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '', ch, score: sc, hidden: hidden.has(k) || hidden.has(tk) });
+        cand.push({ k, tk, sec: +p.s < de ? 'd' : 'w', s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '', ch, score: sc, hidden: hidden.has(k) || hidden.has(tk) });
       }
     }
     const info = await posterInfo(cand);
     for (const x of cand) { x.boost = topBoost(x, info.get(posterKey(x))); x.score += x.boost; }
     cand.sort((a, b) => b.score - a.score || a.s - b.s);
-    // dedupe titles (same film on +1 / HD variants) and cap per channel
-    const seen = new Set(), perCh = new Map(), pick = [];
-    for (const x of cand) { if (x.hidden && !opt.all) continue; const tk = x.tk + '|' + Math.round(x.s / 3600e3); if (seen.has(x.tk) || seen.has(tk)) { x.dupe = true; if (!opt.all) continue; } seen.add(x.tk); const n = perCh.get(x.ch.id) || 0; if (n >= 2 && !opt.all) continue; perCh.set(x.ch.id, n + 1); pick.push(x); }
-    const max = Math.max(1, Math.min(30, +c.dnes_max || 8));
     const all = await channels();
-    const pins = (await pool.query('SELECT id,channel_id,s,e,title,kind FROM dnes_pin WHERE e > now() AND s < $1 ORDER BY s', [new Date(de)])).rows
-      .map((p) => { const ch = all.find((r) => r.id === p.channel_id && r.visible); return ch ? { k: 'pin:' + p.id, pin: p.id, s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: '', ch, score: 999 } : null; }).filter(Boolean);
-    let out;
-    if (opt.all) out = { pins, auto: pick };
-    else {
-      const list = diverse(pick, Math.max(0, max - pins.length)), nTop = Math.max(0, Math.min(6, +c.dnes_top || 0));
-      pins.forEach((x) => { x.top = true; });
-      const best = list.slice().sort((a, b) => b.score - a.score);
-      best.filter((x, i) => i < nTop - pins.length && (x.score >= 84 || (i === 0 && !pins.length))).forEach((x) => { x.top = true; });
-      const byT = (a, b) => a.s - b.s;
-      out = [...pins, ...list.filter((x) => x.top)].sort(byT).concat(list.filter((x) => !x.top).sort(byT));
+    const pins = (await pool.query('SELECT id,channel_id,s,e,title,kind FROM dnes_pin WHERE e > now() AND s < $1 ORDER BY s', [new Date(wEnd)])).rows
+      .map((p) => { const ch = all.find((r) => r.id === p.channel_id && r.visible); return ch ? { k: 'pin:' + p.id, pin: p.id, sec: +p.s < de ? 'd' : 'w', s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: '', ch, score: 999 } : null; }).filter(Boolean);
+    // one section: dedupe titles (reruns, +1/HD variants – keep the best airing), skip hidden/used titles, 1 per channel (2 if needed), variety by kind
+    function section(sec, n, used) {
+      const list = cand.filter((x) => x.sec === sec), ps = pins.filter((x) => x.sec === sec).slice(0, n);
+      const seen = new Set(used), perCh = new Map(), first = [], second = [];
+      for (const x of ps) seen.add('t:' + tnorm(x.title));
+      for (const x of list) {
+        if (seen.has(x.tk)) { x.dupe = true; continue; } if (x.hidden) continue; seen.add(x.tk);
+        const k = perCh.get(x.ch.id) || 0; perCh.set(x.ch.id, k + 1); if (k === 0) first.push(x); else if (k === 1) second.push(x);
+      }
+      let picked = diverse(first, n - ps.length); if (picked.length < n - ps.length) picked = picked.concat(diverse(second, n - ps.length - picked.length));
+      const items = ps.concat(picked);
+      if (items.length < MIN_N) return { items: [], list, pins: ps };
+      const best = items.slice().sort((a, b) => b.score - a.score || a.s - b.s)[0];
+      const rank = items.slice().sort((a, b) => b.score - a.score || a.s - b.s); rank.forEach((x, i) => { x.rank = i + 1; });
+      const out = [best, ...items.filter((x) => x !== best).sort((a, b) => a.s - b.s)].map((x) => ({ ...x, best: x === best }));
+      return { items: out, list, pins: ps };
     }
+    const d = section('d', clampN(c.top_n), []);
+    const w = c.week_on === '1' ? section('w', clampN(c.week_n), d.items.map((x) => 't:' + tnorm(x.title))) : { items: [], list: [], pins: [] };
+    const out = opt.all ? { day: d, week: w } : { day: d.items, week: w.items };
     if (!opt.all) dnesCache = { t: Date.now(), d: out };
     return out;
   }
@@ -383,7 +432,8 @@ module.exports = function install(ctx) {
     if (posterBusy) return; posterBusy = true;
     setTimeout(async () => {
       try {
-        const items = (await dnesItems({ all: true })).auto.filter((x) => x.kind === 'film').slice(0, 45).concat((await dnesItems()).filter((x) => x.kind === 'film'));
+        const t = await topItems({ all: true }), pub = await topItems();
+        const items = [...pub.day, ...pub.week, ...t.day.list.slice(0, 40), ...t.week.list.slice(0, 50)].filter((x) => x.kind === 'film');
         for (const x of items) {
           const k = posterKey(x); if ((await pool.query('SELECT 1 FROM epg_poster WHERE k=$1 AND (url <> \'\' OR at > now() - interval \'7 days\')', [k])).rowCount) continue;
           let r = null; try { r = await POSTER.find(x.title, x.yr); } catch { r = null; }
@@ -396,17 +446,18 @@ module.exports = function install(ctx) {
     }, 2000).unref();
   }
   const KL = (en, k) => (en ? C.KIND_LABEL_EN : C.KIND_LABEL)[k] || tx(en, 'Program', 'Show');
+  const fmtWD = { sk: new Intl.DateTimeFormat('sk-SK', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'numeric' }), en: new Intl.DateTimeFormat('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' }) };
+  const dayLbl = (ms, en) => { const d = dayStart(ms), t = dayStart(Date.now()); if (d === t) return tx(en, 'Dnes', 'Today'); if (d === dayStart(t + 30 * 3600e3)) return tx(en, 'Zajtra', 'Tomorrow'); return fmtWD[en ? 'en' : 'sk'].format(new Date(ms)); };
   ctx.dnesBlock = async (req, s) => {
     try {
       const c = cfg(await getSettings()); if (c.dnes_on !== '1') return '';
-      const items = await dnesItems(); if (!items.length) return '';
-      const en = req.lang === 'en', pm = await posterMap(items), now = Date.now();
+      const t = await topItems(); if (!t.day.length && !t.week.length) return '';
+      const en = req.lang === 'en', pm = await posterMap([...t.day, ...t.week]), now = Date.now();
       const logo = (ch) => (ctx.tvchLogoSrc ? ctx.tvchLogoSrc(ch) : '/tvlogo/' + ch.id);
-      const title = (en && c.dnes_title_en) || c.dnes_title || 'Dnes v TV';
-      const sp = SPEED[Math.max(1, Math.min(5, +c.dnes_speed || 3))];
       const card = (x) => { const pu = x.kind === 'film' && pm.get(posterKey(x)); const ics = x.pin ? '/api/epg/ics/pin/' + x.pin : `/api/epg/ics/${x.ch.id}/${Math.round(x.s / 1000)}`;
-        return `<li class="dni dk-${esc(x.kind || 'x')}${x.top ? ' top' : ''}${x.s <= now ? ' live' : ''}" data-s="${Math.round(x.s / 1000)}" data-e="${Math.round(x.e / 1000)}">${pu ? `<img class="dnp" src="${esc(pu)}" alt="" loading="lazy" decoding="async" width="${x.top ? 84 : 56}" height="${x.top ? 120 : 80}" referrerpolicy="no-referrer">` : `<img class="dnp dnc" src="${esc(logo(x.ch))}" alt="" loading="lazy" decoding="async" width="56" height="56">`}<div class="dnb"><div class="dnt">${x.top ? '<span class="dntop">TOP</span>' : ''}<time datetime="${new Date(x.s).toISOString()}">${esc(hm(x.s))}</time><span class="dnk">${C.KIND_ICON[x.kind] || '📺'} ${esc(KL(en, x.kind))}</span><span class="dnlive">${esc(tx(en, 'práve beží', 'on now'))}</span></div><div class="dnn">${esc(x.title)}</div><div class="dnch"><img src="${esc(logo(x.ch))}" alt="" width="20" height="20" loading="lazy" decoding="async"><span>${esc(x.ch.name)}</span></div><div class="dpb"><i></i></div><a class="dnr" href="${ics}" rel="nofollow" download title="${esc(tx(en, 'Pripomenúť (pridať do kalendára)', 'Remind me (add to calendar)'))}">🔔 ${esc(tx(en, 'Pripomenúť', 'Remind me'))}</a></div></li>`; };
-      return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><section class="dnes" aria-label="${esc(title)}" data-speed="${sp}"><div class="dnhd"><h2 class="dnh"><span class="dnl">●</span> ${esc(title)}</h2><button type="button" class="dnpp" aria-pressed="false" data-pause="${esc(tx(en, '⏸ Zastaviť', '⏸ Pause'))}" data-play="${esc(tx(en, '▶ Spustiť', '▶ Play'))}" hidden>${esc(tx(en, '⏸ Zastaviť', '⏸ Pause'))}</button></div><div class="dnv" tabindex="0" aria-label="${esc(tx(en, 'Pás s reláciami – posúvajte do strán', 'Strip of shows – scroll sideways'))}"><ul class="dnl-list">${items.map(card).join('')}</ul></div><a class="dnm" href="/${esc(s.slug)}/kanaly${en ? '?lang=en' : ''}#katalog">${esc(tx(en, 'Celý TV program pri kanáloch →', 'Full TV schedule by channel →'))}</a></section><script src="/static/epg.js?v=${ASSET_V}" defer></script>`;
+        return `<li class="hli dk-${esc(x.kind || 'x')}${x.best ? ' best' : ''}${x.s <= now ? ' live' : ''}" data-s="${Math.round(x.s / 1000)}" data-e="${Math.round(x.e / 1000)}" data-r="${x.rank || 9}">${pu ? `<img class="hlp" src="${esc(pu)}" alt="" loading="lazy" decoding="async" width="96" height="136" referrerpolicy="no-referrer">` : `<img class="hlp hlo" src="${esc(logo(x.ch))}" alt="" loading="lazy" decoding="async" width="80" height="80">`}<div class="hlb"><div class="hlt"><span class="hlbest">★ ${esc(tx(en, 'Naj', 'Top pick'))}</span><span class="hld">${esc(dayLbl(x.s, en))}</span><time datetime="${new Date(x.s).toISOString()}">${esc(hm(x.s))}</time><span class="hlk">${C.KIND_ICON[x.kind] || '📺'} ${esc(KL(en, x.kind))}</span><span class="hllive">${esc(tx(en, 'práve beží', 'on now'))}</span></div><div class="hln">${esc(x.title)}</div><div class="hlc"><img src="${esc(logo(x.ch))}" alt="" width="20" height="20" loading="lazy" decoding="async"><span>${esc(x.ch.name)}</span></div><a class="hlr" href="${ics}" rel="nofollow" download title="${esc(tx(en, 'Pripomenúť (pridať do kalendára)', 'Remind me (add to calendar)'))}">🔔 ${esc(tx(en, 'Pripomenúť', 'Remind me'))}</a></div></li>`; };
+      const sec = (id, icon, title, items) => (items.length ? `<section class="hls" id="${id}" aria-labelledby="${id}-h"><h2 class="hlh" id="${id}-h">${icon} ${esc(title)}</h2><ol class="hll">${items.map(card).join('')}</ol></section>` : '');
+      return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div class="tops">${sec('top-dnes', '<span class="dnl">●</span>', (en && c.top_title_en) || c.top_title, t.day)}${sec('top-tyzden', '📅', (en && c.week_title_en) || c.week_title, t.week)}<a class="dnm" href="/${esc(s.slug)}/kanaly${en ? '?lang=en' : ''}#katalog">${esc(tx(en, 'Celý TV program pri kanáloch →', 'Full TV schedule by channel →'))}</a></div><script src="/static/epg.js?v=${ASSET_V}" defer></script>`;
     } catch (e) { console.error('dnes', e.message); return ''; }
   };
 
@@ -435,9 +486,105 @@ module.exports = function install(ctx) {
   }
   ctx.epgOnEdit = async (id, body) => { if (body && 'epg_id' in body && String(body.epg_id).trim() !== String(body.epg_prev || '').trim()) return setManual(id, body.epg_id); return true; };
 
+  // ---------- admin: custom EPG sources (XMLTV URL) ----------
+  // On save the file is downloaded once (SSRF-safe, size + time limit, streamed), channel list stored, stats + coverage computed,
+  // then a partial refresh downloads its programmes for the channels that need them. Only schedule metadata is kept.
+  let probing = false;
+  async function noProgChannels() { // visible, not skipped, without any upcoming programme
+    const c = cfg(await getSettings()), sk = skipOf(c), nd = await nowData();
+    return (await channels()).filter((r) => r.visible && !skipped(r.category, sk) && !(nd.c[r.id] && nd.c[r.id].length));
+  }
+  async function probe(src) {
+    const key = 'src:' + src.id, pre = 'src' + src.id + ':', now = Date.now();
+    const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 75e3);
+    const chs = new Map(), cnt = new Map(); let np = 0, last = 0, err = '';
+    try {
+      const o = await FETCH.open(src.url, { signal: ac.signal });
+      await C.parseStream(o.stream, { gz: o.gz, maxBytes: 300 * 1024 * 1024,
+        onChannel: (x) => { if (x.id && chs.size < 5000) chs.set(C.clip(x.id, 120), x.names.slice(0, 4).map((n) => C.clip(n, 120))); },
+        onProg: (p) => { np++; if (p.ch && p.stop > now && p.stop > p.start) { const id = C.clip(p.ch, 120); cnt.set(id, (cnt.get(id) || 0) + 1); if (p.stop > last) last = p.stop; } } });
+      for (const id of cnt.keys()) if (!chs.has(id) && chs.size < 5000) chs.set(id, [id]);
+      if (!chs.size) err = 'Súbor neobsahuje XMLTV kanály ani program (je to naozaj XMLTV EPG?).';
+    } catch (e) { err = ac.signal.aborted ? 'Časový limit 75 s – súbor je príliš veľký alebo server pomalý.' : 'Chyba: ' + String(e.message || e).slice(0, 160); }
+    finally { clearTimeout(tm); ac.abort(); }
+    let ncover = -1, cover = [];
+    if (!err) {
+      const list = [...chs].map(([id, names]) => ({ id: pre + id, name: names[0] || id, names: names.join('\n'), feed: key, n: cnt.get(id) || 0 }));
+      const cl = await pool.connect();
+      try {
+        await cl.query('BEGIN'); await cl.query('DELETE FROM epg_chan WHERE feed=$1', [key]);
+        for (let i = 0; i < list.length; i += 1000) { const b = list.slice(i, i + 1000); await cl.query(`INSERT INTO epg_chan (id,name,names,feed,n,seen_at) SELECT a,b,c,d,e,now() FROM unnest($1::text[],$2::text[],$3::text[],$4::text[],$5::int[]) AS t(a,b,c,d,e) ON CONFLICT (id) DO UPDATE SET name=EXCLUDED.name,names=EXCLUDED.names,feed=EXCLUDED.feed,n=EXCLUDED.n,seen_at=now()`, [b.map((x) => x.id), b.map((x) => x.name), b.map((x) => x.names), b.map((x) => x.feed), b.map((x) => x.n)]); }
+        await cl.query('COMMIT');
+      } catch (e) { await cl.query('ROLLBACK').catch(() => {}); throw e; } finally { cl.release(); }
+      // how many of our channels without programme would this source cover
+      const ix = idxOf(list), w = new Set(); ncover = 0;
+      for (const ch of await noProgChannels()) { const r = fuzzy(ix, ch, 1, w); if (r.best && r.best.n > 0) { ncover++; if (cover.length < 40) cover.push(ch.name); } }
+    }
+    await pool.query('UPDATE epg_src SET nch=$2, nprog=$3, ncover=$4, cover=$5, days=$6, err=$7, checked_at=now() WHERE id=$1', [src.id, err ? -1 : chs.size, err ? -1 : np, ncover, cover.join('\n'), last ? +((last - now) / 86400e3).toFixed(1) : 0, err]);
+    srcCache = null;
+    return !err;
+  }
+  function refreshSoon(keys) { for (const k of keys) partialFeeds.add(k); soonPartial(null); }
+  // channels may fall back to other feeds whose programmes are not stored → full refresh (in the background)
+  const refreshAll = () => { const go = () => (running ? running.then(go) : refresh()); setTimeout(() => { go().catch(() => {}); }, 2000).unref(); };
+  const srcClean = (b) => ({ name: String(b.name || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60), url: String(b.url || '').trim().slice(0, 600) });
+  function srcCheck(url) { try { FETCH.checkUrl(url); } catch (e) { return e.message; } if (BADURL.test(url)) return 'Toto vyzerá ako IPTV playlist / Xtream prístup – povolené sú iba verejné XMLTV EPG súbory (.xml / .xml.gz).'; return ''; }
+  const srcBack = (res, m, id) => res.redirect(303, '/admin/epg?m=' + m + (id ? '&src=' + id : '') + '#zdroje');
+  admin.post('/epg/src', needAuth, csrf, wrap(async (req, res) => {
+    const b = srcClean(req.body); const bad = srcCheck(b.url); if (bad) { await kv.set('src_err', bad); return srcBack(res, 'srcbad'); }
+    if ((await sources()).length >= SRC_MAX) return srcBack(res, 'srcmax');
+    if ((await sources()).some((x) => x.url === b.url)) return srcBack(res, 'srcdup');
+    if (probing) return srcBack(res, 'srcbusy');
+    const row = (await pool.query('INSERT INTO epg_src (name,url,enabled,pref) VALUES ($1,$2,true,$3) RETURNING *', [b.name || new URL(b.url).hostname, b.url, req.body.pref === '1'])).rows[0]; srcCache = null;
+    probing = true; let ok = false; try { ok = await probe(row); } finally { probing = false; }
+    if (ok) refreshSoon(['src:' + row.id]);
+    srcBack(res, ok ? 'srcok' : 'srcerr', row.id);
+  }));
+  admin.post('/epg/src/:id(\\d+)', needAuth, csrf, wrap(async (req, res) => {
+    const id = +req.params.id, cur = (await sources()).find((x) => x.id === id); if (!cur) return srcBack(res, 'ok');
+    const b = srcClean(req.body); const bad = srcCheck(b.url); if (bad) { await kv.set('src_err', bad); return srcBack(res, 'srcbad', id); }
+    const on = req.body.enabled === '1', pref = req.body.pref === '1', urlCh = b.url !== cur.url;
+    await pool.query('UPDATE epg_src SET name=$2, url=$3, enabled=$4, pref=$5 WHERE id=$1', [id, b.name || cur.name, b.url, on, pref]); srcCache = null;
+    if (!on) { await pool.query('DELETE FROM epg_chan WHERE feed=$1', [`src:${id}`]); refreshAll(); return srcBack(res, 'ok', id); }
+    if (urlCh || !cur.enabled || cur.nch < 0) {
+      if (probing) return srcBack(res, 'srcbusy', id);
+      probing = true; let ok = false; try { ok = await probe((await sources()).find((x) => x.id === id)); } finally { probing = false; }
+      if (ok) refreshSoon([`src:${id}`]); return srcBack(res, ok ? 'srcok' : 'srcerr', id);
+    }
+    if (cur.pref && !pref) refreshAll(); else if (pref !== cur.pref) refreshSoon([`src:${id}`]); srcBack(res, 'ok', id);
+  }));
+  admin.post('/epg/src/:id(\\d+)/test', needAuth, csrf, wrap(async (req, res) => {
+    const src = (await sources()).find((x) => x.id === +req.params.id); if (!src) return srcBack(res, 'ok');
+    if (probing) return srcBack(res, 'srcbusy', src.id);
+    probing = true; let ok = false; try { ok = await probe(src); } finally { probing = false; }
+    if (ok && src.enabled) refreshSoon([`src:${src.id}`]); srcBack(res, ok ? 'srcok' : 'srcerr', src.id);
+  }));
+  admin.post('/epg/src/:id(\\d+)/delete', needAuth, csrf, wrap(async (req, res) => {
+    const id = +req.params.id; if (req.body.confirm !== '1') return srcBack(res, 'ok', id);
+    await pool.query('DELETE FROM epg_src WHERE id=$1', [id]); await pool.query('DELETE FROM epg_chan WHERE feed=$1', [`src:${id}`]); await pool.query('DELETE FROM epg_prog WHERE epg_id LIKE $1', [`src${id}:%`]);
+    await pool.query(`UPDATE epg_map SET epg_id='', score=0 WHERE NOT manual AND epg_id LIKE $1`, [`src${id}:%`]);
+    srcCache = null; dropCaches(); refreshAll(); srcBack(res, 'del');
+  }));
+  async function srcCard(req, report) {
+    const list = await sources(), miss = await noProgChannels(), err = await kv.get('src_err');
+    const sel = +req.query.src || 0;
+    const row = (x) => { const r = report['src:' + x.id] || {};
+      return `<form method="post" action="/admin/epg/src/${x.id}" class="srcrow${x.id === sel ? ' sel' : ''}">${hid(req)}<div class="row"><b>${esc(x.name)}</b><span class="hint">${x.enabled ? '✅ zapnutý' : '⏸ vypnutý'}${x.pref ? ' · ⭐ prednostný' : ''} · overené ${esc(ago(x.checked_at && x.checked_at.toISOString()))}</span></div>
+${x.err ? `<p class="err">${esc(x.err)}</p>` : x.nch >= 0 ? `<p>📺 <b>${x.nch}</b> kanálov · 🗓 <b>${x.nprog}</b> relácií · na <b>${esc(String(x.days))}</b> dní dopredu · pokryje <b>${x.ncover}</b> našich kanálov bez programu${r.progs != null ? ` · posledná obnova: ${r.err ? '⚠ ' + esc(r.err) : r.progs + ' rel. uložených'}` : ''}</p>${x.cover ? `<p class="hint">Pokryje napr.: ${esc(x.cover.split('\n').slice(0, 15).join(', '))}${x.ncover > 15 ? '…' : ''}</p>` : ''}` : '<p class="hint">Zatiaľ neoverené.</p>'}
+<label>Názov</label><input name="name" maxlength="60" value="${esc(x.name)}"><label>URL (XMLTV .xml / .xml.gz)</label><input name="url" type="url" maxlength="600" value="${esc(x.url)}" required>
+<label class="ck"><input type="checkbox" name="enabled" value="1"${x.enabled ? ' checked' : ''}> Zapnutý</label><label class="ck"><input type="checkbox" name="pref" value="1"${x.pref ? ' checked' : ''}> ⭐ Prednostný (použiť aj pre kanály, ktoré už program majú)</label>
+<div class="row"><button>💾 Uložiť</button><button formaction="/admin/epg/src/${x.id}/test">🔍 Otestovať znova</button><label class="ck"><input type="checkbox" name="confirm" value="1"> potvrdiť</label><button class="d" formaction="/admin/epg/src/${x.id}/delete">🗑 Zmazať</button></div></form>`; };
+    const byCat = new Map(); for (const r of miss) { if (!byCat.has(r.category)) byCat.set(r.category, []); byCat.get(r.category).push(r); }
+    return `<div class="card" id="zdroje"><h2>📡 Vlastné EPG zdroje</h2><p class="hint">Pridajte odkaz na verejný XMLTV súbor s TV programom (<code>.xml</code> alebo <code>.xml.gz</code>, http/https). Použije sa pre kanály, ktoré program zatiaľ nemajú (prednostný zdroj aj pre ostatné). Sťahuje sa spolu s ostatnými zdrojmi (každých ${esc(cfg(await getSettings()).epg_hours)} h). Párovanie kanálov je automatické podľa názvu; ručne cez „EPG id“ pri kanáli (🔎). Ukladá sa iba program (čas, názov, kategória) – žiadne streamy ani playlisty; IPTV/M3U/Xtream odkazy sa neprijímajú. Max. ${SRC_MAX} zdrojov, súbor do 120 MB.</p>
+${err && /^src(bad)$/.test(req.query.m || '') ? `<p class="err">${esc(err)}</p>` : ''}
+${list.map((x) => '<hr>' + row(x)).join('') || '<p class="hint">Zatiaľ žiadne vlastné zdroje.</p>'}
+${list.length < SRC_MAX ? `<form method="post" action="/admin/epg/src" class="srcrow">${hid(req)}<h3>➕ Pridať zdroj</h3><label>Názov</label><input name="name" maxlength="60" placeholder="napr. Môj EPG"><label>URL (XMLTV .xml / .xml.gz)</label><input name="url" type="url" maxlength="600" required placeholder="https://…/epg.xml.gz"><label class="ck"><input type="checkbox" name="pref" value="1"> ⭐ Prednostný</label><button>➕ Pridať a otestovať</button><p class="hint">Overenie stiahne celý súbor (môže trvať až ~1 min).</p></form>` : ''}
+<details${miss.length ? ' open' : ''}><summary><b>Chýbajúce kanály – bez programu: ${miss.length}</b></summary><p class="hint">Viditeľné kanály, ktoré teraz nemajú žiadny program (okrem vynechaných kategórií). Kliknite 🔎 a vyberte EPG id, alebo pridajte zdroj, ktorý ich obsahuje.</p>${[...byCat].map(([cat, rs]) => `<p><b>${esc(cat)}</b> (${rs.length}): ${rs.slice(0, 60).map((r) => `<a href="/admin/epg/ch/${r.id}">${esc(r.name)}</a>`).join(', ')}${rs.length > 60 ? ' …' : ''}</p>`).join('') || '<p class="ok">Všetky kanály majú program. 🎉</p>'}</details></div>`;
+  }
+
   // ---------- admin page ----------
-  const MS = { ok: 'Uložené.', run: 'Obnova TV programu spustená na pozadí (zvyčajne 1–3 min). Obnovte stránku neskôr.', busy: 'Obnova už prebieha.', remap: 'Automatické párovanie sa prepočíta pri obnove (spustená).', badid: 'Takéto EPG id v zdroji neexistuje (najprv obnovte zdroj alebo skontrolujte id).', pin: 'Pripnuté.', hid: 'Skryté.', unhid: 'Znovu zobrazené.', del: 'Zmazané.', badpin: 'Vyplňte kanál, čas začiatku a názov.' };
-  const msg = (q) => (MS[q.m] ? `<p class="${/^bad/.test(q.m) ? 'err' : 'ok'}">${esc(MS[q.m])}</p>` : '');
+  const MS = { ok: 'Uložené.', run: 'Obnova TV programu spustená na pozadí (zvyčajne 1–3 min). Obnovte stránku neskôr.', busy: 'Obnova už prebieha.', remap: 'Automatické párovanie sa prepočíta pri obnove (spustená).', badid: 'Takéto EPG id v zdroji neexistuje (najprv obnovte zdroj alebo skontrolujte id).', pin: 'Pripnuté.', hid: 'Skryté.', unhid: 'Znovu zobrazené.', del: 'Zmazané.', badpin: 'Vyplňte kanál, čas začiatku a názov.', srcok: 'Zdroj overený a uložený. Program sa stiahne o chvíľu na pozadí (1–3 min).', srcerr: 'Zdroj sa nepodarilo overiť – pozrite chybu pri zdroji.', srcbad: 'Neplatná alebo nepovolená URL.', srcmax: 'Dosiahnutý max. počet zdrojov.', srcdup: 'Tento zdroj už existuje.', srcbusy: 'Práve sa overuje iný zdroj, skúste o chvíľu.' };
+  const msg = (q) => (MS[q.m] ? `<p class="${/^(bad|src(err|bad|max|dup|busy))/.test(q.m) ? 'err' : 'ok'}">${esc(MS[q.m])}</p>` : '');
   const back = (res, m, a = '') => res.redirect(303, '/admin/epg?m=' + m + (a ? '#' + a : ''));
   const ago = (iso) => { const t = Date.parse(iso || ''); if (!t) return 'nikdy'; const m = Math.round((Date.now() - t) / 60e3); return m < 60 ? `pred ${m} min` : `pred ${Math.round(m / 6) / 10} h`; };
   const KINDS = [['film', '🎬 Filmy'], ['sport', '⚽ Šport (priame prenosy)'], ['show', '🎤 Veľké relácie / zábava']];
@@ -445,7 +592,7 @@ module.exports = function install(ctx) {
     const s = await getSettings(), c = cfg(s), sk = skipOf(c);
     const [lastRun, lastFull, lastMs, rep, lastErr] = await Promise.all(['last_run', 'last_full', 'last_ms', 'report', 'last_err'].map((k) => kv.get(k)));
     let report = {}; try { report = JSON.parse(rep || '{}'); } catch { report = {}; }
-    const chans = await channels(), m = await loadMap();
+    const chans = await channels(), m = await loadMap(), srcs = await sources();
     const st = { all: 0, skip: 0, mapped: 0, manual: 0, none: 0 };
     for (const r of chans) { st.all++; const x = m.get(r.id); if (x && x.manual) { st.manual++; if (x.epg_id) st.mapped++; continue; } if (skipped(r.category, sk)) { st.skip++; continue; } if (x && x.epg_id) st.mapped++; else st.none++; }
     const nprog = (await pool.query('SELECT COUNT(*)::int AS n, MIN(s) AS a, MAX(e) AS b FROM epg_prog')).rows[0];
@@ -453,33 +600,34 @@ module.exports = function install(ctx) {
     const cq = String(req.query.cat || '');
     const list = chans.filter((r) => { const x = m.get(r.id), isSk = skipped(r.category, sk); if (cq && r.category !== cq) return false; if (f === 'all') return true; if (f === 'skipped') return isSk && !(x && x.manual); if (f === 'manual') return x && x.manual; if (f === 'mapped') return x && x.epg_id; return !isSk && !(x && x.epg_id) && !(x && x.manual); });
     const nowD = await nowData(); const cats = [...new Set(chans.map((r) => r.category))];
-    const dn = await dnesItems({ all: true }); const hidden = (await pool.query('SELECT k,title,created_at FROM dnes_hide ORDER BY created_at DESC LIMIT 100')).rows;
+    const dn = await topItems({ all: true }), pub = await topItems(); const hidden = (await pool.query('SELECT k,title,created_at FROM dnes_hide ORDER BY created_at DESC LIMIT 100')).rows;
     const vis = chans.filter((r) => r.visible);
-    const item = (x) => `<div class="row"><span><b>${esc(hm(x.s))}</b> ${C.KIND_ICON[x.kind] || ''} ${esc(x.title)} · <span class="hint">${esc(x.ch.name)}${x.score < 999 ? ' · skóre ' + x.score + (x.boost ? ' (TOP +' + x.boost + ')' : '') : ''}${x.dupe ? ' · duplicita' : ''}${x.hidden ? ' · skryté' : ''}</span></span>${x.pin ? `<form method="post" action="/admin/epg/pin/${x.pin}/delete">${hid(req)}<button class="d">🗑 Odopnúť</button></form>` : `${x.hidden ? '' : `<form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.k)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť</button></form><form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.tk)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť titul</button></form>`}<form method="post" action="/admin/epg/pin">${hid(req)}<input type="hidden" name="channel_id" value="${x.ch.id}"><input type="hidden" name="s" value="${esc(toLocal(x.s))}"><input type="hidden" name="dur" value="${Math.round((x.e - x.s) / 60e3)}"><input type="hidden" name="title" value="${esc(x.title)}"><input type="hidden" name="kind" value="${esc(x.kind)}"><button>📌 Pripnúť</button></form>`}</div>`;
-    res.send(page('TV program (EPG)', `<h1>🗓 TV program (EPG) &amp; Dnes v TV</h1>${msg(req.query)}<p><a href="/admin">← Admin</a> · <a href="/admin/kanaly-katalog">📺 Katalóg kanálov</a></p>
-<p class="hint">Zdroj: <b>epgshare01.online</b> – bezplatné verejné XMLTV súbory (iba programové údaje: čas, názov relácie, kategória). Ukladá sa len program na ~${esc(c.epg_ahead)} h dopredu pre kanály na stránke. Žiadne streamy ani playlisty.</p>
+    const item = (x) => `<div class="row"><span>${x.best ? '★ <b>NAJ</b> ' : ''}<b>${esc(dayLbl(x.s, false))} ${esc(hm(x.s))}</b> ${C.KIND_ICON[x.kind] || ''} ${esc(x.title)} · <span class="hint">${esc(x.ch.name)}${x.score < 999 ? ' · skóre ' + x.score + (x.boost ? ' (TOP +' + x.boost + ')' : '') : ''}${x.dupe ? ' · duplicita' : ''}${x.hidden ? ' · skryté' : ''}</span></span>${x.pin ? `<form method="post" action="/admin/epg/pin/${x.pin}/delete">${hid(req)}<button class="d">🗑 Odopnúť</button></form>` : `${x.hidden ? '' : `<form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.k)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť</button></form><form method="post" action="/admin/epg/hide">${hid(req)}<input type="hidden" name="k" value="${esc(x.tk)}"><input type="hidden" name="title" value="${esc(x.title)}"><button>🙈 Skryť titul</button></form>`}<form method="post" action="/admin/epg/pin">${hid(req)}<input type="hidden" name="channel_id" value="${x.ch.id}"><input type="hidden" name="s" value="${esc(toLocal(x.s))}"><input type="hidden" name="dur" value="${Math.round((x.e - x.s) / 60e3)}"><input type="hidden" name="title" value="${esc(x.title)}"><input type="hidden" name="kind" value="${esc(x.kind)}"><button>📌 Pripnúť</button></form>`}</div>`;
+    res.send(page('TV program (EPG)', `<h1>🗓 TV program (EPG) &amp; Top v TV</h1>${msg(req.query)}<p><a href="/admin">← Admin</a> · <a href="/admin/kanaly-katalog">📺 Katalóg kanálov</a></p>
+<p class="hint">Zdroj: <b>epgshare01.online</b> – bezplatné verejné XMLTV súbory (iba programové údaje: čas, názov relácie, kategória) + <a href="#zdroje">vlastné EPG zdroje</a>. Ukladá sa celý program na ~${esc(c.epg_ahead)} h dopredu pre kanály na stránke, ďalšie dni (do 7) iba kandidáti na „Top týždňa“ (filmy, priame prenosy, veľké relácie). Žiadne streamy ani playlisty.</p>
 <div class="card"><h2>📊 Stav</h2><p>Posledná obnova: <b>${esc(ago(lastRun))}</b>${lastMs ? ` (${Math.round(+lastMs / 1000)} s)` : ''} · plná: ${esc(ago(lastFull))} · interval ${esc(c.epg_hours)} h${status.running ? ` · <b>práve beží: ${esc(status.phase)} ${esc(status.feed)}</b>` : ''}</p>
 <p>Kanály: <b>${st.mapped}</b> s programom · ${st.none} bez párovania · ${st.manual} ručne · ${st.skip} vynechaných (kategórie) · spolu ${st.all}. Uložených relácií: ${nprog.n}${nprog.a ? ` (${esc(hm(+nprog.a))} – ${esc(new Date(nprog.b).toISOString().slice(0, 10))} ${esc(hm(+nprog.b))})` : ''}.</p>
-${lastErr ? `<p class="err">Chyba: ${esc(lastErr)}</p>` : ''}${Object.keys(report).length ? `<p class="hint">${Object.entries(report).map(([k, v]) => `${esc(k)}: ${v.err ? '⚠ ' + esc(v.err) : `${v.ch != null ? v.ch + ' kan., ' : ''}${v.progs || 0} rel.`}`).join(' · ')}</p>` : ''}
+${lastErr ? `<p class="err">Chyba: ${esc(lastErr)}</p>` : ''}${Object.keys(report).length ? `<p class="hint">${Object.entries(report).map(([k, v]) => `${esc(isSrcFeed(k) ? ((srcs.find((x) => 'src:' + x.id === k) || {}).name || k) : k)}: ${v.err ? '⚠ ' + esc(v.err) : `${v.ch != null ? v.ch + ' kan., ' : ''}${v.progs || 0} rel.${v.days ? ' · ' + v.days + ' d' : ''}`}`).join(' · ')}</p>` : ''}
 <div class="row"><form method="post" action="/admin/epg/refresh">${hid(req)}<button>🔄 Obnoviť teraz</button></form><form method="post" action="/admin/epg/remap">${hid(req)}<label class="ck"><input type="checkbox" name="confirm" value="1" required> potvrdiť</label><button>🔁 Znovu automaticky spárovať (ručné ostanú)</button></form></div></div>
+${await srcCard(req, report)}
 <form method="post" action="/admin/epg/settings" class="card" id="nast">${hid(req)}<h2>⚙ Nastavenia TV programu</h2>
 <label class="ck"><input type="checkbox" name="epg_on" value="1"${c.epg_on === '1' ? ' checked' : ''}> Zobraziť TV program pri kanáloch (Teraz / Potom / celý deň)</label>
 <label>Zdroje (krajiny epgshare01, oddelené čiarkou) <span class="hint">dostupné: ${FEEDS_ALL.join(', ')}</span></label><input name="epg_feeds" maxlength="200" value="${esc(c.epg_feeds)}">
 <label>Obnova každých (hodín)</label><select name="epg_hours">${[2, 3, 4, 6, 8, 12, 24].map((h) => `<option${+c.epg_hours === h ? ' selected' : ''}>${h}</option>`).join('')}</select>
 <label>Program dopredu (hodín)</label><select name="epg_ahead">${[24, 36, 48].map((h) => `<option${+c.epg_ahead === h ? ' selected' : ''}>${h}</option>`).join('')}</select>
 <label>Vynechať kategórie kanálov (časť názvu, jedna na riadok)</label><textarea name="epg_skip" rows="5" maxlength="1000">${esc(c.epg_skip)}</textarea><button>Uložiť</button></form>
-<form method="post" action="/admin/epg/dnes" class="card" id="dnes">${hid(req)}<h2>⭐ Dnes v TV (hlavná stránka)</h2><p class="hint">Najdôležitejšie dnešné relácie (filmy, priame športové prenosy, veľké relácie) – iba z viditeľných kanálov na stránke. Ak nie sú dáta, blok sa skryje.</p>
-<label class="ck"><input type="checkbox" name="dnes_on" value="1"${c.dnes_on === '1' ? ' checked' : ''}> Zobraziť blok na hlavnej stránke</label>
-<label>Nadpis</label><input name="dnes_title" maxlength="60" value="${esc(c.dnes_title)}"><label>Nadpis (EN)</label><input name="dnes_title_en" maxlength="60" value="${esc(c.dnes_title_en)}">
-<label>Max. položiek</label><input name="dnes_max" type="number" min="1" max="30" value="${esc(c.dnes_max)}">
-<label>Kanály</label><select name="dnes_scope"><option value="skcz"${c.dnes_scope !== 'all' ? ' selected' : ''}>Iba slovenská a česká scéna (SK/CZ kanály vrátane tematických)</option><option value="all"${c.dnes_scope === 'all' ? ' selected' : ''}>Všetky viditeľné kanály</option></select>
-<label>Počet TOP položiek (zvýraznené, na začiatku pásu) <span class="hint">vyberajú sa automaticky: veľký šport, reprezentácia, populárne/premiérové filmy, prime time; pripnuté sú vždy TOP</span></label><input name="dnes_top" type="number" min="0" max="6" value="${esc(c.dnes_top)}">
-<label>Rýchlosť posúvania pásu</label><select name="dnes_speed">${[[1, 'veľmi pomaly'], [2, 'pomaly'], [3, 'stredne'], [4, 'rýchlo'], [5, 'veľmi rýchlo']].map(([v, l]) => `<option value="${v}"${+c.dnes_speed === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+<form method="post" action="/admin/epg/dnes" class="card" id="dnes">${hid(req)}<h2>⭐ Top dnes &amp; Top týždňa (hlavná stránka)</h2><p class="hint">Automaticky vyberané najdôležitejšie udalosti (filmy, priame športové prenosy, veľké relácie) – iba z viditeľných kanálov. V každej sekcii 3–5 položiek, jedna zvýraznená ako „Naj“. Ak nie sú aspoň 3 kvalitné položky, sekcia sa skryje. Pripnúť / skryť nižšie v náhľade.</p>
+<label class="ck"><input type="checkbox" name="dnes_on" value="1"${c.dnes_on === '1' ? ' checked' : ''}> Zobraziť na hlavnej stránke</label>
+<h3>🔥 Top dnes</h3><label>Nadpis</label><input name="top_title" maxlength="60" value="${esc(c.top_title)}"><label>Nadpis (EN)</label><input name="top_title_en" maxlength="60" value="${esc(c.top_title_en)}">
+<label>Počet položiek</label><select name="top_n">${[3, 4, 5].map((n) => `<option${clampN(c.top_n) === n ? ' selected' : ''}>${n}</option>`).join('')}</select>
+<h3>📅 Top týždňa</h3><label class="ck"><input type="checkbox" name="week_on" value="1"${c.week_on === '1' ? ' checked' : ''}> Zobraziť „Top týždňa“ (najbližších 7 dní, bez dneška)</label><label>Nadpis</label><input name="week_title" maxlength="60" value="${esc(c.week_title)}"><label>Nadpis (EN)</label><input name="week_title_en" maxlength="60" value="${esc(c.week_title_en)}">
+<label>Počet položiek</label><select name="week_n">${[3, 4, 5].map((n) => `<option${clampN(c.week_n) === n ? ' selected' : ''}>${n}</option>`).join('')}</select>
+<h3>Spoločné</h3><label>Kanály</label><select name="dnes_scope"><option value="skcz"${c.dnes_scope !== 'all' ? ' selected' : ''}>Iba slovenská a česká scéna (SK/CZ kanály vrátane tematických)</option><option value="all"${c.dnes_scope === 'all' ? ' selected' : ''}>Všetky viditeľné kanály</option></select>
 <label class="ck"><input type="checkbox" name="sport_on" value="1"${c.sport_on === '1' ? ' checked' : ''}> Záložka „⚽ Šport dnes“ v sekcii Kanály</label>
 <p>Typy:</p>${KINDS.map(([k, l]) => `<label class="ck"><input type="checkbox" name="kind_${k}" value="1"${c.dnes_kinds.split(',').includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}<button>Uložiť</button></form>
-<div class="card" id="nahlad"><h2>👁 Dnes v TV – výber</h2>${dn.pins.length ? `<h3>📌 Pripnuté</h3>${dn.pins.map(item).join('')}` : ''}<p class="hint">Na webe: ${(await dnesItems()).map((x) => (x.top ? '<b>TOP</b> ' : '') + esc(hm(x.s) + ' ' + x.title)).join(' · ') || '—'}</p><h3>Automatický výber (zoradené podľa skóre; na webe max ${esc(c.dnes_max)}, max 2 na kanál${c.dnes_scope !== 'all' ? ', iba SK/CZ kanály' : ''})</h3>${dn.auto.slice(0, 40).map(item).join('') || '<p class="hint">Zatiaľ žiadne dáta – spustite obnovu.</p>'}
+<div class="card" id="nahlad"><h2>👁 Náhľad výberu</h2>${[['🔥 Top dnes', dn.day, pub.day], ['📅 Top týždňa', dn.week, pub.week]].map(([h, d, p]) => `<h3>${h}</h3><p class="hint">Na webe: ${p.map((x) => (x.best ? '★ <b>NAJ</b> ' : '') + esc(dayLbl(x.s, false) + ' ' + hm(x.s) + ' ' + x.title)).join(' · ') || '— (menej ako 3 kvalitné položky → sekcia skrytá)'}</p>${d.pins.length ? `<p><b>📌 Pripnuté</b></p>${d.pins.map(item).join('')}` : ''}<details><summary>Kandidáti podľa skóre (${d.list.length})</summary>${d.list.slice(0, 30).map(item).join('') || '<p class="hint">Zatiaľ žiadne dáta – spustite obnovu.</p>'}</details>`).join('')}
 ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><span>${esc(h.title || h.k)} <span class="hint">${h.k.startsWith('t:') ? '(celý titul)' : '(jedno vysielanie)'}</span></span><form method="post" action="/admin/epg/unhide">${hid(req)}<input type="hidden" name="k" value="${esc(h.k)}"><button>👁 Zobraziť</button></form></div>`).join('')}` : ''}</div>
-<form method="post" action="/admin/epg/pin" class="card" id="pin">${hid(req)}<h2>📌 Pridať vlastnú položku</h2><p class="hint">Napr. zápas alebo film, ktorý v programe chýba. Zobrazí sa do jeho konca.</p>
+<form method="post" action="/admin/epg/pin" class="card" id="pin">${hid(req)}<h2>📌 Pridať vlastnú položku</h2><p class="hint">Napr. zápas alebo film, ktorý v programe chýba, alebo udalosť, ktorá má byť určite v Top. Dnešná ide do „Top dnes“, neskoršia (do 7 dní) do „Top týždňa“; pripnutá je vždy „Naj“. Zobrazí sa do jej konca.</p>
 <label>Kanál</label><select name="channel_id" required><option value="">— vyberte —</option>${vis.map((r) => `<option value="${r.id}">${esc(r.name)} (${esc(r.category)})</option>`).join('')}</select>
 <label>Začiatok</label><input type="datetime-local" name="s" required><label>Dĺžka (min)</label><input type="number" name="dur" min="5" max="600" value="120"><label>Názov</label><input name="title" maxlength="160" required>
 <label>Typ</label><select name="kind">${Object.entries(C.KIND_LABEL).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select><button>Pripnúť</button></form>
@@ -515,7 +663,7 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
   }));
   admin.post('/epg/dnes', needAuth, csrf, wrap(async (req, res) => {
     const b = req.body; const clean = (v, d) => String(v || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60) || d;
-    await setSettings({ dnes_on: b.dnes_on ? '1' : '0', dnes_max: String(Math.max(1, Math.min(30, parseInt(b.dnes_max, 10) || 8))), dnes_kinds: KINDS.map(([k]) => k).filter((k) => b['kind_' + k]).join(',') || 'film', dnes_title: clean(b.dnes_title, D.dnes_title), dnes_title_en: clean(b.dnes_title_en, D.dnes_title_en), dnes_scope: b.dnes_scope === 'all' ? 'all' : 'skcz', dnes_top: String(Math.max(0, Math.min(6, parseInt(b.dnes_top, 10) || 0))), dnes_speed: String(Math.max(1, Math.min(5, parseInt(b.dnes_speed, 10) || 3))), sport_on: b.sport_on ? '1' : '0' });
+    await setSettings({ dnes_on: b.dnes_on ? '1' : '0', dnes_kinds: KINDS.map(([k]) => k).filter((k) => b['kind_' + k]).join(',') || 'film', top_title: clean(b.top_title, D.top_title), top_title_en: clean(b.top_title_en, D.top_title_en), top_n: String(clampN(b.top_n)), week_on: b.week_on ? '1' : '0', week_title: clean(b.week_title, D.week_title), week_title_en: clean(b.week_title_en, D.week_title_en), week_n: String(clampN(b.week_n)), dnes_scope: b.dnes_scope === 'all' ? 'all' : 'skcz', sport_on: b.sport_on ? '1' : '0' });
     dropCaches(); back(res, 'ok', 'dnes');
   }));
   admin.post('/epg/refresh', needAuth, csrf, wrap(async (req, res) => { if (running) return back(res, 'busy'); refresh(); back(res, 'run'); }));

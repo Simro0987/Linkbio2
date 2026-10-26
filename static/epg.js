@@ -12,33 +12,15 @@ function remLink(cls,id,s){var a=el('a',cls,'🔔');a.href='/api/epg/ics/'+id+'/
 var RM=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 var ICON={film:'🎬',sport:'⚽',news:'📰',kids:'🧸',series:'📺',doc:'🌍',show:'🎤',music:'🎵'};
 
-/* ---------- homepage: Dnes v TV (auto-scrolling strip) ---------- */
-var sec=document.querySelector('section.dnes');
-if(sec){(function(){
-  var v=sec.querySelector('.dnv'),ul=v&&v.querySelector('.dnl-list'),btn=sec.querySelector('.dnpp');if(!ul)return;
-  var speed=Math.max(5,Math.min(150,+sec.getAttribute('data-speed')||40)),W=0,pos=0,set=-1,last=0,run=false,user=false,hover=false,focus=false,touch=false,tt=0,clones=[];
-  function tickDnes(){var n=now(),vis=0;[].forEach.call(ul.querySelectorAll('.dni'),function(li){var s=+li.getAttribute('data-s'),e=+li.getAttribute('data-e');if(n>=e){li.hidden=true;return;}if(!li.classList.contains('dncl'))vis++;var on=n>=s;li.classList.toggle('live',on);var b=li.querySelector('.dpb i');if(b)b.style.width=(on?pct(s,e):0)+'%';});if(!vis)sec.hidden=true;measure();}
-  function measure(){if(!clones.length){W=0;return;}var a=ul.querySelector('.dni:not([hidden]):not(.dncl)'),b=ul.querySelector('.dncl:not([hidden])');W=a&&b?b.offsetLeft-a.offsetLeft:0;if(W>0&&pos>=W)pos-=W;}
-  function paused(){return user||hover||focus||touch||document.hidden;}
-  function ui(){if(!btn)return;btn.setAttribute('aria-pressed',user?'true':'false');btn.textContent=user?btn.getAttribute('data-play'):btn.getAttribute('data-pause');}
-  function frame(ts){var dt=last?Math.min(0.1,(ts-last)/1000):0;last=ts;if(W>0&&!paused()&&v.scrollWidth>v.clientWidth+4){pos+=speed*dt;if(pos>=W)pos-=W;set=pos;v.scrollLeft=pos;}requestAnimationFrame(frame);}
-  function start(){
-    if(RM||run)return;var items=[].slice.call(ul.children);if(!items.length)return;
-    if(ul.scrollWidth<=v.clientWidth+8)return; // everything fits – no need to move
-    items.forEach(function(li){var c=li.cloneNode(true);c.classList.add('dncl');c.setAttribute('aria-hidden','true');[].forEach.call(c.querySelectorAll('a,button'),function(a){a.tabIndex=-1;});ul.appendChild(c);clones.push(c);});
-    run=true;sec.classList.add('dnrun');if(btn){btn.hidden=false;ui();}measure();requestAnimationFrame(frame);
-  }
-  v.addEventListener('scroll',function(){if(Math.abs(v.scrollLeft-set)>2){pos=v.scrollLeft;if(W>0&&pos>=W){pos-=W;set=pos;v.scrollLeft=pos;}}});
-  v.addEventListener('pointerenter',function(e){if(e.pointerType==='mouse')hover=true;});
-  v.addEventListener('pointerleave',function(e){if(e.pointerType==='mouse')hover=false;});
-  v.addEventListener('focusin',function(){focus=true;});v.addEventListener('focusout',function(){focus=false;});
-  v.addEventListener('touchstart',function(){touch=true;clearTimeout(tt);},{passive:true});
-  v.addEventListener('touchend',function(){clearTimeout(tt);tt=setTimeout(function(){touch=false;},3500);},{passive:true});
-  if(btn)btn.addEventListener('click',function(){user=!user;ui();});
-  window.addEventListener('resize',function(){measure();});
-  tickDnes();setInterval(tickDnes,60000);
-  if(document.readyState==='complete')start();else window.addEventListener('load',start);setTimeout(start,1500);
-})();}
+/* ---------- homepage: Top dnes / Top týždňa (3–5 cards, one highlighted) ---------- */
+[].forEach.call(document.querySelectorAll('section.hls'),function(sec){
+  var ol=sec.querySelector('.hll');if(!ol)return;
+  function tick(){var n=now(),vis=[];[].forEach.call(ol.querySelectorAll('.hli'),function(li){var s=+li.getAttribute('data-s'),e=+li.getAttribute('data-e');if(n>=e){li.hidden=true;li.classList.remove('best');return;}li.classList.toggle('live',n>=s);vis.push(li);});
+    if(vis.length<3){sec.hidden=true;return;}
+    if(!vis.some(function(li){return li.classList.contains('best');})){var b=vis.slice().sort(function(a,c){return(+a.getAttribute('data-r')||9)-(+c.getAttribute('data-r')||9);})[0];b.classList.add('best');ol.insertBefore(b,ol.firstChild);}
+    sec.classList.toggle('odd',vis.length%2===0);}
+  tick();setInterval(tick,60000);
+});
 
 /* ---------- Kanály: Teraz / Potom per channel ---------- */
 var tiles=[].slice.call(document.querySelectorAll('li.tch[data-id]'));

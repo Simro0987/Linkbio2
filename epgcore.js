@@ -105,7 +105,7 @@ function buildIndex(epgChans) {
   const byKey = new Map(), list = [];
   for (const c of epgChans) {
     const keys = new Set();
-    for (const nm of [...(c.names || [c.name]), String(c.id).replace(/\.[a-z]{2}$/i, '').replace(/[._]+/g, ' ')]) { const k = nameKey(nm); if (k.key) { keys.add(k.key + '|' + k.digits); if (k.skey !== k.key) keys.add(k.skey + '|' + k.digits); } }
+    for (const nm of [...(c.names || [c.name]), String(c.id).replace(/^src\d+:/, '').replace(/\.[a-z]{2}$/i, '').replace(/[._]+/g, ' ')]) { const k = nameKey(nm); if (k.key) { keys.add(k.key + '|' + k.digits); if (k.skey !== k.key) keys.add(k.skey + '|' + k.digits); } }
     for (const kd of keys) { if (!byKey.has(kd)) byKey.set(kd, []); byKey.get(kd).push(c); }
     list.push({ c, keys: [...keys].map((x) => x.split('|')) });
   }
@@ -175,7 +175,7 @@ const K = {
   music: /\b(hudb|music|musik|zene|koncert|concert|muzyk)/i,
 };
 const LIVE = /(\blive\b|naživo|nazivo|naživo|priamy prenos|přímý přenos|p\.p\.|élő|na żywo|\blive:|\bvs\.?\b|\bv\.? ?s\b| – .+ – |\bfinále|\bfinal\b|semifin|štvrťfin|čtvrtfin|playoff|play-off|\bzápas\b|grand prix|\bgp\b|liga majstrov|liga mistrů|champions league|europa league|konferenčn|premier league|bundesliga|la liga|serie a|ligue 1|niké liga|nike liga|tipsport liga|tipos extraliga|extraliga|fortuna liga|chance liga|\bnhl\b|\bnba\b|\bufc\b|\bms v\b|\bme v\b|majstrovstvá sveta|mistrovství světa|majstrovstvá európy|mistrovství evropy|olymp|wimbledon|roland garros|us open|australian open|tour de france|derby|dakar|\bf1\b|formula 1|formule 1|motogp|el clasico)/i;
-const NOTLIVE = /(magaz[ií]n|štúdio|studio|highlights|zostrih|sestřih|záznam|zaznam|repríza|repriza|preview|predstavenie|téma|news|správy|zprávy|góly|goly|týždeň|tyden|kolo ve|sport\s*\d*\s*:|sportovní noviny|športové noviny|ríša|klasik|legendy|best of|top 10)/i;
+const NOTLIVE = /(magaz[ií]n|štúdio|studio|highlight|zostrih|sestřih|záznam|zaznam|repríza|repriza|preview|predstavenie|téma|news|správy|zprávy|góly|goly|týždeň|tyden|kolo ve|sport\s*\d*\s*:|sportovní noviny|športové noviny|ríša|klasik|legendy|best of|top 10)/i;
 const BIGSHOW = /(superstar|let'?s dance|tvoja tvár|tvoje tvář|survivor|farma|inkognito|milionár|milionář|chcem byť milionár|česko slovensko má talent|got talent|x factor|masterchef|hlas česko|the voice|ruža pre|love island|výmena manželiek|silvest|oscar|eurovízia|eurovize|koncert roka|nedeľa so|na chalupe|zlatý slávik|dancing with)/i;
 function classify(cat, title) {
   const c = String(cat || ''), t = String(title || '');
