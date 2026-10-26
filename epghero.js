@@ -281,7 +281,7 @@ module.exports = function hero(ctx, h, E) {
     const slim = (x) => ({ k: x.k, tk: x.tk, title: x.title, sub: C.clip(x.sub, 90), s: x.s, e: x.e, kind: x.kind, ch: { id: x.ch.id, name: x.ch.name, category: x.ch.category }, chName: x.chName, score: x.score, kw: x.kw, why: x.why, src: x.src || 'epg', img: x.img || '', imgM: x.imgM || '', img0: x.img0 || '', imgSrc: x.imgSrc || '', credit: x.credit || '', imgPage: x.imgPage || '', imgLog: x.imgLog || [], fbOff: x.fbOff || 0, genre: x.genre || '', desc: x.desc || '', descSrc: x.descSrc || '', cat: x.cat || catOf(x.title, x.kind), place: x.place || '', reason: x.reason || '', startOnly: !!x.startOnly, live: x.live });
     const chInfo = { ok: chs.ok.length, epg: chs.ok.filter((r) => r.has).length, noEpg: chs.ok.filter((r) => !r.has && !r.shifted).map((r) => ({ id: r.id, name: r.name, category: r.category, mapped: !!r.epg })),
       okNames: chs.ok.filter((r) => r.has && !r.shifted).map((r) => r.name), excl: chs.no.length, exclFeeds: chs.no.filter((r) => /feed|EPG|zozname|admin/.test(r.why) && !/vod|rádi|radi/i.test(r.category)).map((r) => r.name + ' – ' + r.why).slice(0, 200) };
-    wk = { t: now, chans: chInfo, rank, picks: picks.map(slim), top: top.map((x) => Object.assign(slim(x), { imgLog: [] })), okt, ground: Object.assign({}, R.groundStatus(), { at: now }) };
+    wk = { t: now, rv: RV, chans: chInfo, rank, picks: picks.map(slim), top: top.map((x) => Object.assign(slim(x), { imgLog: [] })), okt, ground: Object.assign({}, R.groundStatus(), { at: now }) };
     await kv.set('evh_week', JSON.stringify(wk)).catch(() => {});
     side = null;
     return wk;
@@ -297,7 +297,7 @@ module.exports = function hero(ctx, h, E) {
     const now = Date.now();
     if (!wk) { await Promise.race([refresh(), new Promise((r) => setTimeout(r, 9e3).unref())]); return wk; }
     const live = wk.picks.filter((x) => x.e > now).length;
-    if (wk.dirty || now - wk.t > REFRESH || (live < MAXS && now - wk.t > 20 * 60e3)) refresh();
+    if (wk.dirty || wk.rv !== RV || now - wk.t > REFRESH || (live < MAXS && now - wk.t > 20 * 60e3)) refresh();
     return wk;
   }
   // pins + admin image overrides change rarely – 60 s cache
