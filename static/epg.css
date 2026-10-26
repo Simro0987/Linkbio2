@@ -85,6 +85,25 @@
 .gmore{align-self:center;font:inherit;font-size:.85rem;color:inherit;background:none;border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:5px 14px;cursor:pointer}
 .gtab{border-collapse:collapse;font-size:.8rem}.gtab td,.gtab th{border:1px solid rgba(127,127,127,.3);padding:3px 6px;white-space:nowrap}.tblw{overflow-x:auto}
 @media (max-width:600px){.gi{gap:8px}.gl{max-height:70vh}.gpo{width:30px;height:44px}}
+/* genre guide layout fix: the bar is a flex column and .tvtools wraps, so the chip row grew to its max-content width
+   (≈850px) and stretched the page sideways on mobile / past the content column on PC. Keep everything inside the column. */
+.gbar{flex-wrap:nowrap;min-width:0;max-width:100%}
+.gtabs,.gdays,.gflt{min-width:0;max-width:100%;overscroll-behavior-x:contain;scroll-snap-type:x proximity;scroll-padding-inline:4px}
+.gch,.gdc,.gfc{display:inline-flex;align-items:center;min-height:40px;scroll-snap-align:start;box-sizing:border-box}
+.gdc,.gfc{min-height:36px}
+.gpn,.gbox{min-width:0;max-width:100%;box-sizing:border-box}
+.gl{display:flex;flex-direction:column;gap:6px;overscroll-behavior:contain;padding-right:2px}
+.gl .gi{gap:10px;padding:8px 10px;border:1px solid rgba(255,255,255,.07);border-radius:10px;background:rgba(255,255,255,.03);color:inherit;min-width:0}
+.gl .gi:nth-child(odd),.gl .gi:hover{background:rgba(255,255,255,.05)}
+.gl .gi.on{background:rgba(229,9,20,.12);border-color:rgba(229,9,20,.35)}
+.gl .gi.hl{background:rgba(245,197,24,.07);border-color:rgba(245,197,24,.3)}
+.gl .gi.on.hl{background:rgba(229,9,20,.14)}
+.gl .gi>.tetm{min-width:2.7em;font-weight:800;opacity:.9}
+.gl .gi>.tel,.gl .gi>.tdr{flex:none;margin-left:auto}
+.gl .spt2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;overflow-wrap:anywhere;line-height:1.25}
+@media (min-width:700px){.gtabs,.gdays{flex-wrap:wrap;overflow:visible}.gl{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:8px;align-content:start;max-height:640px}}
+/* bigger tap targets on touch screens (favourite, report, reminder, day programme, language) */
+@media (pointer:coarse){.tfav,.trb{display:inline-flex;align-items:center;justify-content:center;min-width:40px;min-height:40px}.trm,.tdr{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:32px}.tdb{min-height:36px;padding:6px 10px}.langsw{padding:7px 12px}.dnpp{min-height:36px}}
 .spm{flex:1;min-width:0;display:flex;flex-direction:column}
 .spt2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .spc{display:flex;align-items:center;gap:5px;font-size:.78rem;opacity:.75;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}

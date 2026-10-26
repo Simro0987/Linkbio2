@@ -128,3 +128,5 @@ body.adm{background:radial-gradient(1000px 420px at 50% -10%,rgba(229,9,20,.22),
 .tvl{list-style:none;margin:0;padding:6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px}.tch{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.04);font-weight:600;font-size:.92rem}.tch img{width:40px;height:40px;object-fit:contain;border-radius:8px;background:rgba(255,255,255,.08)}.tli{width:40px;height:40px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:rgba(229,9,20,.25);font-weight:800}.tch[hidden],.tvg[hidden]{display:none}
 .tcn{flex:1;min-width:0}.trb{font-size:.75rem;opacity:.55;text-decoration:none;color:inherit;padding:2px 4px;border-radius:6px}.trb:hover{opacity:1;background:rgba(229,9,20,.25)}.trb span{position:absolute;left:-9999px}
 .sico{vertical-align:-.22em;flex:none}
+/* public pages: hint/footer text had 3.9:1 contrast on the dark TV theme (WCAG AA needs 4.5:1) */
+.site.tv .hint,.site.tv .f{color:#9aa3bf}
