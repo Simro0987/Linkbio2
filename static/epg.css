@@ -171,7 +171,11 @@
 .evh-m{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;margin:0;font-size:.98rem;font-weight:600;color:#ececf2}
 .evh-ch{display:inline-flex;align-items:center;gap:8px;font-weight:800;color:#fff}
 .evh-ch img{width:30px;height:30px;object-fit:contain;background:#fff;border-radius:6px;padding:2px;flex:none}
-.evh-d{margin:0;font-size:.9rem;color:#cfcfd8;max-width:60ch}
+.evh-d{margin:0;font-size:.9rem;line-height:1.4;color:#cfcfd8;max-width:60ch;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+@media(min-width:700px){.evh-d{-webkit-line-clamp:3}}
+.evh-cr{position:absolute;top:8px;right:12px;z-index:2;margin:0;max-width:60%;font-size:.62rem;line-height:1.3;color:rgba(255,255,255,.55);text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.evh-pl{font-weight:500;color:#d8d8e2}
+.evh picture{display:contents}
 .evh-pr{height:4px;max-width:320px;background:rgba(255,255,255,.25);border-radius:2px;overflow:hidden}
 .evh-pr i{display:block;height:100%;width:0;background:#e50914}
 .evh-nav{position:absolute;top:42%;z-index:3;width:44px;height:44px;margin-top:-22px;border:0;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;font-size:1.7rem;line-height:1;cursor:pointer;display:none;align-items:center;justify-content:center;opacity:.75;transition:opacity .2s,background .2s}
@@ -186,3 +190,4 @@
 @media (min-width:700px){.evh-c{padding:30px 70px 46px}.evh-nav{display:flex}}
 @media (prefers-reduced-motion:reduce){.evh-s,.evh-s.on,.evh-bg,.evh-nav{transition:none}.evh-bg{transform:none}.evh-s.live .evh-b{animation:none}}
 .evadm{align-items:flex-start;gap:12px;flex-wrap:wrap}.evadm img{border-radius:8px;object-fit:cover;flex:none}.evbtns{display:flex;flex-direction:column;gap:6px}
+.evx{display:block;margin-top:4px;line-height:1.5}.evlog{margin:4px 0;font-size:.78rem;color:#9a9aa8}.evlog ol{margin:4px 0 0;padding-left:18px}.evdesc{display:flex;gap:6px;align-items:flex-start;margin-top:6px}.evdesc textarea{flex:1;min-width:0;font:inherit;font-size:.85rem}
