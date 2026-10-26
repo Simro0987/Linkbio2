@@ -47,7 +47,7 @@ module.exports = function install(ctx) {
   const skipped = (cat, sk) => { const c = String(cat || '').toLowerCase(); return sk.some((x) => c.includes(x)); };
   const kv = { get: async (k) => ((await pool.query('SELECT v FROM epg_kv WHERE k=$1', [k])).rows[0] || {}).v, set: (k, v) => pool.query('INSERT INTO epg_kv (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=$2', [k, String(v)]) };
   const OFF = OFFICIAL.install({ pool, kv, getSettings, C, ADULT, JUNK }); // official broadcaster schedules (STVR, JOJ, Prima) → days 4–7
-  const DATA_V = '6'; // bump when stored EPG data needs a rebuild after deploy (refresh runs on the first tick)
+  const DATA_V = '5'; // bump when stored EPG data needs a rebuild after deploy (refresh runs on the first tick)
   let mapCache = null, nowCache = null, dnesCache = null, srcCache = null; const dayCache = new Map();
   const sources = async () => srcCache || (srcCache = (await pool.query('SELECT * FROM epg_src ORDER BY id')).rows);
   let sportCache = null;
@@ -252,6 +252,13 @@ module.exports = function install(ctx) {
       try {
         const c = cfg(await getSettings()); if (c.epg_on !== '1' && c.dnes_on !== '1') return;
         const last = Date.parse(await kv.get('last_full') || 0) || 0, h = Math.max(2, Math.min(24, +c.epg_hours || 6));
+        // official SK/CZ schedules (light: a few small HTTP requests + SQL) run on their own, independent of the heavy XMLTV refresh
+        if (!running && !offRun && (await kv.get('off_v')) !== DATA_V) {
+          const far = dayStart(Date.now()) + 8 * 86400e3 + 6 * 3600e3;
+          offRun = OFF.merge(far, false).then(async (r) => { await kv.set('off_v', DATA_V); console.log(`EPG official merged ${r && r.n} rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`); })
+            .catch((e) => console.error('EPG official', e.message)).finally(() => { offRun = null; dropCaches(); });
+          return;
+        }
         // an attempt started < 20 min ago (e.g. interrupted by a deploy/restart): wait, so a failing refresh can never loop on every boot
         const tried = Date.parse(await kv.get('try_at') || 0) || 0; if (Date.now() - tried < 20 * 60e3) return;
         if (Date.now() - last > h * 3600e3 - 60e3 || (await kv.get('data_v')) !== DATA_V) refresh();
