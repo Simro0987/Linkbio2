@@ -1,5 +1,5 @@
 (function(){if(window.__lcChat)return;window.__lcChat=1;
-var API='https://chain2pay-checkout-gl.onrender.com',PAY=location.origin+'/platby';
+var API='',PAY=location.origin+'/platby';
 var SK='lc_chat_sid',sid=null;try{sid=sessionStorage.getItem(SK)}catch(e){}
 var b=document.createElement('button');b.id='lcB';b.type='button';b.setAttribute('aria-label','Pomoc');b.textContent='💬';
 var w=document.createElement('div');w.id='lcW';w.setAttribute('role','dialog');w.setAttribute('aria-label','Pomoc');

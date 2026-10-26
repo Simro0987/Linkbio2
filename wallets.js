@@ -1,8 +1,8 @@
 'use strict';
 // 👛 Adresy peňaženiek + 🔗 Odkazy podľa sumy – správa priamo z lnkbio admina.
-// Zdroj pravdy je checkout (Neon). Server-to-server most s HMAC podpisom (PAY_ADMIN_BRIDGE_SECRET, rovnaký ako pri platobných metódach):
-//   /api/admin-bridge/wallets       – state / get / preview / create+update (confirm:true) / toggle
-//   /api/admin-bridge/amount-links  – state / get / create / update / toggle / delete
+// Zdroj pravdy je platobný modul pay/ (Neon, PAY_DATABASE_URL). Akcie sa volajú in-process (global.__payBridge):
+//   wallets       – state / get / preview / create+update (confirm:true) / toggle
+//   amount-links  – state / get / create / update / toggle / delete
 // Všetky POSTy: needAuth + CSRF. Žiadny inline JS/CSS (CSP). Ukladajú sa len verejné adresy, ktoré admin zadá.
 const crypto = require('crypto');
 const fs = require('fs');
@@ -10,8 +10,7 @@ const path = require('path');
 
 module.exports = function install(ctx) {
   const { admin, page, esc, hid, csrf, needAuth, wrap, audit } = ctx;
-  const ORIGIN = ['live', 'on'].includes(String(process.env.PAY_MODULE || '').trim().toLowerCase()) ? '' : String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
-  const secret = () => { const v = String(process.env.PAY_ADMIN_BRIDGE_SECRET || ''); return v.length >= 32 ? v : ''; };
+  const ORIGIN = ''; // payment module runs in-process (PAY_MODULE=on)
   const WB = '/admin/penazenky';
   const LB = '/admin/odkazy-podla-sumy';
   const V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 'wl.js')) + fs.readFileSync(path.join(__dirname, 'static', 'wl.css')) + fs.readFileSync(path.join(__dirname, 'static', 'pm.css'))).digest('hex').slice(0, 10);
@@ -32,33 +31,17 @@ module.exports = function install(ctx) {
       if (!j || !j.ok) throw new BridgeErr('user', (j && j.error) || 'Chyba');
       return j;
     }
-    const sec = secret();
-    if (!sec) throw new BridgeErr('off', 'nie je prepojené');
-    const body = JSON.stringify({ action, ...extra, actor: 'admin', n: crypto.randomBytes(12).toString('hex') });
-    const ts = Math.floor(Date.now() / 1000);
-    const sig = crypto.createHmac('sha256', sec).update(ts + '.').update(body).digest('hex');
-    let r;
-    try {
-      r = await fetch(ORIGIN + p, { method: 'POST', headers: { 'content-type': 'application/json', 'x-bridge-ts': String(ts), 'x-bridge-sig': sig }, body, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
-    } catch { throw new BridgeErr('down', 'Checkout neodpovedá (možno sa práve prebúdza). Skúste to o chvíľu znova.'); }
-    let j = null; try { j = await r.json(); } catch { j = null; }
-    if (r.status === 503 && j && j.error === 'not_configured') throw new BridgeErr('off', 'nie je prepojené');
-    if (r.status === 401 || r.status === 409) throw new BridgeErr('auth', 'Checkout odmietol podpis – PAY_ADMIN_BRIDGE_SECRET sa na službách lnkbio a checkout nezhoduje.');
-    if (r.status === 429) throw new BridgeErr('down', 'Príliš veľa požiadaviek – skúste to o minútu.');
-    if (r.status === 404 && !j) throw new BridgeErr('off', 'nie je prepojené');
-    if (!j) throw new BridgeErr('down', 'Checkout vrátil neplatnú odpoveď (HTTP ' + r.status + ').');
-    if (!j.ok) throw new BridgeErr('user', j.error || 'Chyba');
-    return j;
+    throw new BridgeErr('off', 'platobný modul nie je zapnutý');
   };
   const W = bridge('/api/admin-bridge/wallets');
   const L = bridge('/api/admin-bridge/amount-links');
 
-  const offBox = (e, adminPath) => e.kind === 'off'
-    ? `<div class="msg err pmoff"><b>⚠️ Nie je prepojené s checkoutom.</b><br>Chýba premenná prostredia <code>PAY_ADMIN_BRIDGE_SECRET</code> (rovnaká hodnota na službách <b>lnkbio</b> aj <b>chain2pay-checkout-gl</b>). Dovtedy použite <a href="${esc(ORIGIN + adminPath)}" target="_blank" rel="noopener noreferrer">admin checkoutu ↗</a>.</div>`
-    : `<div class="msg err pmoff"><b>⚠️ ${esc(e.message)}</b><br><a href="${esc(ORIGIN + adminPath)}" target="_blank" rel="noopener noreferrer">Otvoriť admin checkoutu ↗</a></div>`;
+  const offBox = (e) => e.kind === 'off'
+    ? `<div class="msg err pmoff"><b>⚠️ Platobný modul nie je zapnutý.</b><br>Na službe lnkbio nastavte <code>PAY_MODULE=on</code>.</div>`
+    : `<div class="msg err pmoff"><b>⚠️ ${esc(e.message)}</b></div>`;
   const shell = (title, body) => page(title, `<p class="row"><a class="btnl" href="/admin">← Admin</a><a class="btnl" href="${WB}">👛 Adresy peňaženiek</a><a class="btnl" href="${LB}">🔗 Odkazy podľa sumy</a></p>${body}`, 'a adm', '', HEAD);
   const flash = (req, MS) => (MS[req.query.m] ? `<div class="msg">${esc(MS[req.query.m])}</div>` : '') + (req.query.e ? `<div class="msg err">${esc(String(req.query.e).slice(0, 300))}</div>` : '');
-  const errTo = (res, to, e) => res.redirect(303, to + (to.includes('?') ? '&' : '?') + 'e=' + encodeURIComponent(e.kind === 'off' ? 'Nie je prepojené (chýba PAY_ADMIN_BRIDGE_SECRET).' : e.message));
+  const errTo = (res, to, e) => res.redirect(303, to + (to.includes('?') ? '&' : '?') + 'e=' + encodeURIComponent(e.kind === 'off' ? 'Platobný modul nie je zapnutý (PAY_MODULE=on).' : e.message));
   const when = (d) => (d ? new Date(d).toLocaleString('sk-SK', { timeZone: 'Europe/Bratislava', dateStyle: 'short', timeStyle: 'short' }) : '—');
   const short = (a) => { a = String(a || ''); return a.length > 22 ? a.slice(0, 10) + '…' + a.slice(-6) : a; };
   const chunk = (a) => esc(String(a || '')).replace(/(.{4})/g, '$1 ').trim();

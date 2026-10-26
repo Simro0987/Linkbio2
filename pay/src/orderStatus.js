@@ -44,7 +44,7 @@ a{color:#93c5fd}</style></head><body><div class="wrap"><div class="card">
 <div class="row"><span>Mena</span><b>${esc(String(o.payoutCoin || '').toUpperCase())}</b></div>
 <div class="addr">${esc(o.payoutAddress || '')}</div>
 <div id="chainStatus" data-order-id="${esc(o.orderId)}"></div>
-<p><a href="/platby">← Späť na checkout</a></p></div></div>
+<p><a href="/platby">← Späť na platby</a></p></div></div>
 <script src="/chain-status.js" defer></script></body></html>`);
   });
 }

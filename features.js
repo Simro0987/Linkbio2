@@ -122,7 +122,8 @@ module.exports = function install(ctx) {
   }));
 
   // ================= API keys panel (write-only, Render env) =================
-  const SVC = { checkout: process.env.CHECKOUT_SERVICE_ID || 'srv-db6i44jrjlhs73eslvrg', lnkbio: process.env.LNKBIO_SERVICE_ID || 'srv-db6q9k8u01pc73b5mjl0' };
+  // one service: the payment module (pay/) runs inside lnkbio, so every key is written to lnkbio only
+  const SVC = { lnkbio: process.env.LNKBIO_SERVICE_ID || 'srv-db6q9k8u01pc73b5mjl0' };
   async function renderApi(method, p, body, key = process.env.RENDER_API_KEY) {
     if (!key) throw new Error('RENDER_API_KEY nie je nastavený na lnkbio');
     const r = await fetch('https://api.render.com/v1' + p, { method, headers: { Authorization: 'Bearer ' + key, 'content-type': 'application/json', accept: 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20000) });
@@ -134,13 +135,12 @@ module.exports = function install(ctx) {
   const SECRETS = {
     TELEGRAM_PAYMENTS_BOT_TOKEN: { name: '💳 Platby bot', desc: 'Nové objednávky, dôkazy o platbe, tlačidlá ✅/❌, výsledky Azteco. Záložný bot pre všetky ostatné (ak ich token chýba).', svc: ['checkout', 'lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG,
       test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
-    TELEGRAM_SUPPORT_BOT_TOKEN: { name: '🛟 Support bot', desc: 'Eskalácie z chatbota, správy zákazníkov; vaše odpovede (Reply) sa vrátia do chat widgetu. Webhook /api/telegram/support/webhook na checkoute (vlastné tajomstvo).', svc: ['checkout'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG,
+    TELEGRAM_SUPPORT_BOT_TOKEN: { name: '🛟 Support bot', desc: 'Eskalácie z chatbota, správy zákazníkov; vaše odpovede (Reply) sa vrátia do chat widgetu. Webhook /api/telegram/support/webhook na lnkbio (vlastné tajomstvo).', svc: ['checkout'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG,
       test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
     TELEGRAM_IDEAS_BOT_TOKEN: { name: '💡 Návrhy bot', desc: 'Verejný bot – ľudia posielajú návrhy, bot poďakuje a prepošle vám; aj formulár „Návrhy“ na webe. Webhook /api/telegram/ideas/webhook na lnkbio.', svc: ['lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG, ideas: true,
       test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
     TELEGRAM_ADMIN_BOT_TOKEN: { name: '🛡 Admin bot', desc: 'Výpadky webu, monitor služieb, denné zálohy, bezpečnostné udalosti (zlyhané prihlásenia, blokovanie), zmeny kľúčov, udalosti agenta.', svc: ['lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…', TG,
       test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
-    PAY_ADMIN_BRIDGE_SECRET: { name: '💳 Most pre platobné metódy', desc: 'HMAC tajomstvo, cez ktoré lnkbio admin spravuje spôsoby platby checkoutu (sekcia 💳 Platobné metódy). Musí byť rovnaké na oboch službách.', svc: ['checkout', 'lnkbio'], re: /^[A-Za-z0-9_-]{32,128}$/, hint: '32–128 znakov A-Z a-z 0-9 _ -' },
     AGENT_HOOK_SECRET: { name: '🤖 Agent hook secret', desc: 'HMAC tajomstvo pre /api/agent/hook a token pre /api/status-alert.', svc: ['lnkbio'], re: /^[A-Za-z0-9_-]{32,128}$/, hint: '32–128 znakov' },
     TELEGRAM_BOT_TOKEN: { name: 'Telegram bot token (starý alias Platby bota)', desc: 'Pôvodný kľúč – používa sa, ak TELEGRAM_PAYMENTS_BOT_TOKEN nie je nastavený.', svc: ['checkout', 'lnkbio'], re: /^\d{5,12}:[A-Za-z0-9_-]{30,64}$/, hint: 'formát 123456789:AA…',
       test: async (v) => { const j = await tgJson(`https://api.telegram.org/bot${v}/getMe`); if (!j.ok) throw new Error('Telegram getMe zlyhalo – token je neplatný'); return '@' + j.result.username; } },
@@ -153,6 +153,7 @@ module.exports = function install(ctx) {
     RENDER_API_KEY: { name: 'Render API kľúč (pre tento panel)', svc: ['lnkbio'], re: /^rnd_[A-Za-z0-9]{20,80}$/,
       test: async (v) => { await renderApi('GET', '/services?limit=1', null, v); return 'Render ok'; } },
   };
+  for (const d of Object.values(SECRETS)) d.svc = ['lnkbio'];
   const KM = { ok: 'Uložené. Prebieha redeploy dotknutých služieb (1–3 min).', badpw: 'Nesprávne heslo.', lock: 'Príliš veľa pokusov. Skúste neskôr.', badfmt: 'Neplatný formát hodnoty.', test: 'Test hodnoty zlyhal.', render: 'Zápis do Render zlyhal.', nokey: 'Neznámy kľúč.' };
   admin.get('/kluce', needAuth, wrap(async (req, res) => {
     const s = await getSettings(); const meta = JSON.parse(s.sec_meta || '{}');

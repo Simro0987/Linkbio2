@@ -234,13 +234,13 @@ const payCard = () => {
   const ro = pay.mode === 'shadow' ? ' <span class="hint">(náhľad – len čítanie, živé platby beží ešte starý checkout)</span>' : '';
   const L = [['/admin/platby/sepa', '🏦 SEPA objednávky'], ['/admin/platby/sepa-chain', '🤖 Reťaz SEPA botov'], ['/admin/platby/guides', '📖 Návody platieb'], ['/admin/platby/kategorie', '🗂️ Kategórie'], ['/admin/platby/sumy', '💶 Podľa sumy'], ['/admin/platby/azteco', '₿ Azteco (zákazníci)']];
   let poll = '';
-  try { const st = require('./pay/src/sepaBotChain').channelPollerStatus(); poll = `<p class="hint">Poller SEPA kanála: ${st.running ? '✅ beží' : st.disabledByEnv ? '⏸️ vypnutý (beží na starom checkoute alebo SEPA_CHANNEL_POLL=0)' : '⏸️ nebeží'}</p>`; } catch {}
+  try { const st = require('./pay/src/sepaBotChain').channelPollerStatus(); poll = `<p class="hint">Poller SEPA kanála: ${st.running ? '✅ beží' : st.disabledByEnv ? '⏸️ vypnutý (SEPA_CHANNEL_POLL=0 alebo PAY_MODULE≠on)' : '⏸️ nebeží'}</p>`; } catch {}
   return `<div class="card"><h2>💶 Platby</h2>${ro}<p class="row">${L.map(([h, t]) => `<a class="btnl sm" href="${h}">${t}</a>`).join('')}<a class="btnl sm g2" href="${pay.mode === 'shadow' ? '/platby-preview' : '/platby'}" target="_blank" rel="noopener">↗ Platobná stránka</a></p>${poll}</div>`;
 };
 app.use(compression({ threshold: 0, filter: (req, res) => !/^image\//.test(String(res.getHeader('Content-Type') || '')) && compression.filter(req, res) }));
 app.use(helmet({
   contentSecurityPolicy: { useDefaults: false, directives: {
-    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: ["'self'", CHECKOUT_ORIGIN], styleSrc: ["'self'"], imgSrc: ["'self'", "https:"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
+    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: ["'self'"], styleSrc: ["'self'"], imgSrc: ["'self'", "https:"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
   strictTransportSecurity: { maxAge: 63072000, includeSubDomains: true, preload: true },
   frameguard: { action: 'deny' },
   referrerPolicy: { policy: 'no-referrer' },
@@ -271,8 +271,8 @@ const loc = (req, s, k) => (req && req.lang === 'en' && s[k + '_en']) || s[k];
 const langHref = req => { const u = new URL(req.originalUrl, 'http://x'); u.searchParams.set('lang', req.lang === 'en' ? 'sk' : 'en'); return u.pathname.replace(/^[/\\]+/, '/') + u.search; };
 const langSw = req => `<a class="langsw" href="${esc(langHref(req))}" hreflang="${req.lang === 'en' ? 'sk' : 'en'}">🌐 ${req.lang === 'en' ? 'SK' : 'EN'}</a>`;
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
-// warm the checkout while a visitor browses lnkbio (fire-and-forget, max once per 5 min)
-app.use((req, res, next) => { if (req.method === 'GET' && process.env.RENDER) require('./keepawake').wake((process.env.PEER_URL || CHECKOUT_ORIGIN) + '/health'); next(); });
+// optional: warm another service while a visitor browses lnkbio (fire-and-forget, max once per 5 min); payments now run in-process
+app.use((req, res, next) => { if (req.method === 'GET' && process.env.RENDER && process.env.PEER_URL) require('./keepawake').wake(process.env.PEER_URL + '/health'); next(); });
 app.get('/robots.txt', (req, res) => res.type('text').set('Cache-Control', 'public, max-age=86400').send(`User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: ${pubOrigin(req)}/sitemap.xml\n`));
 app.get('/sitemap.xml', wrap(async (req, res) => { const s = await getSettings(), o = pubOrigin(req), xe = v => String(v).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
   const paths = ['', ...Object.values(PAGES).map(p => p[1]).filter(Boolean)], now = new Date().toISOString().slice(0, 10);

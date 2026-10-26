@@ -3678,7 +3678,7 @@ ${postPayNoteCss()}
 <button type="button" class="copy" id="copyBtn">Kopírovať adresu</button>
 ${postPayNoteHtml()}
 <a class="btn" href="${htmlEsc(buyUrl)}" target="_blank" rel="noopener">Pokračovať na platbu →</a>
-<a class="ghost" href="/platby">← Späť na checkout</a>
+<a class="ghost" href="/platby">← Späť na platby</a>
 ${order.payinGroup === 'skrill' ? guideStore.html('switchere_skrill', { amount: order.amountEur, coin }) : ''}
 </div>
 <script>
@@ -3729,7 +3729,7 @@ ${isRev ? `<details class="tip"><summary style="cursor:pointer"><strong>📖 Ná
 <button type="button" class="copy" data-copy="addr">Kopírovať BTC adresu</button>
 ${postPayNoteHtml()}
 <a class="btn" href="${htmlEsc(external ? buyUrl : (order.providerCheckoutUrl || buyUrl || '/platby'))}" target="_blank" rel="noopener">${isRev ? 'Otvoriť Revolut Ramp →' : 'Pokračovať na platbu →'}</a>
-<a class="ghost" href="/platby">← Späť na checkout</a>
+<a class="ghost" href="/platby">← Späť na platby</a>
 </div>
 <script>
 document.querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{const t=document.getElementById(b.dataset.copy).textContent.trim();try{await navigator.clipboard.writeText(t);b.textContent='Skopírované ✓';}catch{b.textContent='Skopírujte ručne';}setTimeout(()=>{b.textContent=b.dataset.copy==='nick'?'Kopírovať nickname':'Kopírovať BTC adresu';},1500);});
@@ -3771,7 +3771,7 @@ ${postPayNoteCss()}
 <button type="button" class="copy" id="copyBtn">Kopírovať BTC adresu</button>
 ${postPayNoteHtml()}
 ${buyUrl ? `<a class="btn" id="goOnr" href="${htmlEsc(buyUrl)}" target="_blank" rel="noopener">Otvoriť Onramper widget →</a>` : '<p class="bad">Widget URL nie je k dispozícii — skontrolujte ONRAMPER_API_KEY.</p>'}
-<a class="ghost" href="/platby">← Späť na checkout</a>
+<a class="ghost" href="/platby">← Späť na platby</a>
 </div>
 <script>
 document.getElementById('copyBtn').onclick=async()=>{const t=document.getElementById('addr').textContent.trim();try{await navigator.clipboard.writeText(t);document.getElementById('copyBtn').textContent='Skopírované ✓';}catch{document.getElementById('copyBtn').textContent='Skopírujte ručne';}};
@@ -3841,7 +3841,7 @@ ${postPayNoteCss()}
   <div class="btns">
     ${links || '<span class="warn">Žiadne on-ramp linky</span>'}
     <a class="btn secondary" href="${order.btcpayCheckout || '#'}" target="_blank" rel="noopener">Otvoriť BTCPay invoice (status)</a>
-    <a class="btn ghost" href="/platby">← Späť na checkout</a>
+    <a class="btn ghost" href="/platby">← Späť na platby</a>
   </div>
   <div class="status" id="pollStatus">Sledujem BTCPay invoice…</div>
 </div>
@@ -4094,7 +4094,7 @@ button.bankbtn small{display:block;color:var(--muted);font-weight:500;font-size:
   <div class="row"><span>Objednávka</span><strong>${safe(order.orderId)}</strong></div>
   ${((order.firstName||'') + ' ' + (order.lastName||'')).trim() ? `<div class="row"><span>Meno</span><strong>${safe((order.firstName||'') + ' ' + (order.lastName||''))}</strong></div>` : ''}
   <div class="status" id="upStatus"></div>
-  <a class="ghost" href="/platby">← Späť na checkout</a>
+  <a class="ghost" href="/platby">← Späť na platby</a>
 </div></div>
 <script>
   const orderId = ${JSON.stringify(order.orderId)};
@@ -4947,7 +4947,7 @@ app.post('/api/bank-sepa/:orderId/confirm', (req, res) => {
 
 
 function voucherGuideOnlyPage(req, res) {
-  res.status(410).type('html').send('<!doctype html><html lang="sk"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Len návod</title><body style="font-family:system-ui;background:#0b1020;color:#e5e7eb;padding:2rem;max-width:40rem;margin:auto"><h1>Len informačný návod</h1><p>PaysafeCard a darčekové karty (Amazon, Azteco, G2A) sú na tejto stránke len ako informačný návod. <strong>PIN ani kód kupónu nikomu neposielajte</strong> — ani nám, ani cez chat. Kód používajte len sami u obchodníka, ktorý ho priamo akceptuje.</p><p><a style="color:#93c5fd" href="/platby">Späť na checkout</a></p></body></html>');
+  res.status(410).type('html').send('<!doctype html><html lang="sk"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Len návod</title><body style="font-family:system-ui;background:#0b1020;color:#e5e7eb;padding:2rem;max-width:40rem;margin:auto"><h1>Len informačný návod</h1><p>PaysafeCard a darčekové karty (Amazon, Azteco, G2A) sú na tejto stránke len ako informačný návod. <strong>PIN ani kód kupónu nikomu neposielajte</strong> — ani nám, ani cez chat. Kód používajte len sami u obchodníka, ktorý ho priamo akceptuje.</p><p><a style="color:#93c5fd" href="/platby">Späť na platby</a></p></body></html>');
 }
 function voucherGone(req, res) {
   res.status(410).json({ error: 'Len informačný návod — PIN/kód sa neprijíma.', code: 'GUIDE_ONLY' });

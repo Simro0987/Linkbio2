@@ -19,7 +19,7 @@ const DICT = {
   '← Späť na TV Software': '← Back to TV Software',
   '← Späť na výber platby': '← Back to payment methods',
   '← Späť': '← Back',
-  'Späť na checkout': 'Back to checkout',
+  'Späť na platby': 'Back to payment',
   'Pokračovať →': 'Continue →',
   'Pokračovať ↓': 'Continue ↓',
   '📖 Návod': '📖 Guide',

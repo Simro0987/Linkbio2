@@ -12,12 +12,8 @@ const electrocoin = require('./electrocoin');
 const sepaManual = require('./sepaManual');
 
 const COOKIE_NAME = 'sepa_admin_sess';
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12h
-const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_ATTEMPTS = 12;
 
 /** @type {Map<string, { count: number, resetAt: number }>} */
-const loginAttempts = new Map();
 
 function env(name, fallback = '') {
   return String(process.env[name] || fallback).trim();
@@ -27,20 +23,9 @@ function adminEmail() {
   return env('ADMIN_EMAIL') || env('SEPA_ADMIN_EMAIL');
 }
 
-function adminPassword() {
-  return env('ADMIN_PASSWORD') || env('SEPA_ADMIN_PASSWORD');
-}
-
-function sessionSecret() {
-  return (
-    env('ADMIN_SESSION_SECRET') ||
-    env('SESSION_SECRET') ||
-    env('SEPA_ADMIN_SESSION_SECRET')
-  );
-}
-
+// admin auth is the lnkbio admin login (dispatcher sets req.lnkAdmin) – always available
 function isConfigured() {
-  return Boolean(adminEmail() && adminPassword() && sessionSecret());
+  return true;
 }
 
 function escapeHtml(v) {
@@ -51,113 +36,15 @@ function escapeHtml(v) {
     .replace(/"/g, '&quot;');
 }
 
-function parseCookies(req) {
-  const out = Object.create(null);
-  const raw = String(req.headers.cookie || '');
-  for (const part of raw.split(';')) {
-    const i = part.indexOf('=');
-    if (i < 0) continue;
-    const k = part.slice(0, i).trim();
-    const v = part.slice(i + 1).trim();
-    if (!k) continue;
-    try {
-      out[k] = decodeURIComponent(v);
-    } catch {
-      out[k] = v;
-    }
-  }
-  return out;
-}
 
-function signPayload(payloadB64) {
-  return crypto
-    .createHmac('sha256', sessionSecret())
-    .update(payloadB64)
-    .digest('base64url');
-}
 
-function encodeSession(data) {
-  const payload = Buffer.from(JSON.stringify(data), 'utf8').toString('base64url');
-  return `${payload}.${signPayload(payload)}`;
-}
 
-function decodeSession(token) {
-  if (!token || !sessionSecret()) return null;
-  const parts = String(token).split('.');
-  if (parts.length !== 2) return null;
-  const [payload, sig] = parts;
-  const expected = signPayload(payload);
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
-  try {
-    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    if (!data || !data.email || !data.exp || Date.now() > Number(data.exp)) return null;
-    return data;
-  } catch {
-    return null;
-  }
-}
 
-function setSessionCookie(res, data) {
-  const token = encodeSession(data);
-  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.setHeader(
-    'Set-Cookie',
-    `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/admin; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`
-  );
-}
 
-function clearSessionCookie(res) {
-  res.setHeader(
-    'Set-Cookie',
-    `${COOKIE_NAME}=; Path=/admin; HttpOnly; SameSite=Lax; Max-Age=0`
-  );
-}
 
-function getSession(req) {
-  const cookies = parseCookies(req);
-  return decodeSession(cookies[COOKIE_NAME]);
-}
 
-function clientIp(req) {
-  return req.ip || req.socket?.remoteAddress || 'unknown'; // trust proxy=1 → real client IP, not spoofable XFF[0]
-}
 
-function checkLoginRate(ip) {
-  const now = Date.now();
-  let entry = loginAttempts.get(ip);
-  if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + LOGIN_WINDOW_MS };
-    loginAttempts.set(ip, entry);
-  }
-  if (entry.count >= LOGIN_MAX_ATTEMPTS) {
-    return { ok: false, retryAfterSec: Math.ceil((entry.resetAt - now) / 1000) };
-  }
-  entry.count += 1;
-  return { ok: true };
-}
 
-function timingSafeEqualStr(a, b) {
-  const ba = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  if (ba.length !== bb.length) {
-    // still compare to avoid leaking length via early return timing of crypto
-    crypto.timingSafeEqual(ba.length ? ba : Buffer.alloc(1), Buffer.alloc(ba.length || 1));
-    return false;
-  }
-  return crypto.timingSafeEqual(ba, bb);
-}
-
-function credentialsMatch(email, password) {
-  const wantEmail = adminEmail().toLowerCase();
-  const wantPass = adminPassword();
-  if (!wantEmail || !wantPass) return false;
-  const emailOk = timingSafeEqualStr(String(email || '').trim().toLowerCase(), wantEmail);
-  const passOk = timingSafeEqualStr(String(password || ''), wantPass);
-  return emailOk && passOk;
-}
 
 function layout({ title, body, lang = 'sk', userEmail = null }) {
   const nav = userEmail
@@ -228,27 +115,6 @@ ${body}
 </html>`;
 }
 
-function loginPage({ error = null, notice = null } = {}) {
-  const body = `
-<div class="card" style="max-width:420px;margin:3rem auto">
-  <h1>SEPA admin</h1>
-  <p class="muted">Súkromná oblasť len pre Ryana. Záloha, keď zákazník nevie nahrať screenshot na /bank-sepa-pay.</p>
-  ${error ? `<div class="err">${escapeHtml(error)}</div>` : ''}
-  ${notice ? `<div class="ok">${escapeHtml(notice)}</div>` : ''}
-  ${
-    isConfigured()
-      ? `<form method="post" action="/admin/login" autocomplete="on">
-    <label for="email">Email</label>
-    <input id="email" name="email" type="email" required autocomplete="username"/>
-    <label for="password">Heslo</label>
-    <input id="password" name="password" type="password" required autocomplete="current-password"/>
-    <p style="margin-top:1rem"><button type="submit">Prihlásiť sa</button></p>
-  </form>`
-      : `<div class="err">Admin nie je nakonfigurovaný. Nastavte ADMIN_EMAIL, ADMIN_PASSWORD a ADMIN_SESSION_SECRET (alebo SEPA_ADMIN_* / SESSION_SECRET) v .env.</div>`
-  }
-</div>`;
-  return layout({ title: 'SEPA admin — login', body });
-}
 
 function statusBadge(status) {
   const s = String(status || '');

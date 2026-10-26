@@ -1,6 +1,6 @@
 'use strict';
-// 💳 Platobné metódy – správa spôsobov platby checkoutu (chain2pay-checkout-gl) priamo z lnkbio admina.
-// Bezpečnosť: server-to-server most s HMAC podpisom (env PAY_ADMIN_BRIDGE_SECRET na oboch službách, nikdy nie heslo admina),
+// 💳 Platobné metódy – správa spôsobov platby platobnej stránky /platby (modul pay/, PAY_MODULE=on) priamo z lnkbio admina.
+// Bezpečnosť: akcie sa volajú in-process (global.__payBridge), žiadny HTTP most ani druhá služba,
 // všetky admin POSTy majú needAuth + CSRF, žiadny inline JS/CSS (CSP), logá sa načítavajú cez proxy len z /logos/* a /pm-logo/*.
 // Checkout naďalej sám vynucuje vypnuté metódy (payMethods.isBuiltinDisabled / customFor).
 const crypto = require('crypto');
@@ -10,10 +10,9 @@ const multer = require('multer');
 
 module.exports = function install(ctx) {
   const { admin, page, esc, hid, csrf, needAuth, wrap, audit } = ctx;
-  const ORIGIN = ['live', 'on'].includes(String(process.env.PAY_MODULE || '').trim().toLowerCase()) ? '' : String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
+  const ORIGIN = ''; // payment module runs in-process (PAY_MODULE=on)
   const MERGED = () => ['live', 'on'].includes(String(process.env.PAY_MODULE || '').trim().toLowerCase());
   const BRIDGE = ORIGIN + '/api/admin-bridge/pay-methods';
-  const secret = () => { const v = String(process.env.PAY_ADMIN_BRIDGE_SECRET || ''); return v.length >= 32 ? v : ''; };
   const BASE = '/admin/platobne-metody';
   const V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 'pm.js')) + fs.readFileSync(path.join(__dirname, 'static', 'pm.css'))).digest('hex').slice(0, 10);
   const HEAD = `<link rel="stylesheet" href="/static/pm.css?v=${V}"><script src="/static/pm.js?v=${V}" defer></script>`;
@@ -33,22 +32,7 @@ module.exports = function install(ctx) {
       if (!j || !j.ok) throw new BridgeErr('user', (j && j.error) || 'Chyba');
       return j;
     }
-    const sec = secret();
-    if (!sec) throw new BridgeErr('off', 'nie je prepojené');
-    const body = JSON.stringify({ action, ...extra, n: crypto.randomBytes(12).toString('hex') });
-    const ts = Math.floor(Date.now() / 1000);
-    const sig = crypto.createHmac('sha256', sec).update(ts + '.').update(body).digest('hex');
-    let r;
-    try {
-      r = await fetch(BRIDGE, { method: 'POST', headers: { 'content-type': 'application/json', 'x-bridge-ts': String(ts), 'x-bridge-sig': sig }, body, signal: AbortSignal.timeout(timeoutMs), redirect: 'error' });
-    } catch (e) { throw new BridgeErr('down', 'Checkout neodpovedá (možno sa práve prebúdza). Skúste to o chvíľu znova.'); }
-    let j = null; try { j = await r.json(); } catch { j = null; }
-    if (r.status === 503 && j && j.error === 'not_configured') throw new BridgeErr('off', 'nie je prepojené');
-    if (r.status === 401 || r.status === 409) throw new BridgeErr('auth', 'Checkout odmietol podpis – PAY_ADMIN_BRIDGE_SECRET sa na službách lnkbio a checkout nezhoduje.');
-    if (r.status === 404 && !j) throw new BridgeErr('off', 'nie je prepojené');
-    if (!j) throw new BridgeErr('down', 'Checkout vrátil neplatnú odpoveď (HTTP ' + r.status + ').');
-    if (!j.ok) throw new BridgeErr('user', j.error || 'Chyba');
-    return j;
+    throw new BridgeErr('off', 'platobný modul nie je zapnutý');
   }
 
   const logoSrc = (p) => (typeof p === 'string' && /^\/(logos\/[a-z0-9._-]+\.(svg|png|jpe?g|webp)|pm-logo\/[a-f0-9]{24})(\?v=[0-9a-z]{1,20})?$/i.test(p) ? `${BASE}/logo?p=${encodeURIComponent(p)}` : null);
@@ -56,8 +40,8 @@ module.exports = function install(ctx) {
   const MSGS = { rank: 'Poradie na pokladni uložené.', ok: 'Uložené.', added: 'Spôsob platby bol pridaný.', saved: 'Zmeny boli uložené.', del: 'Odkaz bol presunutý do koša (dá sa obnoviť).', restored: 'Odkaz bol obnovený.', moved: 'Poradie zmenené.', toggled: 'Stav zmenený.', group: 'Skupina bola prepnutá.' };
 
   function offBox(e) {
-    if (e.kind === 'off') return `<div class="msg err pmoff"><b>⚠️ Platobné metódy nie sú prepojené.</b><br>Chýba premenná prostredia <code>PAY_ADMIN_BRIDGE_SECRET</code> (rovnaká hodnota na Render službách <b>lnkbio</b> aj <b>chain2pay-checkout-gl</b>). Dovtedy ich spravujte v <a href="${esc(ORIGIN)}/admin/methods" target="_blank" rel="noopener noreferrer">admine checkoutu ↗</a>.</div>`;
-    return `<div class="msg err pmoff"><b>⚠️ ${esc(e.message)}</b><br><a href="${esc(ORIGIN)}/admin/methods" target="_blank" rel="noopener noreferrer">Otvoriť admin checkoutu ↗</a></div>`;
+    if (e.kind === 'off') return `<div class="msg err pmoff"><b>⚠️ Platobný modul nie je zapnutý.</b><br>Na službe lnkbio nastavte <code>PAY_MODULE=on</code>.</div>`;
+    return `<div class="msg err pmoff"><b>⚠️ ${esc(e.message)}</b></div>`;
   }
 
   function render(req, st, full) {
@@ -81,8 +65,8 @@ ${full && x.kind === 'custom' ? `<form method="post" action="${BASE}/zmazat" cla
       return `<details class="pmg" data-group="${esc(g.key)}"${full ? ' open' : ''}><summary class="pmgh"><h3>${esc(g.label)} <small class="hint">${g.items.filter((x) => x.on).length}/${g.items.length}</small></h3><span class="pmlogos">${g.items.slice(0, 6).map((x) => logoTag((x.logos || [])[0] || null)).join('')}</span></summary><div class="row pmgb">${allOn ? '' : gform('on', '✅ Zapnúť všetky', 'g sm')}${allOff ? '' : gform('off', '⛔ Vypnúť všetky', 'd sm')}</div><ul class="pml0">${items}</ul></details>`;
     }).join('');
     const del = full && st.deleted && st.deleted.length ? `<div class="card"><h2>🗑️ Zmazané vlastné odkazy</h2><ul class="pml0">${st.deleted.map((d) => `<li class="pmr off"><span class="pml">${logoTag(d.logo)}</span><span class="pmn"><b>${esc(d.name)}</b><small>${esc(String(d.url || '').replace(/^https:\/\//, '').slice(0, 60))}</small></span><span class="pma"><form method="post" action="${BASE}/obnovit" class="pmf">${tok}<input type="hidden" name="id" value="${esc(d.id)}"><button class="g sm">♻️ Obnoviť</button></form></span></li>`).join('')}</ul></div>` : '';
-    return `<div class="pmhead"><p class="pmc"><span class="tag ok" data-pm="on">${c.on || 0} zapnutých</span> <span class="tag" data-pm="off">${c.off || 0} vypnutých</span> <span class="hint">z ${c.total || 0} · zmeny platia v checkoute okamžite</span></p>
-<p class="row">${full ? '' : `<a class="btnl sm" href="${BASE}">⚙️ Spravovať (poradie, mazanie)</a>`}<a class="btnl sm" href="${BASE}#nova">➕ Pridať vlastný odkaz</a><a class="btnl sm g2" href="${esc(ORIGIN)}/" target="_blank" rel="noopener noreferrer">↗ Otvoriť checkout</a></p></div>
+    return `<div class="pmhead"><p class="pmc"><span class="tag ok" data-pm="on">${c.on || 0} zapnutých</span> <span class="tag" data-pm="off">${c.off || 0} vypnutých</span> <span class="hint">z ${c.total || 0} · zmeny platia na /platby okamžite</span></p>
+<p class="row">${full ? '' : `<a class="btnl sm" href="${BASE}">⚙️ Spravovať (poradie, mazanie)</a>`}<a class="btnl sm" href="${BASE}#nova">➕ Pridať vlastný odkaz</a><a class="btnl sm g2" href="/platby" target="_blank" rel="noopener noreferrer">↗ Otvoriť platobnú stránku</a></p></div>
 <div class="pmgrid">${groups}</div>${del}`;
   }
 
@@ -143,7 +127,7 @@ ${rs.auto ? '' : `<h3>Poradie skupín</h3><ul class="rkg">${groups}</ul>`}</div>
     res.setHeader('Cache-Control', 'no-store');
     let st, rs = null;
     try { [st, rs] = await Promise.all([call('state'), call('rank_state').catch((e) => (e.kind === 'user' ? null : Promise.reject(e)))]); } catch (e) { return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`)); }
-    res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${msgOf(req)}<p class="hint">Spôsoby platby na checkoute <a href="${esc(ORIGIN ? ORIGIN + "/" : "/platby")}" target="_blank" rel="noopener noreferrer">${esc(ORIGIN ? ORIGIN.replace(/^https:\/\//, '') : 'lnkbio.onrender.com/platby')}</a>. Vypnuté metódy checkout zákazníkom nezobrazí a ani ich nedovolí použiť.</p>
+    res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${msgOf(req)}<p class="hint">Spôsoby platby na checkoute <a href="${esc(ORIGIN ? ORIGIN + "/" : "/platby")}" target="_blank" rel="noopener noreferrer">${esc(ORIGIN ? ORIGIN.replace(/^https:\/\//, '') : 'lnkbio.onrender.com/platby')}</a>. Vypnuté metódy platobná stránka zákazníkom nezobrazí a ani ich nedovolí použiť.</p>
 ${rankCard(req, rs)}<div class="card pmw" id="platobne-metody">${render(req, st, true)}</div>${customForm(req, st, {})}`));
   }));
   // dashboard fragment (loaded by /static/pm.js so a sleeping checkout never blocks /admin)
@@ -192,8 +176,8 @@ ${rankCard(req, rs)}<div class="card pmw" id="platobne-metody">${render(req, st,
   const wantsJson = (req) => /application\/json/.test(String(req.headers.accept || ''));
   const backTo = (req, m) => (req.body && req.body.back === 'dash' ? '/admin?m=pmok#platobne-metody' : BASE + '?m=' + m);
   function fail(req, res, e, to) {
-    if (wantsJson(req)) return res.status(e.kind === 'user' ? 400 : 502).json({ ok: false, error: e.kind === 'off' ? 'Platobné metódy nie sú prepojené (chýba PAY_ADMIN_BRIDGE_SECRET).' : e.message });
-    res.redirect(303, (to || BASE) + (/\?/.test(to || BASE) ? '&' : '?') + 'e=' + encodeURIComponent(e.kind === 'off' ? 'Platobné metódy nie sú prepojené (chýba PAY_ADMIN_BRIDGE_SECRET).' : e.message));
+    if (wantsJson(req)) return res.status(e.kind === 'user' ? 400 : 502).json({ ok: false, error: e.kind === 'off' ? 'Platobný modul nie je zapnutý (PAY_MODULE=on).' : e.message });
+    res.redirect(303, (to || BASE) + (/\?/.test(to || BASE) ? '&' : '?') + 'e=' + encodeURIComponent(e.kind === 'off' ? 'Platobný modul nie je zapnutý (PAY_MODULE=on).' : e.message));
   }
   admin.post('/platobne-metody/prepnut', needAuth, csrf, wrap(async (req, res) => {
     const id = String(req.body.id || '').toLowerCase(); const state = req.body.state === 'on' ? 'on' : req.body.state === 'off' ? 'off' : '';
