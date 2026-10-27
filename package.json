@@ -5,14 +5,17 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/tvch-import.test.js && node test/epgext.test.js && node test/evbig.test.js && node test/sections.test.js && node test/blink.test.js && node pay/scripts/test-sepa-bot-chain.js"
+    "test": "node test/tvch-import.test.js && node test/epgext.test.js && node test/evbig.test.js && node test/sections.test.js && node test/blink.test.js && node test/affiliate.test.js && node test/xpub.test.js && node test/panel.test.js && node pay/scripts/test-sepa-bot-chain.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1157.0",
     "@neondatabase/serverless": "^1.2.0",
+    "@noble/hashes": "^1.8.0",
+    "@scure/base": "^1.2.6",
+    "@scure/bip32": "^1.7.0",
     "bcryptjs": "^2.4.3",
     "compression": "^1.8.2",
     "dotenv": "^16.6.1",
@@ -22,7 +25,7 @@
     "nodemailer": "^10.2.1",
     "pg": "^8.13.1",
     "qrcode": "^1.5.4",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.5",
     "ws": "^8.22.0"
   }
 }
