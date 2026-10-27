@@ -85,7 +85,9 @@ const LIVEW = /\b(priamy prenos|priamom prenose|přímý přenos|přímém přen
 const RERUN = /\b(záznam|zaznam|repríza|repriza|reprízа|opakovanie|sestřih|zostrih|highlights|best of)\b/i;
 const MAJOR = /markíz|markiz|\bjoj\b|joj plus|\bnova\b|nova cinema|prima|jednotka|dvojka|stvr|rtvs|čt ?1|ct ?1|čt ?2|ct ?2|voyo/i;
 const BIGNEWS = /vo[lľ]by|volby|debat|superdebat|inaugur|korunov/i;
-const MAG = /\b(studio|štúdio|magazín|magazin|news|noviny|správy|zprávy|preview|pred zápasom|před zápasem|osobní příběh|dokument|výzva|vyzva)\b/i;
+// unicode-aware word boundaries (JS \b treats š/í/ý as non-word: „štúdio“, „magazín“, „príbeh“ never matched)
+const DOCSTORY = /(?<![\p{L}\d])(osobn[ýíá] (?:príbeh|příběh)|príbeh|příběh|dokument\p{L}*|documentar\p{L}*|portrét|portrait)(?![\p{L}\d])/iu;
+const MAG = /(?<![\p{L}\d])(studio|štúdio|magazín|magazin|news|noviny|správy|zprávy|preview|pred zápasom|před zápasem|osobn[ýíá] (?:príbeh|příběh)|príbeh|příběh|dokument\p{L}*|documentar\p{L}*|výzva|vyzva)(?![\p{L}\d])/iu;
 
 function parseKw(txt) {
   const out = [];
@@ -158,7 +160,9 @@ module.exports = function events(ctx, h) {
     const why = [...(kw ? [(pk ? 'premiéra v hlavnom čase +' : 'kľúč. slová +') + kw] : []), ...(bp ? ['veľký zápas +' + bp + ' (' + bg.why.join(', ') + ')'] : [])], spb = wide ? 3 : 8, prb = wide ? 10 : 5;
     if (SPORTCH.test(ch.name + ' ' + ch.category) || p.kind === 'sport') { sc += spb; why.push('šport +' + spb); }
     if (live && !rerun) { sc += 15; why.push('naživo +15'); } if (rerun) { sc -= 30; why.push((arch ? 'archív' : 'záznam') + ' −30'); } else if ((p.fl || '').includes('p')) { sc += prb; why.push('premiéra +' + prb); }
-    if (MAG.test(p.title) && !(wide && (p.kind === 'doc' || BIGNEWS.test(head)))) { sc -= 15; why.push('štúdio/magazín −15'); }
+    // documentary / personal story about a big event or star („Ballon d'Or – Osobný príbeh“): the keyword is not the event itself
+    if (DOCSTORY.test(p.title + ' ' + (p.sub || '')) && !pk) { sc -= 30; why.push('dokument/príbeh −30'); }
+    else if (MAG.test(p.title) && !(wide && (p.kind === 'doc' || BIGNEWS.test(head)))) { sc -= 15; why.push('štúdio/magazín −15'); }
     const hr = localHour(s), tb = hr >= 19.5 && hr < 23 ? 12 : hr >= 17 && hr < 19.5 ? 6 : hr >= 23 || hr < 1 ? 2 : hr >= 4 && hr < 12 ? -10 : 0;
     if (tb) { sc += tb; why.push((tb > 0 ? 'večer +' : 'ráno ') + tb); }
     if (c.ev_scope === 'all') sc += skcz(ch) ? 8 : -8;
@@ -312,4 +316,4 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((x) => `<div class="row"><s
   const bigPts = (p) => { try { return bigCtx ? BIG.detect(bigCtx, p).pts : 0; } catch { return 0; } }; // importance for external-schedule channel prediction
   return { init, block, drop, items, bigPts, hero: H.render, _score: score, _parseKw: parseKw, _hero: H };
 };
-module.exports.parseKw = parseKw; module.exports.hits = hits; module.exports.DEF_KW = DEF_KW;
+module.exports.parseKw = parseKw; module.exports.hits = hits; module.exports.DEF_KW = DEF_KW; module.exports.MAG = MAG; module.exports.DOCSTORY = DOCSTORY;

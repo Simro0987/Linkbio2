@@ -25,4 +25,10 @@ t('one top club vs a smaller one is not a big match', () => { small('Bayern Mnic
 t('club names in minor sports do not trigger club clashes', () => { small('Volejbal - Niké Extraliga muži', '2. kolo: VK Slávia SPU Nitra - VK Slovan Bratislava', 6); small('Futsal - Liga majstrov', 'Futsal Club Semey - FC Barcelona', 12); small('Basketbal - Tipos SBL', '14. kolo: BC Slovan Bratislava - Inter Basket'); });
 t('national team keeps its weight in every sport', () => { assert.ok(d('Hádzaná - reprezentácia', 'Slovensko - Česko').pts >= 50); });
 t('no false positive on non-sport titles', () => { small('Slovensko má talent', '', 0); small('Milano - mesto módy', '', 0); });
+t('documentary / studio titles are penalised (unicode boundaries: štúdio, magazín, Osobný príbeh)', () => {
+  const E = require('../epgevents');
+  for (const x of ["Ballon d'Or – Osobný príbeh", 'Messi: dokument', 'Dokumentárny film o Ronaldovi', 'Osobní příběh: Jágr']) assert.ok(E.DOCSTORY.test(x), x);
+  for (const x of ['Štúdio Šport', 'Futbal magazín', 'Liga majstrov – štúdio']) assert.ok(E.MAG.test(x), x);
+  for (const x of ['Juventus - Neapol', 'Ballon d\'Or 2026 – slávnostné odovzdávanie', 'Liverpool FC - Arsenal FC']) assert.ok(!E.DOCSTORY.test(x) && !E.MAG.test(x), x);
+});
 console.log(`${n} evbig tests, ${bad} failed`); if (bad) process.exit(1);
