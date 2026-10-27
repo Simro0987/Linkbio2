@@ -19,7 +19,7 @@ if (!ENV_HASH || SECRET.length < 32 || !process.env.DATABASE_URL) { console.erro
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: PROD || process.env.PGSSL !== '0' ? { rejectUnauthorized: true } : false, max: 5, keepAlive: true, idleTimeoutMillis: 300000 });
 pool.on('error', e => console.error('pg pool', e.message));
-const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets', 'platby', 'navody-img']);
+const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets', 'platby', 'navody-img', 'sekcia-img']);
 const CODE_RE = /^[a-z0-9-]{1,40}$/;
 const B62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const rndCode = () => Array.from(crypto.randomBytes(7), b => B62[b % 62]).join('');
@@ -53,12 +53,17 @@ const SOCIALS = [
 // on/off switches for group links (separate keys – not soc_* so they are neither encrypted nor URL-validated)
 const SOC_TOGGLE = ['tg_group', 'fb_group'];
 const socOn = (s, k) => !!s['soc_' + k] && (!SOC_TOGGLE.includes(k) || s['socon_' + k] !== '0');
+// Kontakt page: „Skupiny“ (groups, channels, communities) vs „Priame kontakty“ (a person / support account, e-mail)
+// socgrp_<k>: '' = automatic, 'g' = Skupiny, 'p' = Priame kontakty
+const GROUP_URL = /^https:\/\/(?:(?:www\.)?(?:t\.me|telegram\.me)\/(?:\+|joinchat\/|c\/|s\/)|chat\.whatsapp\.com\/|(?:www\.)?whatsapp\.com\/channel\/|(?:www\.|m\.|web\.)?facebook\.com\/groups\/|(?:www\.)?youtube\.com\/(?:@|c\/|channel\/)|signal\.group\/)/i;
+const socAuto = (k, url) => ['tg_group', 'fb_group', 'youtube'].includes(k) || (k !== 'email' && GROUP_URL.test(String(url || ''))) ? 'g' : 'p';
+const socGrp = (s, k) => (s['socgrp_' + k] === 'g' || s['socgrp_' + k] === 'p') ? s['socgrp_' + k] : socAuto(k, s['soc_' + k]);
 const LNK_PUBLIC = String(process.env.LNKBIO_PUBLIC_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '');
 const CHECKOUT_ORIGIN = String(process.env.CHECKOUT_PUBLIC_URL || 'https://chain2pay-checkout-gl.onrender.com').replace(/\/$/, '');
 const SHORT_PAY = LNK_PUBLIC + '/platby';
 const DEFAULTS = {
   slug: 'tv', title: 'TV Software', bio: 'Softvér pre TV a streamovanie • Jednoduchá inštalácia • Platba kryptom aj kartou',
-  meta_title: '', meta_desc: '', footer: '', preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
+  meta_title: '', meta_desc: '', footer: '', bg_fx: '1', ...Object.fromEntries(SOCIALS.map(([k]) => ['socgrp_' + k, ''])), preset: 'tvsoft', ...Object.fromEntries(Object.entries(PRESETS.tvsoft).filter(([k]) => k !== 'name')),
   btn_style: 'rounded', font: 'system', about_text: 'Vyvíjame a dodávame softvér pre TV a streamovanie – prehrávače, aplikácie pre Android TV a Smart TV a pomoc s inštaláciou.\n\nZáleží nám na jednoduchom ovládaní, rýchlej podpore a férovom prístupe.', contact_text: 'Napíšte nám – radi poradíme s výberom aj inštaláciou.', pay_text: 'Platiť môžete kartou alebo kryptomenami cez zabezpečenú platobnú bránu.', checkout_url: SHORT_PAY, chat_enabled: '1', title_en: '', bio_en: '', about_text_en: '', pay_text_en: '', contact_text_en: '', pricing_intro: '', pricing_intro_en: '', pricing_note: 'Každý plán obsahuje všetky kanály z našej ponuky. Po kliknutí na „Vybrať platbu“ uvidíte všetky spôsoby platby vhodné pre danú sumu (karta, bankový prevod, kryptomeny…) zoradené od najlacnejšieho. Aktivácia prebehne po potvrdení platby.\n\nPodmienky vrátenia peňazí a obchodné podmienky: DOPLŇTE v admin › Cenník.', pricing_note_en: 'Every plan includes all channels in our offer. After clicking “Choose payment” you will see all payment methods suitable for the amount (card, bank transfer, crypto…) sorted from the cheapest. Activation follows payment confirmation.\n\nRefund policy and terms: TO BE FILLED IN admin › Pricing.', stav_nav: '0', ui_texts: '{}', cen_home: '1', tvbar_on: '1', kan_intro: '', kan_intro_en: '', kan_status: '1', kan_catalog: '0', ver: '1', pwver: '0', ...Object.fromEntries(SOCIALS.map(([k]) => ['soc_' + k, ''])), socon_tg_group: '1', socon_fb_group: '1',
 };
 
@@ -84,6 +89,9 @@ async function init() {
     await setSettings({ ...base, ...cols, preset: 'tvsoft' });
     await pool.query(`UPDATE buttons SET brand='platby' WHERE label='Platby'`);
   }
+  // contacts split into Skupiny / Priame kontakty: every filled contact gets its group written explicitly (nothing is removed)
+  const sg = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_socgrp','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
+  if (sg.rowCount) { const cur = await getSettings(); const o = {}; for (const [k] of SOCIALS) if (cur['soc_' + k] && !cur['socgrp_' + k]) o['socgrp_' + k] = socAuto(k, cur['soc_' + k]); if (Object.keys(o).length) await setSettings(o); }
   const sp = await pool.query(`INSERT INTO settings (k,v) VALUES ('migr_shortpay','1') ON CONFLICT (k) DO NOTHING RETURNING k`);
   if (sp.rowCount) {
     await pool.query(`UPDATE buttons SET url=$1 WHERE url IN ('https://chain2pay-checkout-gl.onrender.com','https://chain2pay-checkout-gl.onrender.com/')`, [SHORT_PAY]);
@@ -181,7 +189,7 @@ function readSess(req) {
 function writeSess(res, s) {
   s.exp = Date.now() + (s.auth ? 8 * 3600e3 : 3600e3);
   const d = Buffer.from(JSON.stringify(s)).toString('base64url');
-  res.setHeader('Set-Cookie', `__Host-sid=${d}.${sign(d)}; Path=/; HttpOnly; SameSite=Strict${PROD ? '; Secure' : ''}; Max-Age=${s.auth ? 28800 : 3600}`);
+  res.setHeader('Set-Cookie', `__Host-sid=${d}.${sign(d)}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=${s.auth ? 28800 : 3600}`);
 }
 function session(req, res, next) {
   let s = readSess(req);
@@ -240,13 +248,13 @@ const payCard = () => {
 app.use(compression({ threshold: 0, filter: (req, res) => !/^image\//.test(String(res.getHeader('Content-Type') || '')) && compression.filter(req, res) }));
 app.use(helmet({
   contentSecurityPolicy: { useDefaults: false, directives: {
-    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: ["'self'"], styleSrc: ["'self'"], imgSrc: ["'self'", "https:"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], upgradeInsecureRequests: [] } },
+    defaultSrc: ["'none'"], scriptSrc: ["'self'"], connectSrc: ["'self'"], styleSrc: ["'self'"], imgSrc: ["'self'", "https:"], formAction: ["'self'"], baseUri: ["'none'"], frameAncestors: ["'none'"], frameSrc: ['https://www.youtube-nocookie.com', 'https://player.vimeo.com'], mediaSrc: ["'self'", 'https:'], objectSrc: ["'none'"], manifestSrc: ["'self'"], upgradeInsecureRequests: [] } },
   strictTransportSecurity: { maxAge: 63072000, includeSubDomains: true, preload: true },
   frameguard: { action: 'deny' },
   referrerPolicy: { policy: 'no-referrer' },
   crossOriginResourcePolicy: { policy: 'same-origin' },
 }));
-app.use((req, res, next) => { res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), interest-cohort=()'); next(); });
+app.use((req, res, next) => { res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=(), browsing-topics=()'); next(); });
 const CSS_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 's.css'))).digest('hex').slice(0, 10);
 app.use('/static', express.static(path.join(__dirname, 'static'), { maxAge: '365d', immutable: true, etag: true, index: false }));
 app.use(express.urlencoded({ extended: false, limit: '20kb' }));
@@ -260,7 +268,7 @@ app.use((req, res, next) => {
 });
 const EN = { 'Cenník': 'Pricing', 'Domov': 'Home', 'Kanály': 'Channels', 'Platby': 'Payments', 'Kontakt': 'Contact', 'FAQ': 'FAQ', 'O nás': 'About us', 'Stav služieb': 'Service status', 'Návody': 'Guides', 'Návrhy': 'Suggestions',
   'Vyberte región.': 'Choose a region.', 'Vyberte kategóriu.': 'Choose a category.', 'kategórií': 'categories', 'položiek': 'items', '‹ Predošlá': '‹ Previous', 'Ďalšia ›': 'Next ›',
-  'Katalóg je zatiaľ prázdny.': 'The catalogue is empty for now.', '💳 Prejsť k platbe': '💳 Go to payment', 'Kontakty zatiaľ nie sú vyplnené.': 'No contacts yet.',
+  'Katalóg je zatiaľ prázdny.': 'The catalogue is empty for now.', '💳 Prejsť k platbe': '💳 Go to payment', 'Kontakty zatiaľ nie sú vyplnené.': 'No contacts yet.', 'Skupiny': 'Groups', 'Prehrať video': 'Play video', 'Prehrať': 'Play', 'Zatiaľ žiadne videá.': 'No videos yet.', 'Priame kontakty': 'Direct contacts', 'Telegram skupina': 'Telegram group', 'Facebook skupina': 'Facebook group',
   'Časté otázky': 'Frequently asked questions', 'Zatiaľ žiadne otázky.': 'No questions yet.', 'Hlavné menu': 'Main menu', 'Omrvinky': 'Breadcrumbs', 'Menu': 'Menu',
   'Odkaz neexistuje.': 'This link does not exist.', 'Odkaz neexistuje alebo vypršal.': 'This link does not exist or has expired.', 'Stránka neexistuje.': 'Page not found.',
   'Aktuálny stav našich služieb. Stránka sa obnovuje automaticky.': 'Current status of our services. This page refreshes automatically.' };
@@ -275,7 +283,7 @@ app.get('/healthz', (req, res) => res.type('text').send('ok'));
 app.use((req, res, next) => { if (req.method === 'GET' && process.env.RENDER && process.env.PEER_URL) require('./keepawake').wake(process.env.PEER_URL + '/health'); next(); });
 app.get('/robots.txt', (req, res) => res.type('text').set('Cache-Control', 'public, max-age=86400').send(`User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: ${pubOrigin(req)}/sitemap.xml\n`));
 app.get('/sitemap.xml', wrap(async (req, res) => { const s = await getSettings(), o = pubOrigin(req), xe = v => String(v).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
-  const paths = ['', ...Object.values(PAGES).map(p => p[1]).filter(Boolean)], now = new Date().toISOString().slice(0, 10);
+  const paths = ['', ...Object.values(PAGES).map(p => p[1]).filter(Boolean), ...(await features.sectionsSitemap().catch(() => []))], now = new Date().toISOString().slice(0, 10);
   const u = paths.map(p => { const l = `${o}/${s.slug}${p}`; return `<url><loc>${xe(l)}</loc><lastmod>${now}</lastmod><xhtml:link rel="alternate" hreflang="sk" href="${xe(l)}?lang=sk"/><xhtml:link rel="alternate" hreflang="en" href="${xe(l)}?lang=en"/></url>`; }).join('');
   res.type('application/xml').set('Cache-Control', 'public, max-age=3600').send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">${u}</urlset>`); }));
 app.get('/favicon.ico', wrap(async (req, res) => { const s = await getSettings(); if (s.img.logo) return res.redirect(302, '/img/logo?v=' + s.img.logo); res.status(204).end(); }));
@@ -399,7 +407,7 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a>${walletsAdmin.links()}<a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/sekcie">🧩 Sekcie (text / video)</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a>${walletsAdmin.links()}<a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 ${payMethods.dashCard()}
 ${walletsAdmin.dashCard()}
 ${payCard()}
@@ -417,7 +425,7 @@ ${payCard()}
 <form method="post" action="/admin/theme">${hid(req)}<div class="grid4">${color('c_bg', 'Pozadie')}${color('c_card', 'Tlačidlá / karty')}${color('c_btntext', 'Text tlačidiel')}${color('c_text', 'Text')}</div>
 <label>Štýl tlačidiel</label>${sel('btn_style', { rounded: 'Zaoblené', square: 'Hranaté' }, s.btn_style)}
 <label>Rozloženie</label>${sel('layout', { tv: 'TV Software (hero, karty)', classic: 'Klasické' }, s.layout)}
-<label>Písmo</label>${sel('font', Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.name])), s.font)}<button>Uložiť vzhľad</button></form></div>
+<label>Písmo</label>${sel('font', Object.fromEntries(Object.entries(FONTS).map(([k, v]) => [k, v.name])), s.font)}<label class="ck"><input type="checkbox" name="bg_fx" value="1"${s.bg_fx !== '0' ? ' checked' : ''}> ✨ Dekoratívne pozadie celej stránky (jemné svetelné prechody a TV mriežka, len CSS – pri nahranom obrázku pozadia sa nepoužije)</label><button>Uložiť vzhľad</button></form></div>
 <div class="card"><h2>QR kód stránky</h2><div class="row"><img class="qr" src="/admin/qr/page.svg?inline=1" alt="QR" width="96" height="96"><a class="btnl" href="/admin/qr/page.svg">⬇ Stiahnuť QR (SVG)</a></div></div>
 <h2>Tlačidlá</h2>${rows || '<p>Žiadne tlačidlá.</p>'}
 <form method="post" action="/admin/buttons" class="card">${hid(req)}<h2>Pridať tlačidlo</h2>
@@ -446,8 +454,8 @@ ${listAdmin(req, 'faq', await getList('faq'))}
 ${chk('kan_status', s.kan_status !== '0', 'Zobraziť stav pri každom kanáli')}${chk('kan_catalog', s.kan_catalog === '1', 'Zobraziť aj starý katalóg (regióny/kategórie) pod zoznamom')}<button>Uložiť</button></form>
 ${listAdmin(req, 'channels', await getList('channels'))}
 ${await trashAdmin(req)}
-<form method="post" action="/admin/social" class="card">${hid(req)}<h2>Sociálne siete (voliteľné)</h2><p class="hint">Prázdne pole = nezobrazí sa. Skupiny (Telegram / Facebook) sa dajú aj dočasne vypnúť bez mazania odkazu.</p>
-${SOCIALS.map(([k, n, e]) => `<label>${e} ${n}</label><input name="${k}" value="${esc(s['soc_' + k])}" maxlength="${k === 'email' ? 254 : 2000}" ${k === 'email' ? 'type="email" placeholder="meno@domena.sk"' : k === 'tg_group' ? 'type="url" placeholder="https://t.me/…"' : k === 'fb_group' ? 'type="url" placeholder="https://www.facebook.com/groups/…"' : 'type="url" placeholder="https://"'}>${SOC_TOGGLE.includes(k) ? `<label class="ck"><input type="checkbox" name="on_${k}" value="1"${s['socon_' + k] !== '0' ? ' checked' : ''}> Zobraziť ${esc(n)}</label>` : ''}`).join('')}<button>Uložiť</button></form>
+<form method="post" action="/admin/social" class="card">${hid(req)}<h2>Sociálne siete a kontakty (voliteľné)</h2><p class="hint">Prázdne pole = nezobrazí sa. Na stránke Kontakt sú rozdelené na <b>Skupiny</b> (skupiny, kanály, komunity) a <b>Priame kontakty</b> (osoba / podpora, e-mail) – pri každom kontakte vyberte „Zaradiť do“. Skupiny (Telegram / Facebook) sa dajú aj dočasne vypnúť bez mazania odkazu.</p>
+${SOCIALS.map(([k, n, e]) => `<label>${e} ${n}</label><input name="${k}" value="${esc(s['soc_' + k])}" maxlength="${k === 'email' ? 254 : 2000}" ${k === 'email' ? 'type="email" placeholder="meno@domena.sk"' : k === 'tg_group' ? 'type="url" placeholder="https://t.me/…"' : k === 'fb_group' ? 'type="url" placeholder="https://www.facebook.com/groups/…"' : 'type="url" placeholder="https://"'}>${SOC_TOGGLE.includes(k) ? `<label class="ck"><input type="checkbox" name="on_${k}" value="1"${s['socon_' + k] !== '0' ? ' checked' : ''}> Zobraziť ${esc(n)}</label>` : ''}<div class="sgrp"><label for="grp_${k}">Zaradiť do</label><select id="grp_${k}" name="grp_${k}">${[['', 'Automaticky (' + (socAuto(k, s['soc_' + k]) === 'g' ? 'Skupiny' : 'Priame kontakty') + ')'], ['g', 'Skupiny'], ['p', 'Priame kontakty']].map(([v, l]) => `<option value="${v}"${(s['socgrp_' + k] || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>`).join('')}<button>Uložiť</button></form>
 <div class="card"><h2>Záloha a obnova</h2><p><a class="btnl" href="/admin/export.json">⬇ Stiahnuť zálohu (JSON)</a></p>
 <form method="post" action="/admin/restore" enctype="multipart/form-data">${hid(req)}<label>Súbor zálohy (JSON, max 10 MB)</label><input type="file" name="backup" accept="application/json,.json" required>
 ${chk('confirm', false, 'Rozumiem, že obnova prepíše všetky nastavenia, tlačidlá, krátke odkazy a obrázky.')}<button class="d">Obnoviť zo zálohy</button></form></div>
@@ -474,6 +482,7 @@ admin.post('/theme', needAuth, csrf, wrap(async (req, res) => {
   o.btn_style = req.body.btn_style === 'square' ? 'square' : 'rounded';
   o.font = FONTS[req.body.font] ? req.body.font : 'system';
   o.layout = req.body.layout === 'tv' ? 'tv' : 'classic';
+  o.bg_fx = req.body.bg_fx === '1' ? '1' : '0';
   const pm = Object.entries(PRESETS).find(([, p]) => ['c_bg', 'c_card', 'c_btntext', 'c_text', 'layout'].every(k => p[k] === o[k]));
   o.preset = pm ? pm[0] : 'custom';
   await setSettings(o); ok(res);
@@ -487,6 +496,7 @@ admin.post('/social', needAuth, csrf, wrap(async (req, res) => {
     else { const u = safeUrl(v); if (!u) return ok(res, 'badsoc'); o['soc_' + k] = u; }
   }
   for (const k of SOC_TOGGLE) o['socon_' + k] = req.body['on_' + k] ? '1' : '0';
+  for (const [k] of SOCIALS) { const g = String(req.body['grp_' + k] || ''); o['socgrp_' + k] = g === 'g' || g === 'p' ? g : ''; }
   await setSettings(o); ok(res);
 }));
 admin.post('/image/:k(logo|bg)', needAuth, (req, res, next) => upload(req, res, e => {
@@ -654,6 +664,8 @@ function validateBackup(j) {
     if (k === 'layout' && !['tv', 'classic'].includes(v)) throw 0;
     if (k === 'preset' && !PRESETS[v] && v !== 'custom') throw 0;
     if (/^socon_/.test(k) && !/^[01]$/.test(v)) throw 0;
+    if (/^socgrp_/.test(k) && !/^[gp]?$/.test(v)) throw 0;
+    if (k === 'bg_fx' && !/^[01]$/.test(v)) throw 0;
     if (/^soc_/.test(k) && v && !(k === 'soc_email' ? EMAIL_RE.test(v) : safeUrl(v) === v)) throw 0;
     st[k] = LONG ? clean(v.replace(/\r/g, ''), 5000) : k === 'bio' || k === 'bio_en' || k === 'meta_desc' ? clean(v, 300) : clean(v, k === 'footer' ? 200 : k.startsWith('soc_') ? 2000 : 80);
   }
@@ -928,6 +940,7 @@ const features = require('./features')({ app, admin, pool, getSettings, setSetti
   dropCache: () => { cache = null; }, buildExport, safeUrl, chTree: (...a) => chTree(...a), PROD });
 require('./extras')(Object.assign(features, { sniff, shell: (...a) => shell(...a), slugOk: (r) => slugOk(r), T, clean }));
 require('./tvch')(features);
+require('./sections')(features);
 require('./epg')(features);
 const payMethods = require('./paymethods')(features);
 const walletsAdmin = require('./wallets')(features);
@@ -955,14 +968,14 @@ async function shell(req, res, s, active, title, content, sub = '') {
     const on = !n.url && n.page === active;
     const label = !n.url && PAGES[n.page] && n.label === PAGES[n.page][0] ? T(req, n.label) : n.label;
     return `<li><a href="${esc(href)}"${on ? ' class="on" aria-current="page"' : ''}${n.url ? ' rel="noopener noreferrer nofollow"' + (n.newtab ? ' target="_blank"' : '') : ''}><span class="ni">${n.url ? '🔗' : NAV_ICONS[n.page]}</span>${esc(label)}</a>${on && sub ? sub : ''}</li>`;
-  }).join('') + (s.stav_nav === '1' ? `<li><a href="/${esc(s.slug)}/stav"${active === 'stav' ? ' class="on" aria-current="page"' : ''}><span class="ni">📡</span>${esc(T(req, 'Stav služieb'))}</a></li>` : '');
+  }).join('') + (await features.sectionsNav(req, s.slug, active)) + (s.stav_nav === '1' ? `<li><a href="/${esc(s.slug)}/stav"${active === 'stav' ? ' class="on" aria-current="page"' : ''}><span class="ni">📡</span>${esc(T(req, 'Stav služieb'))}</a></li>` : '');
   const chat = s.chat_enabled !== '0';
   const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${chat ? `<link rel="stylesheet" href="/static/chat.css?v=${CHAT_V}"><script src="/static/chat.js?v=${CHAT_V}" defer></script>` : ''}${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
   const brand = `<a class="brand" href="/${esc(s.slug)}">${s.img.logo ? `<img src="/img/logo?v=${esc(s.img.logo)}" alt="" width="32" height="32">` : '<span class="bl">▶</span>'}${esc(loc(req, s, 'title'))}</a>`;
   res.setHeader('Cache-Control', 'public, max-age=60');
   res.setHeader('Vary', 'Cookie');
   res.send(`<!doctype html><html lang="${req.lang === 'en' ? 'en' : 'sk'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">${active === 'stav' ? '<meta http-equiv="refresh" content="60">' : ''}<meta name="description" content="${esc(s.meta_desc || loc(req, s, 'bio'))}"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(s.meta_desc || loc(req, s, 'bio'))}"><meta property="og:type" content="website"><meta property="og:site_name" content="${esc(loc(req, s, 'title'))}"><meta property="og:locale" content="${req.lang === 'en' ? 'en_US' : 'sk_SK'}"><meta property="og:url" content="${esc(pubOrigin(req) + req.path)}">${s.img.logo ? `<meta property="og:image" content="${esc(pubOrigin(req))}/img/logo?v=${esc(s.img.logo)}">` : ''}<meta name="twitter:card" content="summary"><link rel="canonical" href="${esc(pubOrigin(req) + req.path)}"><link rel="alternate" hreflang="sk" href="${esc(pubOrigin(req) + req.path)}?lang=sk"><link rel="alternate" hreflang="en" href="${esc(pubOrigin(req) + req.path)}?lang=en"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head>
-<body class="site${s.layout === 'tv' ? ' tv' : ''}"><input type="checkbox" id="nt" class="nt" aria-hidden="true"><header class="top">${brand}${langSw(req)}<label for="nt" class="burger" aria-label="Menu">☰</label></header>
+<body class="site${s.layout === 'tv' ? ' tv' : ''}${s.bg_fx !== '0' && !s.img.bg ? ' fx' : ''}"><input type="checkbox" id="nt" class="nt" aria-hidden="true"><header class="top">${brand}${langSw(req)}<label for="nt" class="burger" aria-label="Menu">☰</label></header>
 <aside class="side"><div class="sb">${brand}${langSw(req)}</div><nav aria-label="${T(req, 'Hlavné menu')}"><ul>${items}</ul></nav></aside><label for="nt" class="scrim" aria-hidden="true"></label>
 <main class="w pub${s.layout === 'tv' ? ' tv' : ''}">${content}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}</main></body></html>`);
 }
@@ -1071,7 +1084,10 @@ ${s.checkout_url ? `<a class="b br br-platby" href="${esc(co)}" rel="noopener no
 }));
 app.get('/:slug/kontakt', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
-  const soc = SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n, e]) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow">${e} ${esc(n)}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`).join('');
+  const a = (k, n, e) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow">${e} ${esc(T(req, n))}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`;
+  const on = SOCIALS.filter(([k]) => socOn(s, k)), grp = on.filter(([k]) => socGrp(s, k) === 'g'), dir = on.filter(([k]) => socGrp(s, k) !== 'g');
+  const blk = (h, ico, l) => l.length ? `<section class="cgrp"><h2 class="ch2"><span aria-hidden="true">${ico}</span> ${T(req, h)}</h2>${l.map(([k, n, e]) => a(k, n, e)).join('')}</section>` : '';
+  const soc = blk('Skupiny', '👥', grp) + blk('Priame kontakty', '💬', dir);
   await shell(req, res, s, 'contact', T(req, 'Kontakt') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Kontakt')}</h1>${loc(req, s, 'contact_text') ? `<div class="prose">${para(loc(req, s, 'contact_text'))}</div>` : ''}${soc || `<p class="hint">${T(req, 'Kontakty zatiaľ nie sú vyplnené.')}</p>`}`);
 }));
 app.get('/:slug/faq', wrap(async (req, res, next) => {
@@ -1089,10 +1105,11 @@ app.get('/:slug/stav', wrap(async (req, res, next) => {
   res.setHeader('X-Robots-Tag', 'noindex');
   await shell(req, res, s, 'stav', T(req, 'Stav služieb') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Stav služieb')}</h1><p class="lead">${T(req, 'Aktuálny stav našich služieb. Stránka sa obnovuje automaticky.')}</p>${await features.monitorPage(req.lang)}`);
 }));
+features.sectionRoute((...a) => shell(...a), (r) => slugOk(r), T, loc);
 app.use((req, res) => res.status(404).send(page('404', `<h1>404</h1><p class="bio">${T(req, 'Stránka neexistuje.')}</p>`)));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
 
-init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => features.epgInit()).then(() => {
+init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => features.sectionsInit()).then(() => features.epgInit()).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // Render free tier: lnkbio sleeps when idle (KEEP_AWAKE default off) so the checkout can stay awake 24/7
   // within the shared 750 free instance-hours. Visitors wake the checkout on demand (see middleware above).

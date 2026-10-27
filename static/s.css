@@ -64,7 +64,7 @@ input[type=checkbox]{width:auto;margin-right:6px}.ck{display:flex;align-items:ce
 .qa{border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:12px 16px;margin:0 0 10px;background:rgba(255,255,255,.04)}.qa summary{cursor:pointer;font-weight:700}
 details.card summary{cursor:pointer;font-weight:600}
 /* admin – TV Software theme */
-body.adm{background:radial-gradient(1000px 420px at 50% -10%,rgba(229,9,20,.22),transparent 60%),radial-gradient(800px 420px at 100% 100%,rgba(37,99,235,.2),transparent 60%),linear-gradient(180deg,#0b0d18,#07080f);background-attachment:fixed;color:#e6e9f5}
+body.adm{background-color:#07080f;background:radial-gradient(1000px 420px at 50% -10%,rgba(229,9,20,.22),transparent 60%),radial-gradient(800px 420px at 100% 100%,rgba(37,99,235,.2),transparent 60%),linear-gradient(180deg,#0b0d18,#07080f);background-attachment:fixed;color:#e6e9f5}
 .adm .ah{display:flex;align-items:center;gap:10px;padding:12px 18px;background:rgba(11,13,24,.85);border-bottom:1px solid #263052;position:sticky;top:0;z-index:5}
 .adm .ah .at{margin-left:auto;font-size:.75rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#e50914;border:1px solid #e5091466;border-radius:999px;padding:3px 10px}
 .adm .w{padding-top:24px}.adm.login .w,.adm .login{max-width:380px}
@@ -130,3 +130,29 @@ body.adm{background:radial-gradient(1000px 420px at 50% -10%,rgba(229,9,20,.22),
 .sico{vertical-align:-.22em;flex:none}
 /* public pages: hint/footer text had 3.9:1 contrast on the dark TV theme (WCAG AA needs 4.5:1) */
 .site.tv .hint,.site.tv .f{color:#9aa3bf}
+/* kontakty: skupiny / priame kontakty */
+.cgrp{margin:22px 0 6px;padding:14px 16px 6px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:rgba(255,255,255,.03)}.cgrp .b{margin:0 0 10px}
+.ch2{font-size:1.05rem;margin:0 0 12px;text-align:left;letter-spacing:.2px;opacity:.95}
+.sgrp{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:2px 0 12px}.sgrp label{margin:0;font-size:.85rem;opacity:.8}.sgrp select{width:auto;min-width:180px;margin:0}
+/* dekoratívne pozadie (len CSS, bez animácie, fixná vrstva za obsahom) */
+body.fx::before,body.fx::after{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none}
+body.fx::before{background:radial-gradient(55vmax 38vmax at 12% -4%,rgba(229,9,20,.17),transparent 62%),radial-gradient(48vmax 36vmax at 102% 28%,rgba(124,58,237,.13),transparent 62%),radial-gradient(60vmax 42vmax at 35% 108%,rgba(37,99,235,.17),transparent 62%),linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,.35))}
+body.fx::after{background:radial-gradient(rgba(255,255,255,.085) 1px,transparent 1.4px) 0 0/26px 26px;-webkit-mask-image:radial-gradient(ellipse 75% 55% at 62% 18%,#000,transparent 78%);mask-image:radial-gradient(ellipse 75% 55% at 62% 18%,#000,transparent 78%)}
+@media(max-width:760px){body.fx::after{background-size:20px 20px;opacity:.8}}
+@media print{body.fx::before,body.fx::after{display:none}}
+/* vlastné sekcie + videá */
+.secimg{display:block;width:100%;height:auto;max-height:420px;object-fit:cover;border-radius:14px;margin:6px 0 16px;border:1px solid rgba(255,255,255,.08)}
+.prose.sec h2,.prose.sec h3{margin:20px 0 8px}.prose.sec a{color:inherit;text-decoration:underline;text-underline-offset:3px}.prose.sec blockquote{margin:12px 0;padding:6px 14px;border-left:3px solid rgba(229,9,20,.7);background:rgba(255,255,255,.04);border-radius:0 10px 10px 0}.prose.sec ul,.prose.sec ol{padding-left:22px}
+.vids{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px;margin:16px 0}
+.vid{margin:0}.vid figcaption{margin-top:8px;font-weight:600;font-size:.95rem;opacity:.9}
+.vbox{position:relative;aspect-ratio:16/9;border-radius:14px;overflow:hidden;background:#05060c;border:1px solid rgba(255,255,255,.1);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.vbox iframe,.vbox video,.vplay img{position:absolute;inset:0;width:100%;height:100%;border:0;object-fit:cover}.vbox video{object-fit:contain;background:#000}
+.vplay{all:unset;position:absolute;inset:0;cursor:pointer;display:block;background:linear-gradient(135deg,#1b1e33,#0b0d18)}.vplay:focus-visible{outline:3px solid #fff;outline-offset:-3px}
+.vplay::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 50%,rgba(0,0,0,.55))}
+.vbtn{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:68px;height:48px;border-radius:14px;background:rgba(229,9,20,.92);color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;z-index:1;box-shadow:0 6px 20px rgba(0,0,0,.4);transition:transform .15s}
+.vplay:hover .vbtn,.vplay:focus-visible .vbtn{transform:translate(-50%,-50%) scale(1.08)}
+.vsrc{position:absolute;right:10px;bottom:8px;z-index:1;font-size:.75rem;font-weight:700;color:#fff;opacity:.85;letter-spacing:.3px}
+@media(prefers-reduced-motion:reduce){.vbtn{transition:none}}
+/* admin: sekcie */
+.secrow .sech{display:flex;gap:12px;align-items:center}.seci{font-size:1.6rem;width:40px;text-align:center}.secrow .row form{display:inline}
+.g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 14px}.tb{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px}.tb button{margin:0;padding:6px 10px}
