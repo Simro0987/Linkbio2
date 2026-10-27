@@ -82,6 +82,11 @@ ${error ? `<div class="err">${escapeHtml(error)}</div>` : ''}
     <label><input type="checkbox" name="enabled" value="1" ${s.enabled ? 'checked' : ''}/> Zapnúť reťaz SEPA botov</label>
     <p class="muted" style="margin-top:.25rem">Kým je vypnutá, checkout beží po starom (manuálny @Plat4Bot).</p>
 
+    <h2>Príjemca SEPA platby</h2>
+    <label for="recipientName">Meno / názov príjemcu (zobrazí sa zákazníkovi)</label>
+    <input id="recipientName" name="recipientName" type="text" maxlength="${s.recipientNameMax || 70}" value="${escapeHtml(s.recipientName || '')}" placeholder="napr. Ján Vzor alebo Firma s.r.o." autocomplete="off"/>
+    <p class="muted" style="margin-top:.25rem">Zobrazí sa pri <strong>každej</strong> SEPA platbe (bank_sepa_manual) na stránke <code>/bank-sepa-pay</code> ako riadok „Príjemca“ (aj pri už čakajúcich objednávkach) a použije sa v QR. Má prednosť pred menom z odpovede v kanáli. Prázdne = ako doteraz (meno z odpovede bota, ak ho pošle). Max. ${s.recipientNameMax || 70} znakov.</p>
+
     <h2>Režim</h2>
     <div style="display:flex;flex-wrap:wrap;gap:1rem;margin:.5rem 0 1rem">
       <label><input type="radio" name="mode" value="channel" ${mode === 'channel' ? 'checked' : ''}/> Kanál (predvolené)</label>
@@ -395,6 +400,7 @@ function mount(app, { appendLog }) {
         mode: req.body.mode || 'channel',
         channelId: req.body.channelId,
         preparedEmail: req.body.preparedEmail,
+        recipientName: req.body.recipientName,
         channelBotToken: req.body.clearChannelBotToken ? '__clear__' : req.body.channelBotToken,
         proofCheckStepId: req.body.proofCheckStepId,
         notifyEmail: req.body.notifyEmail,
@@ -412,7 +418,7 @@ function mount(app, { appendLog }) {
       const next = chain.applyAdminUpdate(body);
       await chain.save(next, appendLog);
       appendLog(
-        `SEPA_CHAIN_SAVED by=${req.adminSession.email} enabled=${next.enabled} mode=${next.mode} steps=${next.steps.length} channel=${next.channelId || '-'}`
+        `SEPA_CHAIN_SAVED by=${req.adminSession.email} enabled=${next.enabled} mode=${next.mode} steps=${next.steps.length} channel=${next.channelId || '-'} recipient=${next.recipientName ? 'set' : '-'}`
       );
       res.type('html').send(page(req.adminSession.email, 'Reťaz uložená.'));
     } catch (e) {

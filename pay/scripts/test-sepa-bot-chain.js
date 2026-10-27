@@ -959,12 +959,88 @@ async function main() {
     ok('dedicated SEPA channel poller: own token, channel_post only, feeds ingest');
   } catch (e) { fail('channel poller', e); process.env.SEPA_CHANNEL_POLL = '0'; chain.stopChannelPoller(); }
 
+  // ── Admin recipient name ("Meno / názov príjemcu") for bank_sepa_manual ──
+  try {
+    assert.equal(chain.sanitizeRecipientName('  Ján   Vzor \n'), 'Ján Vzor');
+    assert.equal(chain.sanitizeRecipientName('<script>alert(1)</script>Ján'), 'scriptalert(1)/scriptJán');
+    assert.equal(chain.sanitizeRecipientName('a\u0000b\u202ec'), 'a b c');
+    assert.equal(chain.sanitizeRecipientName('x'.repeat(200)).length, chain.RECIPIENT_NAME_MAX);
+    assert.equal(chain.RECIPIENT_NAME_MAX, 70);
+    assert.equal(chain.sanitizeRecipientName(null), '');
+    ok('recipientName sanitize: trim, no tags/control chars, max 70');
+  } catch (e) { fail('recipientName sanitize', e); }
+
+  try {
+    const base = chain.applyAdminUpdate({ enabled: false, mode: 'channel', steps: [], recipientName: '  Ján Vzor  ' });
+    assert.equal(base.recipientName, 'Ján Vzor');
+    await chain.save(base);
+    assert.equal(chain.getConfig().recipientName, 'Ján Vzor');
+    assert.equal(chain.recipientName(), 'Ján Vzor');
+    assert.equal(chain.sanitizeForAdmin(chain.getConfig()).recipientName, 'Ján Vzor');
+    // Field absent from body → keep stored value; explicit '' → clear
+    const keep = chain.applyAdminUpdate({ enabled: false, mode: 'channel', steps: [] });
+    assert.equal(keep.recipientName, 'Ján Vzor');
+    const cleared = chain.applyAdminUpdate({ enabled: false, mode: 'channel', steps: [], recipientName: '' });
+    assert.equal(cleared.recipientName, '');
+    ok('recipientName saved in chain config, kept when absent, cleared with empty');
+  } catch (e) { fail('recipientName config', e); }
+
+  try {
+    const adminChain = require('../src/adminSepaChain');
+    await chain.save(chain.applyAdminUpdate({ enabled: false, mode: 'channel', steps: [], recipientName: 'Ján "Vzor" & syn' }));
+    const html = adminChain.page('admin@test');
+    assert.ok(html.includes('Meno / názov príjemcu (zobrazí sa zákazníkovi)'), 'label');
+    assert.ok(html.includes('name="recipientName"'), 'input name');
+    assert.ok(html.includes('maxlength="70"'), 'maxlength');
+    assert.ok(html.includes('value="Ján &quot;Vzor&quot; &amp; syn"'), 'escaped value');
+    ok('admin page renders escaped recipient name field');
+  } catch (e) { fail('admin recipient field', e); }
+
+  try {
+    await chain.save(chain.applyAdminUpdate({ enabled: false, mode: 'channel', steps: [], recipientName: 'Ján Vzor' }));
+    // Order already waiting with a channel-parsed beneficiary → admin name wins
+    const order = { orderId: 'ord_recip1', provider: 'bank_sepa_manual', status: 'awaiting_iban', amountEur: 10, amountExact: '10.00' };
+    sepaManual.applyBankDetails(order, { iban: 'DE89370400440532013000', note: '263929-293629-29272', beneficiary: 'Electroko' });
+    const v = chain.applyRecipientNameToView(sepaManual.publicOrderView(order), order);
+    assert.equal(v.bank.beneficiary, 'Ján Vzor');
+    assert.equal(order.bank.beneficiary, 'Electroko', 'stored order is not mutated');
+    // Not ready yet (awaiting IBAN) → no bank block, nothing invented
+    const waiting = { orderId: 'ord_recip2', provider: 'bank_sepa_manual', status: 'awaiting_iban', amountEur: 5, amountExact: '5.00' };
+    const vw = chain.applyRecipientNameToView(sepaManual.publicOrderView(waiting), waiting);
+    assert.ok(!vw.bank);
+    // Other payment methods untouched
+    const other = { provider: 'bank_sepa', bank: { beneficiary: 'X' } };
+    const vo = chain.applyRecipientNameToView({ bank: { beneficiary: 'X', iban: 'HR29' } }, other);
+    assert.equal(vo.bank.beneficiary, 'X');
+    const vo2 = chain.applyRecipientNameToView({ bank: { beneficiary: 'X', iban: 'HR29' } }, { provider: 'mollie' });
+    assert.equal(vo2.bank.beneficiary, 'X');
+    // Empty admin name → current behaviour (channel name, or none)
+    await chain.save(chain.applyAdminUpdate({ enabled: false, mode: 'channel', steps: [], recipientName: '' }));
+    const ve = chain.applyRecipientNameToView(sepaManual.publicOrderView(order), order);
+    assert.equal(ve.bank.beneficiary, 'Electroko');
+    ok('recipientName overrides channel beneficiary on bank_sepa_manual only; empty = old behaviour');
+  } catch (e) { fail('recipientName view override', e); }
+
+  try {
+    const sepaQr = require('../src/sepaQr');
+    await chain.save(chain.applyAdminUpdate({ enabled: false, mode: 'channel', steps: [], recipientName: 'Ján Vzor' }));
+    const order = { orderId: 'ord_recip3', provider: 'bank_sepa_manual', status: 'awaiting_iban', amountEur: 12, amountExact: '12.00' };
+    sepaManual.applyBankDetails(order, { iban: 'DE89370400440532013000', note: 'N-1' });
+    const v = chain.applyRecipientNameToView(sepaManual.publicOrderView(order), order);
+    const f = sepaQr.fieldsFromBank(v.bank, { amountExact: v.amountExact, purpose: v.purpose, paymentNote: v.paymentNote });
+    const epc = sepaQr.buildEpcPayload(f);
+    assert.ok(epc && epc.includes('Ján Vzor'), 'EPC QR carries admin recipient');
+    await chain.save(chain.applyAdminUpdate({ enabled: false, mode: 'channel', steps: [], recipientName: '' }));
+    ok('admin recipient name flows into SEPA QR (EPC) fields');
+  } catch (e) { fail('recipientName QR', e); }
+
   try {
     const clean = chain.applyAdminUpdate({
       enabled: false,
       mode: 'channel',
       channelId: '',
       preparedEmail: '',
+      recipientName: '',
       channelBotToken: '__clear__',
       steps: [],
     });

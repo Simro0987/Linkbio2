@@ -11,6 +11,11 @@ const crypto = require('crypto');
 const electrocoin = require('./electrocoin');
 const sepaManual = require('./sepaManual');
 
+/** Admin-set SEPA recipient name (Reťaz SEPA botov) — lazy require, never throws. */
+function adminRecipientName() {
+  try { return require('./sepaBotChain').recipientName(); } catch { return ''; }
+}
+
 const COOKIE_NAME = 'sepa_admin_sess';
 
 /** @type {Map<string, { count: number, resetAt: number }>} */
@@ -230,7 +235,9 @@ function detailPage(order, userEmail, { error = null, notice = null } = {}) {
   </div>
   <h2>Bankové údaje</h2>
   <p class="mono">IBAN: ${escapeHtml(bank.iban || '—')}<br/>
-  Príjemca: ${escapeHtml(bank.beneficiary || '—')}<br/>
+  Príjemca: ${escapeHtml(bank.beneficiary || '—')}${
+    adminRecipientName() ? ` → zákazník vidí: <strong>${escapeHtml(adminRecipientName())}</strong> (Reťaz SEPA botov)` : ''
+  }<br/>
   Suma: ${escapeHtml(order.amountExact || order.amountEur || '—')} EUR<br/>
   VS: ${escapeHtml(order.vs || '—')}<br/>
   Poznámka: ${escapeHtml(order.paymentNote || order.purpose || purpose || '—')}</p>

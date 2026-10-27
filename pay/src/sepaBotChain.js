@@ -107,6 +107,9 @@ function emptyConfig() {
     lastSeenChannelTitle: '',
     lastSeenChannelAt: null,
     preparedEmail: '',
+    // Admin-set recipient (beneficiary) name shown to the customer on /bank-sepa-pay for EVERY
+    // bank_sepa_manual order. Empty = keep the name parsed from the channel reply (old behaviour).
+    recipientName: '',
     // Dedicated SEPA channel bot (ONLY for this SEPA chain). No env / @Plat4Bot fallback.
     channelBotTokenEnc: null,
     // Step id that verifies customer proof ("Krok, ktorý kontroluje platbu")
@@ -205,6 +208,47 @@ function writeFile(c) {
   cfg = c;
 }
 
+const RECIPIENT_NAME_MAX = 70;
+
+/**
+ * Clean the admin-set recipient name: plain text only, no control chars / angle brackets,
+ * collapsed whitespace, max 70 chars (EPC QR beneficiary limit). Output is still HTML-escaped.
+ */
+function sanitizeRecipientName(v) {
+  return Array.from(
+    String(v == null ? '' : v)
+      .normalize('NFC')
+      .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g, ' ')
+      .replace(/[<>]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
+    .slice(0, RECIPIENT_NAME_MAX)
+    .join('')
+    .trim();
+}
+
+/** Admin-set recipient name for the SEPA (bank_sepa_manual) payment, or '' when not set. */
+function recipientName(c) {
+  return sanitizeRecipientName((c || getConfig()).recipientName);
+}
+
+/**
+ * Apply the admin-set recipient name to a public SEPA order view (bank_sepa_manual only).
+ * Admin name wins over a beneficiary parsed from the channel IBAN reply; empty admin name = unchanged.
+ * Works for orders already waiting because it is applied at render time, not stored on the order.
+ */
+function applyRecipientNameToView(view, order, c) {
+  if (!view || !view.bank) return view;
+  // Strictly the bank_sepa_manual method — never any other payment method.
+  if (!order || String(order.provider || '').toLowerCase() !== 'bank_sepa_manual') return view;
+  const name = recipientName(c);
+  if (!name) return view;
+  view.bank = Object.assign({}, view.bank, { beneficiary: name });
+  view.recipientNameSource = 'admin';
+  return view;
+}
+
 function normalizeConfig(j) {
   const base = emptyConfig();
   if (!j || typeof j !== 'object') return base;
@@ -216,6 +260,7 @@ function normalizeConfig(j) {
   base.lastSeenChannelTitle = String(j.lastSeenChannelTitle || '').trim().slice(0, 200);
   base.lastSeenChannelAt = j.lastSeenChannelAt || null;
   base.preparedEmail = String(j.preparedEmail || '').trim().slice(0, 200);
+  base.recipientName = sanitizeRecipientName(j.recipientName);
   // Legacy paymentsBotTokenEnc (old "@Plat4Bot / krok 1 / fallback" field) is intentionally
   // NOT migrated: the SEPA channel bot must be a separate, dedicated bot.
   base.channelBotTokenEnc = j.channelBotTokenEnc || null;
@@ -341,6 +386,8 @@ function sanitizeForAdmin(c) {
     lastSeenChannelTitle: c.lastSeenChannelTitle || '',
     lastSeenChannelAt: c.lastSeenChannelAt || null,
     preparedEmail: c.preparedEmail || '',
+    recipientName: sanitizeRecipientName(c.recipientName),
+    recipientNameMax: RECIPIENT_NAME_MAX,
     proofCheckStepId: c.proofCheckStepId || '',
     notifyEmail: c.notifyEmail || '',
     proofTimeoutSec: c.proofTimeoutSec || 300,
@@ -1831,6 +1878,9 @@ function applyAdminUpdate(body) {
   next.lastSeenChannelTitle = cur.lastSeenChannelTitle || '';
   next.lastSeenChannelAt = cur.lastSeenChannelAt || null;
   next.preparedEmail = String(body.preparedEmail || '').trim().slice(0, 200);
+  next.recipientName = body.recipientName != null
+    ? sanitizeRecipientName(body.recipientName)
+    : sanitizeRecipientName(cur.recipientName);
   next.proofCheckStepId = body.proofCheckStepId != null ? String(body.proofCheckStepId).trim() : (cur.proofCheckStepId || '');
   next.notifyEmail = body.notifyEmail != null ? String(body.notifyEmail).trim().slice(0, 200) : (cur.notifyEmail || '');
   next.proofTimeoutSec = body.proofTimeoutSec != null
@@ -2265,6 +2315,10 @@ module.exports = {
   load,
   save,
   getConfig,
+  RECIPIENT_NAME_MAX,
+  sanitizeRecipientName,
+  recipientName,
+  applyRecipientNameToView,
   sanitizeForAdmin,
   applyAdminUpdate,
   sepaChannelBotToken,

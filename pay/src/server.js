@@ -3875,6 +3875,19 @@ ${postPayNoteCss()}
 }
 
 
+/** Public view of a bank_sepa_manual order + admin-set recipient name (Reťaz SEPA botov). */
+function sepaPublicView(order) {
+  const view = (order.resolution === 'sepa_manual_telegram' || order.status === 'awaiting_iban')
+    ? sepaManual.publicOrderView(order)
+    : electrocoin.publicOrderView(order);
+  try {
+    return sepaBotChain.applyRecipientNameToView(view, order);
+  } catch (e) {
+    appendLog('sepa recipientName skipped ' + (order && order.orderId) + ' ' + (e && e.message));
+    return view;
+  }
+}
+
 async function bankSepaPayPage(req, res) {
   const orderId = String(req.query.orderId || '').trim();
   const orders = loadOrders();
@@ -3891,9 +3904,7 @@ async function bankSepaPayPage(req, res) {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
-  const view = (order.resolution === 'sepa_manual_telegram' || order.status === 'awaiting_iban')
-    ? sepaManual.publicOrderView(order)
-    : electrocoin.publicOrderView(order);
+  const view = sepaPublicView(order);
   const ssrReady = Boolean(view.bankDetailsPublic && view.bank && view.bank.iban);
   const ssrBenef = safe(ssrReady ? view.bank.beneficiary : '');
   const ssrIban = safe(ssrReady ? view.bank.iban : '');
@@ -3968,6 +3979,7 @@ h1{margin:0 0 .35rem;font-size:1.25rem}.sub{color:var(--muted);font-size:.9rem;m
 .bankbox h2{margin:0 0 .65rem;font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .field{margin:0 0 .65rem}.field label{display:block;font-size:.72rem;color:var(--muted);margin-bottom:.2rem;text-transform:uppercase;letter-spacing:.03em}
 .field .val{font-family:ui-monospace,monospace;font-size:.95rem;padding:.55rem .65rem;background:#121a2b;border:1px solid var(--border);border-radius:8px;word-break:break-all;user-select:all}
+.field.recipient .val{font-family:system-ui,-apple-system,sans-serif;font-size:1.05rem;font-weight:700;color:#fff;word-break:break-word}
 .field.note{padding:.75rem;border-radius:14px;background:#78350f33;border:1px solid #f59e0b88;margin:.85rem 0}
 .field.note label{color:#fde68a;font-size:.8rem;font-weight:800}
 .field.note .val{background:#0f172a;border-color:#f59e0b66;font-size:1.05rem;font-weight:700;color:#fff}
@@ -4048,8 +4060,8 @@ button.bankbtn small{display:block;color:var(--muted);font-weight:500;font-size:
 
     <div class="field"><label>Suma</label><div class="val" id="vAmount" data-copy-val="${ssrAmountNum}">${ssrAmount}</div><button type="button" class="copy" data-copy="vAmount">Kopírovať sumu</button></div>
     <div class="field"><label>IBAN</label><div class="val" id="vIban">${ssrIban}</div><button type="button" class="copy" data-copy="vIban">Kopírovať IBAN</button></div>
+    <div class="field recipient" id="benefField" style="display:${ssrBenef ? 'block' : 'none'}"><label>Príjemca</label><div class="val" id="vBenef">${ssrBenef}</div><button type="button" class="copy" data-copy="vBenef">Kopírovať príjemcu</button></div>
     <div style="background:#fee2e2;border:2px solid #dc2626;color:#991b1b;border-radius:10px;padding:12px;margin:10px 0;font-weight:700">⚠️ Tieto údaje platia len pre túto objednávku. Pri ďalšej platbe si vždy vytvor novú objednávku a neposielaj na staré údaje.</div>
-    <div class="field" id="benefField" style="display:${ssrBenef ? 'block' : 'none'}"><label>Meno príjemcu / Recipient</label><div class="val" id="vBenef">${ssrBenef}</div><button type="button" class="copy" data-copy="vBenef">Kopírovať meno príjemcu</button></div>
     <div class="field note" id="noteField">
       <label>Poznámka / Payment note</label>
       <div class="val" id="vNote">${ssrNote}</div>
@@ -4707,9 +4719,7 @@ app.get('/api/bank-sepa/:orderId', (req, res) => {
   if (!order || order.provider !== 'bank_sepa_manual') {
     return res.status(404).json({ error: 'not found' });
   }
-  const view = (order.resolution === 'sepa_manual_telegram' || order.status === 'awaiting_iban')
-    ? sepaManual.publicOrderView(order)
-    : electrocoin.publicOrderView(order);
+  const view = sepaPublicView(order);
   view.bankOpen = null;
   if (view.bankDetailsPublic && view.bank && view.bank.iban) {
     try {
@@ -4731,9 +4741,7 @@ app.get(['/api/bank-sepa/:orderId/qr/:format.png','/api/bank-sepa/:orderId/qr/:f
     if (!order || order.provider !== 'bank_sepa_manual') {
       return res.status(404).type('text').send('not found');
     }
-    const view = (order.resolution === 'sepa_manual_telegram' || order.status === 'awaiting_iban')
-      ? sepaManual.publicOrderView(order)
-      : electrocoin.publicOrderView(order);
+    const view = sepaPublicView(order);
     if (!(view.bankDetailsPublic && view.bank && view.bank.iban)) {
       return res.status(404).type('text').send('bank details not ready');
     }
