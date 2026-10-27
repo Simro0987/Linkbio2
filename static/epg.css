@@ -181,9 +181,9 @@
 .evh-nav{position:absolute;top:42%;z-index:3;width:44px;height:44px;margin-top:-22px;border:0;border-radius:50%;background:rgba(0,0,0,.5);color:#fff;font-size:1.7rem;line-height:1;cursor:pointer;display:none;align-items:center;justify-content:center;opacity:.75;transition:opacity .2s,background .2s}
 .evh-nav:hover,.evh-nav:focus-visible{opacity:1;background:rgba(229,9,20,.85)}
 .evh-prev{left:12px}.evh-next{right:12px}
-.evh-dots{position:absolute;left:0;right:0;bottom:14px;z-index:3;display:flex;justify-content:center;gap:10px}
-.evh-dots button{position:relative;width:28px;height:4px;padding:0;border:0;border-radius:2px;background:rgba(255,255,255,.35);cursor:pointer}
-.evh-dots button::before{content:'';position:absolute;inset:-12px -4px}
+.evh-dots{position:absolute;left:0;right:0;bottom:14px;z-index:3;display:flex;justify-content:center;gap:8px;padding:0 16px}
+.evh-dots button{position:relative;flex:0 1 28px;min-width:10px;width:28px;height:4px;padding:0;border:0;border-radius:2px;background:rgba(255,255,255,.35);cursor:pointer}
+.evh-dots button::before{content:'';position:absolute;inset:-12px -3px}
 .evh-dots button[aria-current=true]{background:#fff}
 .evh button:focus-visible{outline:2px solid #ffc400;outline-offset:3px}
 .evh[data-n="1"] .evh-nav,.evh[data-n="1"] .evh-dots{display:none}

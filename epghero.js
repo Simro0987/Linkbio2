@@ -15,13 +15,13 @@ const { tx } = require('./uitext');
 const S = require('./evsources');
 const path = require('path');
 
-const HD = { evh_on: '1', evh_cards_home: '0', evh_gem: '1', evh_okt: '1', evh_okt_ch: 'Premier Sport 3 Extra', evh_ch: '', evh_big: '' };
+const HD = { evh_max: '8', evh_on: '1', evh_cards_home: '0', evh_gem: '1', evh_okt: '1', evh_okt_ch: 'Premier Sport 3 Extra', evh_ch: '', evh_big: '' };
 // SK/CZ only: the Kanály catalogue has no country field → category + name allowlist (evsources CHANNELS + admin lines) + EPG id country
 const NOT_SKCZ_CAT = /maďar|madar|poľs|pols|nemec|rusk|ukrajin|švajč|svajc|khl|dospel|18\+|vod|rádi|radi|webkam/i; // 'zahraničný' šport: only known SK/CZ feeds (Arena Sport 1/2 …)
 const SKCZ_CAT = /sloven|česk|cesk|lokáln|lokaln/i;
 const FOREIGN_TAG = /(?:^|[\s(])(pl|nl|de|hu|mx|uk|esp|hr|ro|at|us|fr|it|ru|ua|4k)(?=$|[\s)])/i;
 const chRules = (txt) => { const add = [], deny = []; for (let l of String(txt || '').split(/\r?\n/)) { l = l.trim().toLowerCase(); if (!l || l[0] === '#') continue; if (l[0] === '-') { if (l.slice(1).trim()) deny.push(l.slice(1).trim()); } else add.push(l.replace(/^\+/, '').trim()); } return { add: add.filter(Boolean), deny }; };
-const MAXS = 3, WEEK = 7 * 86400e3, REFRESH = 3 * 3600e3, OKT_TTL = 6 * 3600e3, OKT_DUR = 5 * 3600e3;
+const MAX_DEF = 8, MAX_HI = 12, WEEK = 7 * 86400e3, REFRESH = 3 * 3600e3, OKT_TTL = 6 * 3600e3, OKT_DUR = 5 * 3600e3;
 const OKT_URL = 'https://oktagonmma.com/cs/';
 const CATS = [
   ['stadium', /volejbal|volleyball|futsal|h[aá]dzan|h[aá]zen|handball|florbal|floorball|bedminton|badminton|curling|snooker/i],
@@ -45,6 +45,23 @@ const DEVNET = process.env.NODE_ENV !== 'production' && process.env.EVH_DEV_NET 
 // minor sports / women's / youth competitions: fine for the cards, rarely „the event of the week“
 const MINOR = /\b(volejbal|volleyball|futsal|bedminton|badminton|curling|snooker|šípky|sipky|darts|stolný tenis|stolni tenis|florbal|plávanie|plavani|gymnastika|krasokorčuľovanie|krasobrusleni|cyklistika|veslovanie|ženy|žien|ženské|zeny|women|U1[6-9]|U2[01]|junior|dorast)\b/i;
 // background category: films/series/docs by EPG kind, everything else by title keywords (default: generic stadium)
+// number of hero slides (admin „Počet udalostí“, default 8, 1–12)
+const maxOf = (hc) => Math.max(1, Math.min(MAX_HI, parseInt(hc && hc.evh_max, 10) || MAX_DEF));
+// variety: ranked list → n picks with ≤ perCat of one category (football, hockey, film…) and ≤ perDay on one day;
+// if that leaves gaps, the best skipped ones fill them (order kept)
+const dayOf = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Bratislava' }).format(ms);
+function diversify(list, n, opt = {}) {
+  const perCat = opt.perCat || Math.max(2, Math.ceil(n * 0.375)), perDay = opt.perDay || Math.max(2, Math.ceil(n * 0.4));
+  const out = [], rest = [], cc = new Map(), dc = new Map();
+  for (const x of list) {
+    if (out.length >= n) { rest.push(x); continue; }
+    const c = x.cat || 'x', d = dayOf(x.s);
+    if ((cc.get(c) || 0) >= perCat || (dc.get(d) || 0) >= perDay) { rest.push(x); continue; }
+    out.push(x); cc.set(c, (cc.get(c) || 0) + 1); dc.set(d, (dc.get(d) || 0) + 1);
+  }
+  for (const x of rest) { if (out.length >= n) break; out.push(x); }
+  return out.sort((a, b) => list.indexOf(a) - list.indexOf(b));
+}
 const catOf = (t, kind) => { if (/^(film|series|doc)$/.test(kind || '')) return KINDCAT[kind]; for (const [k, re] of CATS) if (re.test(t)) return k; return KINDCAT[kind] || 'stadium'; };
 const gmodels = () => [...new Set((process.env.EVH_GEMINI_MODELS || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.8-flash').split(',').map((x) => x.trim()).filter((x) => /^[\w.-]{3,60}$/.test(x)))].slice(0, 4);
 const RV = 4;
@@ -174,19 +191,21 @@ module.exports = function hero(ctx, h, E) {
   const oktNum = (t) => { const m = /\boktagon\s*(\d{1,3})\b/i.exec(t); return m ? +m[1] : null; };
 
   // ---------- Gemini ranking (optional, free tier) ----------
-  async function gemini(list) {
+  const rankPrompt = (n) => S.PROMPTS.rank.replace('choose the 3 BIGGEST events', `choose the ${n} BIGGEST events, ordered from the biggest`).replace('{"top":["id1","id2","id3"]', '{"top":["id1","id2","…"]') +
+    ` Keep the selection varied: if there are enough real top events, mix sports and genres and different days of the week (at most ${Math.max(2, Math.ceil(n * 0.375))} events of the same sport or genre).`;
+  async function gemini(list, n) {
     const key = String(process.env.GEMINI_API_KEY || '').trim(); if (!key) throw new Error('bez GEMINI_API_KEY');
     const models = gmodels();
-    const prompt = S.PROMPTS.rank + '\n\nCandidates:\n' + JSON.stringify(list);
+    const prompt = rankPrompt(n) + '\n\nCandidates:\n' + JSON.stringify(list);
     let last = '';
     for (const m of models) {
       try {
-        const gc = { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 600 }; if (/2\.5/.test(m)) gc.thinkingConfig = { thinkingBudget: 0 };
+        const gc = { temperature: 0, responseMimeType: 'application/json', maxOutputTokens: 400 + 120 * n }; if (/2\.5/.test(m)) gc.thinkingConfig = { thinkingBudget: 0 };
         const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, signal: AbortSignal.timeout(20e3), body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: gc }) });
         if (!r.ok) { last += (last ? '; ' : '') + m + ' HTTP ' + r.status; continue; }
         const j = await r.json(); const t = (j.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
         const o = JSON.parse(t.slice(t.indexOf('{'), t.lastIndexOf('}') + 1));
-        const ids = new Set(list.map((x) => x.id)), top = [...new Set((Array.isArray(o.top) ? o.top : []).map(String))].filter((x) => ids.has(x)).slice(0, MAXS);
+        const ids = new Set(list.map((x) => x.id)), top = [...new Set((Array.isArray(o.top) ? o.top : []).map(String))].filter((x) => ids.has(x)).slice(0, n);
         if (!top.length) { last += (last ? '; ' : '') + m + ' prázdna odpoveď'; continue; }
         const why = {}; for (const id of top) { const w = o.why && o.why[id]; if (w) why[id] = C.clip(String(w).replace(/[<>]/g, ''), 120); }
         return { top, why, model: m };
@@ -234,22 +253,22 @@ module.exports = function hero(ctx, h, E) {
     cand.sort((a, b) => b.score - a.score || a.s - b.s);
     const seen = new Set(), elig = [];
     for (const x of cand) { if (x.score < min || x.rerun || hidden.has(x.k) || hidden.has(x.tk) || seen.has(x.tk)) continue; seen.add(x.tk); elig.push(x); }
-    const top = elig.slice(0, 12).map((x, i) => Object.assign(x, { id: 'c' + (i + 1) }));
-    // 5) optional Gemini re-ranking of the top 12 (memoized per candidate set; deterministic score order on any failure)
+    const N = maxOf(hc), top = elig.slice(0, Math.max(12, 2 * N)).map((x, i) => Object.assign(x, { id: 'c' + (i + 1), cat: catOf(x.title + ' ' + x.kw.join(' ') + ' ' + (x.sub || ''), x.kind) }));
+    // 5) optional Gemini re-ranking of the top 2×N (≥ 12) (memoized per candidate set; deterministic score order on any failure)
     let rank = { by: 'score', model: '', err: '', why: {} }, order = top.map((x) => x.id);
     if (hc.evh_gem === '1' && top.length > 1) {
       const list = top.map((x) => ({ id: x.id, title: x.title, channel: x.chName + (x.pred ? ' (predpokladaný kanál)' : ''), when: new Date(x.s).toISOString(), genre: x.kind || '', score: x.score, keywords: x.kw.join(', '), big_match: x.big ? x.big.join(', ') : '' }));
-      const hsh = sha(S.PROMPTS.rank + JSON.stringify(list.map((x) => [x.title, x.channel, x.when, x.big_match]))).slice(0, 16);
+      const hsh = sha(rankPrompt(N) + JSON.stringify(list.map((x) => [x.title, x.channel, x.when, x.big_match]))).slice(0, 16);
       let memo = null; try { memo = JSON.parse((await kv.get('evh_gem')) || 'null'); } catch {}
       if (memo && memo.h === hsh && now - memo.t < 12 * 3600e3) rank = { by: 'gemini', model: memo.model, err: '', why: memo.why || {}, cached: true }, order = memo.top;
       else if (now - lastGem < 5 * 60e3) rank.err = 'Gemini – pauza medzi volaniami';
       else {
         lastGem = now;
-        try { const g = await gemini(list); rank = { by: 'gemini', model: g.model, err: '', why: g.why }; order = g.top; await kv.set('evh_gem', JSON.stringify({ h: hsh, t: now, top: g.top, why: g.why, model: g.model })); } catch (e) { rank.err = 'Gemini: ' + e.message; }
+        try { const g = await gemini(list, N); rank = { by: 'gemini', model: g.model, err: '', why: g.why }; order = g.top; await kv.set('evh_gem', JSON.stringify({ h: hsh, t: now, top: g.top, why: g.why, model: g.model })); } catch (e) { rank.err = 'Gemini: ' + e.message; }
       }
       order = [...order.filter((id) => top.some((x) => x.id === id)), ...top.map((x) => x.id).filter((id) => !order.includes(id))];
     }
-    const picks = order.map((id) => top.find((x) => x.id === id)).filter(Boolean).slice(0, MAXS + 2);
+    const picks = diversify(order.map((id) => top.find((x) => x.id === id)).filter(Boolean), N + 2); // +2 spares when one ends
     // 6) background images + facts: official calendar cover, else the automatic resolver (evimg.js; cached 24 h per title)
     if (st.evh_tmdb != null) tmdbSet = String(st.evh_tmdb || '');
     R.beginRefresh();
@@ -300,7 +319,7 @@ module.exports = function hero(ctx, h, E) {
     const slim = (x) => ({ k: x.k, tk: x.tk, title: x.title, sub: C.clip(x.sub, 90), s: x.s, e: x.e, kind: x.kind, ch: { id: x.ch.id, name: x.ch.name, category: x.ch.category }, chName: x.chName, pred: x.pred ? 1 : 0, score: x.score, kw: x.kw, why: x.why, src: x.src || 'epg', img: x.img || '', imgM: x.imgM || '', img0: x.img0 || '', imgSrc: x.imgSrc || '', credit: x.credit || '', imgPage: x.imgPage || '', imgLog: x.imgLog || [], fbOff: x.fbOff || 0, genre: x.genre || '', desc: x.desc || '', descSrc: x.descSrc || '', cat: x.cat || catOf(x.title, x.kind), place: x.place || '', reason: x.reason || '', startOnly: !!x.startOnly, live: x.live });
     const chInfo = { ok: chs.ok.length, epg: chs.ok.filter((r) => r.has).length, noEpg: chs.ok.filter((r) => !r.has && !r.shifted).map((r) => ({ id: r.id, name: r.name, category: r.category, mapped: !!r.epg })),
       okNames: chs.ok.filter((r) => r.has && !r.shifted).map((r) => r.name), excl: chs.no.length, exclFeeds: chs.no.filter((r) => /feed|EPG|zozname|admin/.test(r.why) && !/vod|rádi|radi/i.test(r.category)).map((r) => r.name + ' – ' + r.why).slice(0, 200) };
-    wk = { t: now, rv: RV, chans: chInfo, rank, picks: picks.map(slim), top: top.map((x) => Object.assign(slim(x), { imgLog: [] })), okt, ground: Object.assign({}, R.groundStatus(), { at: now }) };
+    wk = { t: now, rv: RV, n: N, chans: chInfo, rank, picks: picks.map(slim), top: top.map((x) => Object.assign(slim(x), { imgLog: [] })), okt, ground: Object.assign({}, R.groundStatus(), { at: now }) };
     await kv.set('evh_week', JSON.stringify(wk)).catch(() => {});
     side = null;
     return wk;
@@ -316,7 +335,8 @@ module.exports = function hero(ctx, h, E) {
     const now = Date.now();
     if (!wk) { await Promise.race([refresh(), new Promise((r) => setTimeout(r, 9e3).unref())]); return wk; }
     const live = wk.picks.filter((x) => x.e > now).length;
-    if (wk.dirty || wk.rv !== RV || now - wk.t > REFRESH || (live < MAXS && now - wk.t > 20 * 60e3)) refresh();
+    let N = MAX_DEF; try { N = maxOf(hcfg(await getSettings())); } catch {}
+    if (wk.dirty || wk.rv !== RV || now - wk.t > REFRESH || (live < N && now - wk.t > 20 * 60e3) || (wk.n || 3) !== N) refresh();
     return wk;
   }
   // pins + admin image overrides change rarely – 60 s cache
@@ -328,14 +348,14 @@ module.exports = function hero(ctx, h, E) {
     return (side = { t: Date.now(), pins, ov, dov });
   }
   async function slides() {
-    const w = await ensure(), sd = await sideData(), now = Date.now(), all = await channels();
+    const w = await ensure(), sd = await sideData(), now = Date.now(), all = await channels(), N = maxOf(hcfg(await getSettings()));
     const out = [], ovImg = (tk) => { const o = sd.ov.get(ovKey(tk)); return o ? { img: '/ev-img/c/' + ovKey(tk) + '?v=' + o, imgM: '/ev-img/m/' + ovKey(tk) + '?v=' + o, imgSrc: 'admin (vlastný obrázok)', credit: '', imgPage: '' } : null; };
-    for (const p of sd.pins.filter((x) => x.e > now).slice(0, MAXS)) {
+    for (const p of sd.pins.filter((x) => x.e > now).slice(0, N)) {
       const tk = 't:' + tnorm(p.title), pk = ((w && w.picks) || []).find((y) => y.tk === tk), cat = (pk && pk.cat) || catOf(p.title + ' ' + (p.note || ''), 'sport'), dv = sd.dov.get(tk);
       out.push(Object.assign({ pin: p.id, tk, title: p.title, s: p.s, e: p.e, ch: p.ch, chName: p.chName, sub: '', desc: dv || p.note || '', descSrc: dv ? 'admin' : p.note ? 'admin (pin)' : '', img: p.img || '', imgM: '', cat, src: 'pin', imgSrc: p.img ? 'admin (pin)' : '' }, ovImg(tk) || {}));
     }
     for (const x of (w && w.picks) || []) {
-      if (out.length >= MAXS) break;
+      if (out.length >= N) break;
       if (x.e <= now || out.some((y) => y.tk === x.tk)) continue;
       const ch = x.ch && x.ch.id ? all.find((r) => r.id === x.ch.id) || null : null, dv = sd.dov.get(x.tk);
       out.push(Object.assign({}, x, { ch, desc: dv || x.desc || '', descSrc: dv ? 'admin (prepísaný)' : x.descSrc || '' }, ovImg(x.tk) || {}));
@@ -401,8 +421,8 @@ ${x.imgLog && x.imgLog.length ? `<details class="evlog"><summary>Log zdrojov (${
 ${x.pin || /^admin/.test(x.imgSrc || '') ? '' : `<form method="post" action="/admin/udalosti/hero/nextimg">${hid(req)}<input type="hidden" name="tk" value="${k2(x)}"><button>🔁 Nájsť iný obrázok</button></form>`}
 <form method="post" action="/admin/udalosti/hero/img" enctype="multipart/form-data">${hid(req)}<input type="hidden" name="tk" value="${k2(x)}"><input type="file" name="image" accept="image/jpeg,image/png,image/webp"><input name="url" maxlength="400" placeholder="https:// obrázok alebo stránka udalosti"><button>🖼 Zmeniť obrázok</button>${x.imgSrc && /^admin \(vlastný/.test(x.imgSrc) ? '<label class="ck"><input type="checkbox" name="del" value="1"> zrušiť vlastný obrázok</label>' : ''}</form></span></div>`;
     const okt = w.okt;
-    return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div class="card" id="hero"><h2>🏆 Top udalosť týždňa – hero navrchu webu (${list.length}/${MAXS})</h2>
-<p class="hint">Karusel (max ${MAXS}) navrchu domovskej stránky. Poradie: 📌 pripnuté → automatický výber z TV programu na 7 dní (kľúčové slová + šport + naživo + večer, bez záznamov) + oficiálny kalendár OKTAGON MMA${hc.evh_gem === '1' ? ' → Gemini zoradí top 12 (pri chybe ostáva poradie podľa skóre)' : ''}. Prepočet každé ${REFRESH / 3600e3} h.</p>
+    return `<link rel="stylesheet" href="/static/epg.css?v=${ASSET_V}"><div class="card" id="hero"><h2>🏆 Top udalosť týždňa – hero navrchu webu (${list.length}/${maxOf(hc)})</h2>
+<p class="hint">Karusel (max ${maxOf(hc)}, nastaviteľné nižšie: 1–${MAX_HI}) navrchu domovskej stránky. Poradie: 📌 pripnuté → automatický výber z TV programu na 7 dní (kľúčové slová + šport + naživo + večer, bez záznamov) + oficiálny kalendár OKTAGON MMA${hc.evh_gem === '1' ? ' → Gemini zoradí top ' + Math.max(12, 2 * maxOf(hc)) + ' (pri chybe ostáva poradie podľa skóre)' : ''} · pestrosť: max ${Math.max(2, Math.ceil(maxOf(hc) * 0.375))} z jedného športu/žánru a ${Math.max(2, Math.ceil(maxOf(hc) * 0.4))} z jedného dňa. Prepočet každé ${REFRESH / 3600e3} h.</p>
 <p>Vypočítané: <b>${w.t ? esc(fmt(w.t)) + ' CET' : '—'}</b> · poradie: <b>${w.rank && w.rank.by === 'gemini' ? 'Gemini (' + esc(w.rank.model || '') + (w.rank.cached ? ', z cache' : '') + ')' : 'skóre (deterministicky)'}</b>${w.rank && w.rank.err ? ' · <span class="hint">' + esc(w.rank.err) + '</span>' : ''}</p>
 ${w.chans ? `<details class="evlog"><summary>📺 Kanály pre výber: <b>${w.chans.ok}</b> SK/CZ kanálov z Kanály (${w.chans.epg} s programom, ${w.chans.noEpg.length} bez programu) · ${w.chans.excl} vylúčených (zahraničné / rádiá / VOD / 18+)</summary>
 <p><b>Bez programu (EPG):</b> ${w.chans.noEpg.map((r) => esc(r.name) + (/premier sport 3 extra/i.test(r.name) ? ' <i>(OKTAGON kalendár)</i>' : r.mapped ? ' <i>(spárovaný, zdroj neposiela dáta)</i>' : '')).join(', ') || '—'}</p>
@@ -416,6 +436,7 @@ ${list.map(slide).join('') || '<p class="hint">Tento týždeň nie je žiadna ud
 ${((okt && okt.events) || []).slice(0, 6).map((x) => `<div class="row"><span><b>${esc(fmt(x.s))} CET</b> ${esc(prettyOkt(x.title))} · <span class="hint">${esc(x.place)}</span></span></div>`).join('')}
 <form method="post" action="/admin/udalosti/hero/settings">${hid(req)}<h3>⚙ Nastavenia hero</h3>
 <label class="ck"><input type="checkbox" name="evh_on" value="1"${hc.evh_on === '1' ? ' checked' : ''}> Zobraziť hero „Top udalosť týždňa“ navrchu domovskej stránky</label>
+<label>Počet udalostí v karuseli (1–${MAX_HI}, predvolene ${MAX_DEF})</label><input type="number" name="evh_max" min="1" max="${MAX_HI}" step="1" value="${maxOf(hc)}" inputmode="numeric">
 <label class="ck"><input type="checkbox" name="evh_cards_home" value="1"${hc.evh_cards_home === '1' ? ' checked' : ''}> Pod hero zobraziť aj kartičky „Dnes v TV · Top udalosti“ (na stránke Kanály ostávajú)</label>
 <label class="ck"><input type="checkbox" name="evh_gem" value="1"${hc.evh_gem === '1' ? ' checked' : ''}> Zoradiť kandidátov cez Gemini (${process.env.GEMINI_API_KEY ? 'kľúč nastavený' : 'GEMINI_API_KEY chýba'})</label>
 <label class="ck"><input type="checkbox" name="evh_okt" value="1"${hc.evh_okt === '1' ? ' checked' : ''}> Načítavať kalendár OKTAGON MMA</label>
@@ -431,7 +452,7 @@ ${((okt && okt.events) || []).slice(0, 6).map((x) => `<div class="row"><span><b>
     const chTxt = String(b.evh_ch || '').replace(/[\u0000-\u0009\u000b-\u001f<>]/g, '').split(/\r?\n/).map((x) => x.trim().slice(0, 60)).filter(Boolean).slice(0, 60).join('\n');
     let bigTxt = String(b.evh_big || '').replace(/\r/g, '').replace(/[\u0000-\u0009\u000b-\u001f]/g, '').slice(0, 20000).trim();
     if (bigTxt === S.BIG_DEFAULT.trim() || OLD_BIG.has(sha(bigTxt)) || b.evh_big_reset) bigTxt = ''; // unchanged → keep following the built-in defaults
-    const upd = { evh_big: bigTxt, evh_ch: chTxt, evh_on: b.evh_on ? '1' : '0', evh_cards_home: b.evh_cards_home ? '1' : '0', evh_gem: b.evh_gem ? '1' : '0', evh_okt: b.evh_okt ? '1' : '0', evh_okt_ch: ch };
+    const upd = { evh_big: bigTxt, evh_ch: chTxt, evh_on: b.evh_on ? '1' : '0', evh_cards_home: b.evh_cards_home ? '1' : '0', evh_gem: b.evh_gem ? '1' : '0', evh_okt: b.evh_okt ? '1' : '0', evh_okt_ch: ch, evh_max: String(maxOf({ evh_max: b.evh_max })) };
     const tm = String(b.evh_tmdb || '').trim(); if (b.evh_tmdb_del) upd.evh_tmdb = ''; else if (tm) { if (!/^[\w.\-]{16,400}$/.test(tm)) return back(res, 'bad'); upd.evh_tmdb = tm; }
     await setSettings(upd); if (upd.evh_tmdb != null) tmdbSet = upd.evh_tmdb;
     await refresh('force'); back(res, 'ok');
@@ -482,4 +503,4 @@ ${((okt && okt.events) || []).slice(0, 6).map((x) => `<div class="row"><span><b>
 
   return { init, stale, render, cardsOffHome, adminHtml, refresh, fetchImage, toWebp, _catOf: catOf, _fetchOkt: fetchOkt, _prettyOkt: prettyOkt };
 };
-module.exports.catOf = catOf; module.exports.prettyOkt = prettyOkt;
+module.exports.catOf = catOf; module.exports.diversify = diversify; module.exports.maxOf = maxOf; module.exports.prettyOkt = prettyOkt;

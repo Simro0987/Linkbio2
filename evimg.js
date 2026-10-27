@@ -26,6 +26,8 @@ module.exports = function evimg(o) {
   const job = (fn) => { const p = q.then(fn, fn); q = p.catch(() => {}); return p; };
   const sharp = () => { const s = require('sharp'); s.concurrency(1); s.cache(false); return s; };
   const G = { off: 0, err: '', lastOk: 0, budget: 0, used: 0, model: '' };
+  // free-tier pacing: ≥ 4.5 s between Gemini requests (≈13/min) – a refresh with 8–12 slides makes ~2–3 calls per new title
+  let gemNext = 0; const pace = async () => { const now = Date.now(), w = gemNext - now; gemNext = Math.max(now, gemNext) + 4500; if (w > 0) await new Promise((r) => setTimeout(r, w)); };
 
   // ---------------- Gemini (models from EVH_GEMINI_MODELS; optional google_search grounding with back-off) ----------------
   async function gem(prompt, opt = {}) {
@@ -37,6 +39,7 @@ module.exports = function evimg(o) {
         const gc = { temperature: 0, maxOutputTokens: opt.max || 900 }; if (!g) gc.responseMimeType = 'application/json'; if (/2\.5/.test(m)) gc.thinkingConfig = { thinkingBudget: 0 };
         const body = { contents: [{ parts: [{ text: prompt }] }], generationConfig: gc }; if (g) { body.tools = [{ google_search: {} }]; G.budget--; G.used++; }
         try {
+          await pace();
           const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, signal: AbortSignal.timeout(g ? 30e3 : 20e3), body: JSON.stringify(body) });
           if (!r.ok) {
             if (g) { G.off = Date.now() + S.GROUND.offAfterError; G.err = m + ' HTTP ' + r.status + (r.status === 429 ? ' (free tier – grounding kvóta nedostupná/vyčerpaná)' : ''); continue; }
@@ -304,7 +307,7 @@ module.exports = function evimg(o) {
     if (!withF.length) return out;
     const list = withF.map((it) => ({ id: it.id, event: it.title, genre: it.genre, facts: it.facts.map((f) => f.text) }));
     try {
-      const g = await gem(S.PROMPTS.teaser + '\n\n' + JSON.stringify(list), { max: 900 });
+      const g = await gem(S.PROMPTS.teaser + '\n\n' + JSON.stringify(list), { max: Math.max(900, 300 + 110 * list.length) });
       for (const it of withF) { const v = clip(strip(g.o[it.id] || '').replace(/https?:\/\/\S+/g, ''), 210); out[it.id] = { d: v, src: it.facts.map((f) => f.src).filter((v2, i, a) => a.indexOf(v2) === i).join(' + ') + ' → Gemini ' + g.model }; }
     } catch (e) {
       log.push('popisy: Gemini nedostupné (' + clip(e.message, 60) + ') – použitý text zo zdroja');
