@@ -348,6 +348,7 @@ module.exports = function register(app, { loadOrders, port, appendLog }) {
       // Defense in depth vs prompt injection: the bot must never output IBANs/card numbers/keys.
       reply = reply.replace(/\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,7}(?:[ ]?[A-Z0-9]{1,3})?\b/g, '[IBAN nájdete na stránke objednávky]')
         .replace(/\b(?:sk|pk|rk)_(?:live|prod|test)_[A-Za-z0-9]{8,}\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b\d{9,10}:[A-Za-z0-9_-]{30,}\b|\b[xyztvu]pub[1-9A-HJ-NP-Za-km-z]{50,}\b|\b(?:Ltub|Mtub)[1-9A-HJ-NP-Za-km-z]{50,}\b|\bxkeysib-[A-Za-z0-9-]{20,}\b|\bre_[A-Za-z0-9_]{20,}\b/g, '[skryté]')
+        .replace(/(?:https?:\/\/)?[a-z0-9.-]+\.[a-z]{2,}\/[^\s)"'<>]*tokigo[^\s)"'<>]*/gi, '(odkaz na stránke Kontakt)')
         .replace(/(?:https?:\/\/[^\s)"'<>]*)?\/admin(?:\/[^\s)"'<>]*)?/gi, '[skryté]');
       s.msgs.push({ role: 'model', text: reply, t: Date.now() });
       res.json({ sessionId: sid, reply, escalated, fill });

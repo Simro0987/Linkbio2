@@ -32,7 +32,7 @@ function build(d) {
   // packages
   const pl = (d.plans || []);
   if (pl.length) {
-    L.push('## Balíky a ceny (aktuálny cenník, ' + O + (d.pages && d.pages['Cenník'] ? '' : '') + ')');
+    L.push('## Balíky a ceny (aktuálny cenník, ' + O + ')');
     for (const p of pl) L.push(`- ${p.name}: ${eur(p.price)}${p.old_price ? ` (predtým ${eur(p.old_price)})` : ''} – ${mo(+p.period || 1)}${p.devices > 1 ? `, ${p.devices} zariadenia súčasne` : ''}${p.badge ? ` [${p.badge}]` : ''}${p.features ? `; obsahuje: ${p.features.split('\n').filter(Boolean).join(', ')}` : ''}${p.note ? `; ${p.note}` : ''}`);
     L.push('- Iné balíky/ceny ako tieto neexistujú – ak sa pýta na iný (napr. iný počet mesiacov), povedz že taký momentálne v ponuke nie je.');
   }
@@ -89,9 +89,12 @@ function build(d) {
   // contacts
   const c = d.contacts || {};
   if ((c.groups || []).length || (c.direct || []).length) {
-    L.push(`## Kontakt (${O}${d.pages && d.pages['Kontakt'] ? '' : ''} – stránka Kontakt)`);
-    if ((c.groups || []).length) L.push('- Skupiny / kanály (novinky, komunita): ' + c.groups.map(([n, v]) => `${n}: ${v}`).join(' | '));
-    if ((c.direct || []).length) L.push('- Priame kontakty (súkromná správa operátorovi): ' + c.direct.map(([n, v]) => `${n}: ${v}`).join(' | '));
+    L.push(`## Kontakt – ${(d.pages && d.pages['Kontakt']) || O}`);
+    const kontakt = (d.pages && d.pages['Kontakt']) || O;
+    // links whose handle contains an internal brand name are never written out – the customer clicks them on the Kontakt page
+    const show = ([n, v]) => (/tokigo/i.test(String(v)) ? `${n} (tlačidlo na stránke Kontakt ${kontakt})` : `${n}: ${v}`);
+    if ((c.groups || []).length) L.push('- Skupiny / kanály (novinky, komunita): ' + c.groups.map(show).join(' | '));
+    if ((c.direct || []).length) L.push('- Priame kontakty (súkromná správa operátorovi): ' + c.direct.map(show).join(' | '));
   }
   if (d.contactText) L.push(scrub(strip(d.contactText)).slice(0, 1500));
   if (d.about) L.push('## O nás\n' + scrub(strip(d.about)).slice(0, 2500));

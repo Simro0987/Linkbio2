@@ -41,5 +41,9 @@ t('no secrets / admin paths leak into the prompt', () => {
   assert.ok(!/xpub6/.test(s)); assert.ok(!s.includes('/admin/ucty')); assert.ok(!s.includes('SK3112000000198742637541'));
   assert.ok(s.includes('NIKDY neuvádzaj ani nevymýšľaj IBAN')); assert.ok(s.includes('[[ESCALATE]]'));
 });
+t('contact links with internal brand handle are not written out', () => {
+  const s = K.build(D({ pages: { Kontakt: 'https://x.test/tv/kontakt' }, contacts: { groups: [], direct: [['Telegram', 'https://t.me/TokiGO242']] } }));
+  assert.ok(!/tokigo/i.test(s)); assert.ok(s.includes('Telegram (tlačidlo na stránke Kontakt https://x.test/tv/kontakt)'));
+});
 t('affiliate off → no table', () => assert.ok(!K.build(D({ aff: { on: false, packages: [], rows: [] } })).includes('## Affiliate')));
 console.log(`sitekb: ${n} tests passed`);
