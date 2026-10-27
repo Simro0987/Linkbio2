@@ -9,6 +9,9 @@
 //   pravidlo <name> = <pts>: regex       regex on title + subtitle + EPG category, lower-case without diacritics
 const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/ß/g, 'ss').replace(/ø/g, 'o').replace(/ł/g, 'l').toLowerCase().replace(/[^a-z0-9+&]+/g, ' ').trim();
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// club names are shared across sports (VK Slovan, HC DAC handball, futsal FC Barcelona…) – in these sports a club clash is not a „big match“
+const MINOR = /\b(volejbal|volleyball|hadzana|hazena|handball|futsal|florbal|floorball|vodne polo|vodni polo|water polo|vizilabda|plazovy|beach|basketbal zeny|zeny basketbal)\b/;
+const NAT = new Set(['sk', 'cz']); // national teams keep their rivalry in every sport
 const pts = (s, d) => { const n = parseInt(s, 10); return Number.isFinite(n) ? Math.max(1, Math.min(60, n)) : d; };
 
 function parse(txt) {
@@ -45,15 +48,16 @@ function detect(ctx, p) {
   if (!ctx || !ctx.cfg) return { pts: 0, why: [], strong: false };
   const cfg = ctx.cfg, title = p.title + ' ' + (p.sub || ''), head = norm(title + ' ' + (p.cat || '')), why = []; let sc = 0;
   const add = (w, label) => { sc += w; why.push(label + ' +' + w); };
+  const minor = MINOR.test(head);
   const tm = teamsIn(cfg, title);
-  let rv = cfg.rival.find((r) => (tm.includes(r.a) && tm.includes(r.b)) || (r.nk.length > 5 && (' ' + head + ' ').includes(' ' + r.nk + ' ')));
+  let rv = cfg.rival.find((r) => (tm.includes(r.a) && tm.includes(r.b) && (!minor || (NAT.has(r.a) && NAT.has(r.b)))) || (r.nk.length > 5 && (' ' + head + ' ').includes(' ' + r.nk + ' ')));
   if (rv) add(rv.w, rv.name);
   let strong = !!rv; // a specific match/athlete (not just „a world championship“) – exempts a minor sport from its penalty
-  const g = cfg.groups.filter((x) => tm.filter((id) => x.ids.has(id)).length >= 2).sort((a, b) => b.w - a.w)[0]; if (g && !rv) { add(g.w, g.name); strong = true; }
+  const g = !minor && cfg.groups.filter((x) => tm.filter((id) => x.ids.has(id)).length >= 2).sort((a, b) => b.w - a.w)[0]; if (g && !rv) { add(g.w, g.name); strong = true; }
   else if (g && rv) add(Math.round(g.w / 3), g.name);
   // one team is enough, but only in a match title („A – B“, „A vs. B“) – not „Slovensko má talent“
   const vs = /\s[-–—]\s|\svs?\.?\s|\s:\s/i.test(title);
-  const st = vs && cfg.stars.filter((x) => tm.some((id) => x.ids.has(id))).sort((a, b) => b.w - a.w)[0]; if (st) { add(st.w, st.name); strong = true; }
+  const st = vs && cfg.stars.filter((x) => tm.some((id) => x.ids.has(id) && (!minor || NAT.has(id)))).sort((a, b) => b.w - a.w)[0]; if (st) { add(st.w, st.name); strong = true; }
   // top-of-table clash (TheSportsDB standings, top 4 of the same league)
   if (ctx.top && ctx.top.length) {
     const t = ' ' + norm(title) + ' ';
@@ -69,4 +73,4 @@ function detect(ctx, p) {
   return { pts: Math.min(sc, 60), why, teams: tm, strong };
 }
 
-module.exports = { parse, detect, teamsIn, norm };
+module.exports = { parse, detect, teamsIn, norm, MINOR };

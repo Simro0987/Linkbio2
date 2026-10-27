@@ -52,6 +52,9 @@ const BIG = require('./evbig');
 // league tables for „top of the table“ clashes (TheSportsDB free key; top 4 per league, cached 12 h)
 const LEAGUES = [[4328, 'Premier League'], [4335, 'LaLiga'], [4331, 'Bundesliga'], [4332, 'Serie A'], [4334, 'Ligue 1'], [4672, 'Niké liga'], [4631, 'Chance liga']]; // bump to re-resolve cached images/descriptions after resolver changes
 const sha = (v) => crypto.createHash('sha1').update(String(v)).digest('hex');
+// a stored detector config equal to an older built-in default (saved verbatim) follows the current default → new teams/rules apply
+const OLD_BIG = new Set(['210a07710e84ee4a5178f00f0dfdfee5b7145de6']);
+const bigSrc = (v) => { const t = String(v || '').trim(); return !t || OLD_BIG.has(sha(t)) ? S.BIG_DEFAULT : t; };
 // "OKTAGON 96: GOGOLADZE VS. KLINKHAMMER" → "OKTAGON 96: Gogoladze vs. Klinkhammer"
 const prettyOkt = (t) => { const i = t.indexOf(':'); if (i < 0) return t; const tail = t.slice(i + 1).toLowerCase().replace(/(^|[\s\-–(])(\p{L})/gu, (m, a, b) => a + b.toUpperCase()).replace(/\bVs\./g, 'vs.'); return t.slice(0, i + 1) + tail; };
 const pick = (o, k) => (o && typeof o === 'object' ? o[k] || o.cs || o.sk || o.en || '' : String(o || ''));
@@ -209,7 +212,7 @@ module.exports = function hero(ctx, h, E) {
     // 2) EPG – everything running now or starting within 7 days
     const hidden = new Set((await pool.query('SELECT k FROM ev_hide')).rows.map((r) => r.k));
     const chs = await skczChannels(hc), allow = new Set(chs.ok.map((r) => r.id));
-    const bigCfg = BIG.parse(hc.evh_big || S.BIG_DEFAULT), bigTop = (await standings()).map((L) => Object.assign({}, L, { tids: L.teams.map((n) => BIG.teamsIn(bigCfg, n)) }));
+    const bigCfg = BIG.parse(bigSrc(hc.evh_big)), bigTop = (await standings()).map((L) => Object.assign({}, L, { tids: L.teams.map((n) => BIG.teamsIn(bigCfg, n)) }));
     E.setBig({ cfg: bigCfg, top: bigTop });
     const cand = await E.scan(c, kws, now + 60e3, now + WEEK, true, allow);
     // a minor sport/competition is penalised – unless the big-match detector recognised a specific match/athlete (Vlhová slalom, SK/CZ team, rivalry…)
@@ -418,7 +421,7 @@ ${((okt && okt.events) || []).slice(0, 6).map((x) => `<div class="row"><span><b>
 <label class="ck"><input type="checkbox" name="evh_okt" value="1"${hc.evh_okt === '1' ? ' checked' : ''}> Načítavať kalendár OKTAGON MMA</label>
 <label>Kanál pre OKTAGON</label><input name="evh_okt_ch" maxlength="60" value="${esc(hc.evh_okt_ch)}">
 <label>Kanály pre Top udalosti – iba SK/CZ (doplnky k vstavanému zoznamu; jeden názov / časť názvu na riadok, <code>-názov</code> = vylúčiť)</label><textarea name="evh_ch" rows="3" maxlength="2000" placeholder="napr.&#10;Nova Sport 5 CZ&#10;-Story 4">${esc(hc.evh_ch)}</textarea>
-<label>⚽🏒🎾 Detektor veľkých zápasov – všetky športy (tímy, rivality, skupiny, mená, pravidlá; prázdne = predvolené)${(() => { const e = BIG.parse(hc.evh_big || S.BIG_DEFAULT).errors; return e.length ? ' – ⚠ neplatné riadky: ' + esc(e.slice(0, 3).join(' | ')) : ''; })()}</label><textarea name="evh_big" rows="12" maxlength="20000" class="evbig">${esc(hc.evh_big || S.BIG_DEFAULT)}</textarea>
+<label>⚽🏒🎾 Detektor veľkých zápasov – všetky športy (tímy, rivality, skupiny, mená, pravidlá; prázdne = predvolené)${(() => { const e = BIG.parse(bigSrc(hc.evh_big)).errors; return e.length ? ' – ⚠ neplatné riadky: ' + esc(e.slice(0, 3).join(' | ')) : ''; })()}</label><textarea name="evh_big" rows="12" maxlength="20000" class="evbig">${esc(bigSrc(hc.evh_big))}</textarea><label class="ck"><input type="checkbox" name="evh_big_reset" value="1"> obnoviť predvolený detektor (najnovšie tímy, ligy a pravidlá)</label>
 <label>TMDB API kľúč (nepovinné – lepšie obrázky a popisy filmov/seriálov; v3 kľúč alebo v4 token)</label><input type="password" name="evh_tmdb" maxlength="400" autocomplete="off" placeholder="${process.env.TMDB_API_KEY ? 'nastavené cez env TMDB_API_KEY' : tmdbSet ? '•••••• uložený (prázdne = ponechať)' : 'nenastavené'}">${tmdbSet ? '<label class="ck"><input type="checkbox" name="evh_tmdb_del" value="1"> vymazať uložený TMDB kľúč</label>' : ''}<button>Uložiť</button></form></div>${ctx.extAdminHtml ? await ctx.extAdminHtml(req) : ''}`;
   }
   const back = (res, m) => E.back(res, m, 'hero');
@@ -427,7 +430,7 @@ ${((okt && okt.events) || []).slice(0, 6).map((x) => `<div class="row"><span><b>
     const b = req.body, ch = String(b.evh_okt_ch || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 60) || HD.evh_okt_ch;
     const chTxt = String(b.evh_ch || '').replace(/[\u0000-\u0009\u000b-\u001f<>]/g, '').split(/\r?\n/).map((x) => x.trim().slice(0, 60)).filter(Boolean).slice(0, 60).join('\n');
     let bigTxt = String(b.evh_big || '').replace(/\r/g, '').replace(/[\u0000-\u0009\u000b-\u001f]/g, '').slice(0, 20000).trim();
-    if (bigTxt === S.BIG_DEFAULT.trim()) bigTxt = ''; // unchanged → keep following the built-in defaults
+    if (bigTxt === S.BIG_DEFAULT.trim() || OLD_BIG.has(sha(bigTxt)) || b.evh_big_reset) bigTxt = ''; // unchanged → keep following the built-in defaults
     const upd = { evh_big: bigTxt, evh_ch: chTxt, evh_on: b.evh_on ? '1' : '0', evh_cards_home: b.evh_cards_home ? '1' : '0', evh_gem: b.evh_gem ? '1' : '0', evh_okt: b.evh_okt ? '1' : '0', evh_okt_ch: ch };
     const tm = String(b.evh_tmdb || '').trim(); if (b.evh_tmdb_del) upd.evh_tmdb = ''; else if (tm) { if (!/^[\w.\-]{16,400}$/.test(tm)) return back(res, 'bad'); upd.evh_tmdb = tm; }
     await setSettings(upd); if (upd.evh_tmdb != null) tmdbSet = upd.evh_tmdb;

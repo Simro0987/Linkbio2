@@ -71,48 +71,75 @@ const OFFICIAL = {
   royal: ['royal.uk', 'kongehuset.dk', 'kungahuset.se', 'monarchie.lu'],
 };
 // „Veľký zápas“ detector defaults (evbig.js format) – admin can edit/override in /admin/udalosti (evh_big). All sports, equal footing.
-const BIG_DEFAULT = String.raw`# ── Futbal: kluby (alias / alias; diakritika sa ignoruje) ──
+const BIG_DEFAULT = String.raw`# ── Futbal: kluby (alias / alias; diakritika sa ignoruje; SK/CZ tvary: Neapol, Miláno, Mníchov, Řím, Lipsko…) ──
 tim real: Real Madrid / Real Madrid CF / Real / Realu Madrid / Realom Madrid
 tim barca: FC Barcelona / Barcelona / Barca / Barcelony / Barcelonou / FCB
-tim atletico: Atletico Madrid / Atletico de Madrid / Atletico / Atl Madrid
+tim atletico: Atletico Madrid / Atletico de Madrid / Atletico / Atl Madrid / Atl. Madrid
 tim rsociedad: Real Sociedad
 tim betis: Real Betis / Betis
+tim athletic: Athletic Bilbao / Athletic Club
+tim villarreal: Villarreal CF / Villarreal
+tim sevilla: Sevilla FC / FC Sevilla / Sevilla
 tim bayern: Bayern Mnichov / Bayern Munchen / Bayern Munich / FC Bayern / Bayern
 tim dortmund: Borussia Dortmund / Dortmund / BVB
-tim juventus: Juventus / Juventus Turin / Juve
-tim inter: Inter Milan / Inter Milano / Internazionale / Inter
-tim milan: AC Milan / AC Milano / Milan
-tim napoli: SSC Napoli / Napoli / Neapol
+tim leverkusen: Bayer Leverkusen / Leverkusen / Bayer 04
+tim leipzig: RB Leipzig / RB Lipsko / Lipsko / Leipzig
+tim frankfurt: Eintracht Frankfurt / Frankfurt
+tim stuttgart: VfB Stuttgart
+tim juventus: Juventus / Juventus Turin / Juventus Turino / Juve
+tim inter: Inter Milan / Inter Milano / Inter Milane / Internazionale / FC Internazionale / Inter
+tim milan: AC Milan / AC Milano / AC Milane / Milan / Milano
+tim olimpia: Olimpia Milano / Olimpia Milan / EA7 Emporio Armani Milano / Armani Milano / EA7 Milano
+tim napoli: SSC Napoli / Napoli / SSC Neapol / Neapol / Neapola / Neapolom
 tim roma: AS Roma / Roma / AS Rim
-tim lazio: Lazio Rim / Lazio
-tim mancity: Manchester City / Man City / Man. City
-tim manutd: Manchester United / Manchester Utd / Man United / Man Utd
+tim lazio: Lazio Rim / Lazio Roma / Lazio
+tim atalanta: Atalanta Bergamo / Atalanta BC / Atalanta
+tim mancity: Manchester City / Man City / Man. City / Manchester C
+tim manutd: Manchester United / Manchester Utd / Man United / Man Utd / Man. United / Man. Utd / Manchester U
 tim liverpool: Liverpool FC / Liverpool
-tim everton: Everton
-tim arsenal: Arsenal FC / Arsenal
+tim everton: Everton FC / Everton
+tim arsenal: Arsenal FC / Arsenal Londyn / Arsenal
 tim tottenham: Tottenham Hotspur / Tottenham / Spurs
-tim chelsea: Chelsea FC / Chelsea
-tim psg: Paris Saint Germain / Paris SG / PSG / Paris St Germain
-tim marseille: Olympique Marseille / Marseille / OM
+tim chelsea: Chelsea FC / Chelsea Londyn / Chelsea
+tim newcastle: Newcastle United / Newcastle Utd / Newcastle
+tim astonvilla: Aston Villa
+tim psg: Paris Saint Germain / Paris SG / PSG / Paris St Germain / Pariz SG / Pariz Saint Germain
+tim marseille: Olympique Marseille / Olympique de Marseille / Marseille / OM
+tim lyon: Olympique Lyon / Olympique Lyonnais / OL Lyon / Lyon
+tim monaco: AS Monaco / Monaco
+tim lille: Lille OSC / LOSC Lille / Lille
 tim celtic: Celtic Glasgow / Celtic FC / Celtic
 tim grangers: Glasgow Rangers / Rangers FC / Rangers
-tim benfica: Benfica Lisabon / Benfica
+tim benfica: Benfica Lisabon / SL Benfica / Benfica
 tim porto: FC Porto / Porto
-tim ajax: Ajax Amsterdam / Ajax
-tim leverkusen: Bayer Leverkusen / Leverkusen
+tim sporting: Sporting Lisabon / Sporting Lisbon / Sporting Lisboa / Sporting CP
+tim braga: SC Braga / Sporting Braga / Braga
+tim ajax: Ajax Amsterdam / AFC Ajax / Ajax
+tim psv: PSV Eindhoven / PSV
+tim feyenoord: Feyenoord Rotterdam / Feyenoord
+tim az: AZ Alkmaar
+tim galatasaray: Galatasaray Istanbul / Galatasaray
+tim fenerbahce: Fenerbahce Istanbul / Fenerbahce
+tim besiktas: Besiktas Istanbul / Besiktas / Besikstas
 tim sparta: AC Sparta Praha / Sparta Praha / Sparta Prague / HC Sparta / Sparta
 tim slavia: SK Slavia Praha / Slavia Praha / Slavia Prague / HC Slavia / Slavia
-tim plzen: Viktoria Plzen / Plzen
+tim plzen: Viktoria Plzen / FC Viktoria Plzen / HC Skoda Plzen / Plzen
+tim banik: FC Banik Ostrava / Banik Ostrava / Banik
 tim slovan: SK Slovan Bratislava / Slovan Bratislava / HC Slovan / Slovan
-tim trnava: Spartak Trnava / Trnava
+tim trnava: Spartak Trnava / FC Spartak Trnava / Trnava
 tim dac: DAC Dunajska Streda / Dunajska Streda / DAC
+tim zilina: MSK Zilina / MSK Zilina Africa
 # ── Hokej ──
 tim kosice: HC Kosice / Kosice
 tim kometa: Kometa Brno / HC Kometa / Kometa
 tim trinec: Ocelari Trinec / HC Ocelari / Trinec
-tim pardubice: Dynamo Pardubice / Pardubice
+tim pardubice: Dynamo Pardubice / HC Dynamo Pardubice / Pardubice
+tim liberec: Bili Tygri Liberec / Liberec
+tim vitkovice: HC Vitkovice / Vitkovice Ridera / Vitkovice
 tim nitra: HK Nitra / Nitra
 tim zvolen: HKM Zvolen / Zvolen
+tim bbystrica: HC 05 Banska Bystrica / HC Banska Bystrica / Banska Bystrica / Barani
+tim trencin: HK Dukla Trencin / Dukla Trencin / Trencin
 tim bos: Boston Bruins / Bruins
 tim mtl: Montreal Canadiens / Canadiens
 tim tor: Toronto Maple Leafs / Maple Leafs
@@ -131,12 +158,34 @@ tim cgy: Calgary Flames / Flames
 tim min: Minnesota Wild
 tim edm: Edmonton Oilers / Oilers
 tim fla: Florida Panthers / Panthers
+tim car: Carolina Hurricanes / Hurricanes
+tim dal: Dallas Stars
+tim wpg: Winnipeg Jets
 tim ska: SKA Petrohrad / SKA St Petersburg / SKA
 tim cska: CSKA Moskva / CSKA Moscow / CSKA
-# ── Basketbal ──
+tim dynamom: Dynamo Moskva / Dinamo Moskva / Dynamo Moscow
+tim akbars: Ak Bars Kazan / Ak Bars
+tim magnitka: Metallurg Magnitogorsk / Metalurg Magnitogorsk
+tim lokojar: Lokomotiv Jaroslavl / Lokomotiv Yaroslavl
+# ── Basketbal (NBA, Euroliga) ──
 tim lakers: Los Angeles Lakers / LA Lakers / Lakers
 tim celtics: Boston Celtics / Celtics
 tim warriors: Golden State Warriors / Warriors
+tim nuggets: Denver Nuggets / Nuggets
+tim thunder: Oklahoma City Thunder / OKC Thunder / Thunder
+tim knicks: New York Knicks / NY Knicks / Knicks
+tim cavs: Cleveland Cavaliers / Cavaliers
+tim bucks: Milwaukee Bucks / Bucks
+tim sixers: Philadelphia 76ers / 76ers / Sixers
+tim mavs: Dallas Mavericks / Mavericks
+tim spurs: San Antonio Spurs
+tim olympiacos: Olympiacos Pireus / Olympiakos Pireus / Olympiacos / Olympiakos
+tim panathinaikos: Panathinaikos Atheny / Panathinaikos Athens / Panathinaikos
+tim efes: Anadolu Efes / Efes
+tim maccabi: Maccabi Tel Aviv / Maccabi
+tim zalgiris: Zalgiris Kaunas / Zalgiris
+tim partizan: Partizan Belehrad / Partizan Belgrade / Partizan
+tim zvezda: Crvena zvezda / Crvena Zvezda Belehrad / Cervena hviezda
 # ── Národné tímy SK/CZ ──
 tim sk: Slovensko / Slovakia / Slovakei / Slovaquie
 tim cz: Cesko / Ceska republika / Czechia / Czech Republic / Tschechien
@@ -147,12 +196,23 @@ rivalita Madridské derby = 35: real + atletico
 rivalita Der Klassiker = 40: bayern + dortmund
 rivalita Derby d'Italia = 40: inter + juventus
 rivalita Milánske derby (Derby della Madonnina) = 40: inter + milan
+rivalita Juventus – Milan = 35: juventus + milan
+rivalita Juventus – Napoli = 35: juventus + napoli
 rivalita Rímske derby = 30: roma + lazio
 rivalita Manchesterské derby = 40: mancity + manutd
 rivalita Severolondýnske derby = 35: arsenal + tottenham
 rivalita Merseyside derby = 35: liverpool + everton
 rivalita Liverpool – Manchester United = 40: liverpool + manutd
+rivalita Liverpool – Arsenal = 35: liverpool + arsenal
+rivalita Liverpool – Manchester City = 35: liverpool + mancity
+rivalita Chelsea – Manchester United = 35: chelsea + manutd
+rivalita Arsenal – Manchester United = 35: arsenal + manutd
 rivalita Le Classique = 35: psg + marseille
+rivalita De Klassieker = 35: ajax + feyenoord
+rivalita Ajax – PSV = 30: ajax + psv
+rivalita O Clássico = 30: benfica + porto
+rivalita Lisabonské derby = 30: benfica + sporting
+rivalita Istanbulské derby = 30: galatasaray + fenerbahce
 rivalita Old Firm = 35: celtic + grangers
 rivalita Pražské derby (S–S) = 45: sparta + slavia
 rivalita Slovan – Spartak Trnava = 40: slovan + trnava
@@ -160,12 +220,28 @@ rivalita Slovan – Košice (hokej) = 35: slovan + kosice
 rivalita Kometa – Třinec = 35: kometa + trinec
 rivalita Slovensko – Česko = 50: sk + cz
 rivalita Lakers – Celtics = 30: lakers + celtics
+rivalita Olympiacos – Panathinaikos = 30: olympiacos + panathinaikos
+rivalita Belehradské derby = 30: zvezda + partizan
 #
-# ── Zápas dvoch tímov zo skupiny ──
-skupina Veľkokluby Európy = 28: real, barca, atletico, bayern, dortmund, juventus, inter, milan, napoli, mancity, manutd, liverpool, arsenal, chelsea, tottenham, psg, benfica, porto, leverkusen
+# ── Zápas dvoch tímov zo skupiny (top kluby ligy: oba tímy zo skupiny ⇒ veľký zápas) ──
+skupina Premier League – top kluby = 32: mancity, manutd, liverpool, arsenal, chelsea, tottenham, newcastle, astonvilla
+skupina Serie A – top kluby = 32: juventus, inter, milan, napoli, roma, lazio, atalanta
+skupina LaLiga – top kluby = 32: real, barca, atletico, athletic, rsociedad, betis, villarreal, sevilla
+skupina Bundesliga – top kluby = 32: bayern, dortmund, leverkusen, leipzig, frankfurt, stuttgart
+skupina Ligue 1 – top kluby = 30: psg, marseille, lyon, monaco, lille
+skupina Eredivisie – top kluby = 28: ajax, psv, feyenoord, az
+skupina Liga Portugal – top kluby = 28: benfica, porto, sporting, braga
+skupina Süper Lig – top kluby = 26: galatasaray, fenerbahce, besiktas
+skupina Veľkokluby Európy = 28: real, barca, atletico, bayern, dortmund, juventus, inter, milan, napoli, mancity, manutd, liverpool, arsenal, chelsea, tottenham, psg, benfica, porto, leverkusen, sporting, ajax, psv, atalanta, newcastle, astonvilla, marseille, monaco, galatasaray, fenerbahce
+skupina Chance liga – top kluby (CZ) = 28: sparta, slavia, plzen, banik
+skupina Niké liga – top kluby (SK) = 26: slovan, trnava, dac, zilina
+skupina Tipsport extraliga – top (CZ hokej) = 22: sparta, trinec, kometa, pardubice, liberec, vitkovice, plzen
+skupina Tipsport liga – top (SK hokej) = 22: slovan, kosice, nitra, zvolen, bbystrica, trencin
 skupina Original Six (NHL) = 22: bos, mtl, tor, det, chi, nyr
-skupina Top SK/CZ kluby = 22: sparta, slavia, plzen, slovan, trnava, dac, kosice, kometa, trinec, pardubice, nitra, zvolen
-skupina KHL top = 12: ska, cska
+skupina NHL – top tímy = 18: bos, tor, nyr, col, vgk, edm, fla, tbl, car, dal, wpg, njd, wsh
+skupina KHL top = 12: ska, cska, dynamom, akbars, magnitka, lokojar
+skupina NBA – top tímy = 22: lakers, celtics, warriors, nuggets, thunder, knicks, cavs, bucks, sixers, mavs, spurs
+skupina Euroliga – top kluby = 22: real, barca, olympiacos, panathinaikos, fenerbahce, efes, maccabi, zalgiris, partizan, zvezda, monaco, olimpia
 #
 # ── Tím s SK/CZ hviezdami (NHL) – stačí jeden ──
 hviezdy NHL s SK/CZ hviezdou (Pastrňák, Slafkovský, Nečas, Hertl, Nemec, Černák…) = 14: bos, mtl, col, vgk, van, njd, wsh, tbl, ana, phi, cgy, min
@@ -173,7 +249,8 @@ hviezdy Reprezentácia SK/CZ = 30: sk, cz
 #
 # ── Športovci (meno v názve/popise) ──
 mena SK/CZ športovci = 22: Vlhova / Pastrnak / Slafkovsky / Necas / Hertl / Machac / Mensik / Lehecka / Muchova / Krejcikova / Noskova / Bouzkova / Siniakova / Vondrousova / Kvitova / Schmiedlova / Sramkova / Molcan / Klizan / Davidova / Fialkova / Vitkova / Kuzmina / Sagan / Vingegaard / Vojtek / Zlocha / Kozubik / Shiffrinova / Hamilton / Hurtova / Batovsky / Vadlejch / Spotakova / Juraj Slafkovsky / Adam Lisko / Kristian Vaculik
-mena Svetové hviezdy = 14: Sinner / Alcaraz / Djokovic / Zverev / Medvedev / Sabalenka / Swiatek / Swiatekova / Gauff / Rybakina / Verstappen / Norris / Leclerc / Piastri / Marquez / Bagnaia / Ovechkin / Ovecjkin / Crosby / McDavid / LeBron / Jokic / Doncic / Wembanyama / Pogacar / Duplantis / Messi / Ronaldo / Mbappe / Haaland / Kane / Odegaard / Shiffrin / Odermatt / Kristoffersen / Boe / Littler / Humphries / O Sullivan
+mena Svetové hviezdy = 14: Sinner / Alcaraz / Djokovic / Zverev / Medvedev / Sabalenka / Swiatek / Swiatekova / Gauff / Rybakina / Verstappen / Norris / Leclerc / Piastri / Marquez / Bagnaia / Ovechkin / Ovecjkin / Crosby / McDavid / LeBron / Jokic / Doncic / Wembanyama / Pogacar / Duplantis / Messi / Ronaldo / Mbappe / Haaland / Kane / Odegaard / Shiffrin / Odermatt / Kristoffersen / Boe / Littler / Humphries / O Sullivan / Volkanovski / Topuria / Makhachev / Vemola
+mena Tenis – top-10 ATP/WTA = 12: Sinner / Alcaraz / Djokovic / Zverev / Fritz / Draper / Musetti / de Minaur / Shelton / Auger Aliassime / Rune / Ruud / Sabalenka / Swiatek / Swiatekova / Gauff / Anisimova / Pegula / Rybakina / Paolini / Andreeva / Andrejevova / Emma Navarro / Madison Keys / Zheng Qinwen
 #
 # ── Pravidlá (regex na názov + podtitul + kategóriu; malé písmená bez diakritiky) ──
 pravidlo Finále = 20: \b(finale|final|finala|final four|super bowl|grand final)\b
@@ -187,19 +264,22 @@ pravidlo Hokej – NHL = 8: \bnhl\b
 pravidlo Hokej – NHL play-off / Stanley Cup = 25: stanley cup|\bnhl\b.*(play ?off|finale|final)
 pravidlo Hokej – KHL = 5: \bkhl\b
 pravidlo Hokej – Liga majstrov CHL = 10: \bchl\b|champions hockey league|hokejova liga majstrov
-pravidlo Hokej – Extraliga / Tipsport liga = 6: extraliga|tipsport liga|tipos extraliga|niké extraliga|nike extraliga
+pravidlo Hokej – Extraliga / Tipsport liga = 6: extraliga|tipsport liga|tipos extraliga|nike extraliga
 pravidlo Tenis – Grand Slam = 20: australian open|roland garros|french open|wimbledon|us open|grand slam
 pravidlo Tenis – Grand Slam – záver = 18: (australian open|roland garros|french open|wimbledon|us open).*(finale|final|semifinale|semifinal|stvrtfinale|quarter)|(finale|final|semifinale|semifinal|stvrtfinale).*(australian open|roland garros|wimbledon|us open)
+pravidlo Tenis – ATP/WTA neskoré kolá = 14: (tenis|tennis|\batp\b|\bwta\b|masters).*(stvrtfinale|ctvrtfinale|quarter ?final|semifinale|semifinal|finale|final)|(stvrtfinale|ctvrtfinale|semifinale|semifinal|finale|final).*(tenis|tennis|\batp\b|\bwta\b)
 pravidlo Tenis – ATP/WTA Finals = 22: atp finals|wta finals|turnaj majstrov|turnaj majsteriek|nitto atp
 pravidlo Tenis – Davis Cup / BJK Cup = 15: davis ?cup|davisov pohar|billie jean king|bjk cup|pohar billie
-pravidlo F1 – Veľká cena – preteky = 30: ^(?!.*f1 academy)(?:.*)(formula 1|formula one|\bf1\b).*(velka cena|vc |grand prix|gp |preteky|zavod|race)|^(?!.*f1 academy).*(velka cena|grand prix).*(formula 1|\bf1\b)
-pravidlo F1 – kvalifikácia / šprint = 15: ^(?!.*f1 academy)(?:.*)(formula 1|\bf1\b).*(kvalifikac|qualifying|sprint)
-pravidlo MotoGP – preteky = 18: motogp|moto gp
-pravidlo MMA – OKTAGON (číslovaný turnaj) = 30: \boktagon \d{2,3}\b
-pravidlo MMA – UFC číslovaný event = 25: \bufc \d{3}\b
+pravidlo F1 – Veľká cena – preteky = 30: ^(?!.*(f1 academy|studio|magazin|highlight|zostrih|sestrih|prehlad))(?:.*)(formula 1|formule 1|formula one|\bf1\b).*(velka cena|vc |grand prix|gp |preteky|zavod|race)|^(?!.*(f1 academy|studio|magazin|highlight|zostrih|sestrih))(?:.*)(velka cena|grand prix).*(formula 1|formule 1|\bf1\b)
+pravidlo F1 – kvalifikácia / šprint = 15: ^(?!.*(f1 academy|studio|magazin))(?:.*)(formula 1|formule 1|\bf1\b).*(kvalifikac|qualifying|sprint)
+pravidlo MotoGP – preteky = 18: ^(?!.*(highlight|magazin|zostrih|sestrih))(?:.*)(motogp|moto gp)
+pravidlo MMA – OKTAGON (číslovaný turnaj) = 30: ^(?!.*(countdown|highlight|zostrih|sestrih|best of|prehlad|embedded|vazeni|weigh))(?:.*)\boktagon \d{2,3}\b
+pravidlo MMA – UFC číslovaný event (hlavná karta) = 25: ^(?!.*(countdown|highlight|zostrih|sestrih|best of|prehlad|embedded|preview|vazeni|weigh|sporty walki))(?:.*)\bufc \d{3}\b
+pravidlo MMA – hlavná karta / main card = 12: main card|hlavna karta|hlavni karta|main event
 pravidlo Box / MMA – titulový zápas = 20: (titul|title fight|title bout|o pas|majstra sveta|wbc|wba|ibf|wbo).*(box|boxing|mma|zapas|fight)|(box|boxing).*(titul|title|wbc|wba|ibf|wbo)
 pravidlo Basketbal – NBA finále / play-off = 22: \bnba\b.*(finale|final|play ?off|playoff|conference)|nba finals
 pravidlo Basketbal – Euroliga Final Four = 25: (euroliga|euroleague).*(final four|finale|final)|final four
+pravidlo Basketbal – Euroliga = 6: \b(euroliga|euroleague)\b
 pravidlo Basketbal – NBA = 6: \bnba\b
 pravidlo Cyklistika – Grand Tour / MS = 18: tour de france|giro d ?italia|vuelta|okolo francuzska|kolo francie|(cyklistika|cycling|uci).*(ms|majstrovstva sveta|world championships)
 pravidlo Atletika – MS / Diamantová liga finále = 20: (atletika|athletics).*(ms|majstrovstva sveta|mistrovstvi sveta|world championships|halove)|diamond league final|diamantova liga.*finale|zlata tretra
