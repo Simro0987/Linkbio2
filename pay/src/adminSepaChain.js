@@ -154,6 +154,7 @@ ${error ? `<div class="err">${escapeHtml(error)}</div>` : ''}
     <input id="verdictFail" name="verdictFail" type="text" value="${escapeHtml((s.verdictFail || []).join(', '))}" placeholder="NEPREŠLO, ZAMIETNUTÉ"/>
 
     <h2>SMTP (ak nie je v env)</h2>
+    <p class="warnbox">⚠️ Render free tier blokuje odchádzajúce SMTP porty (25/465/587) – na free účte SMTP nefunguje. Použite bezplatné HTTPS e-mail API (Brevo) v <a href="/admin/email">📧 E-mail odosielanie</a>.</p>
     <p class="muted">${s.smtpEnvFallback ? 'Env SMTP_HOST/FROM je nastavený — admin polia majú prednosť ak ich vyplníte.' : 'Env SMTP nie je nastavený — vyplňte polia nižšie, inak email nepôjde.'}</p>
     <div class="grid">
       <div><label for="smtpHost">SMTP host</label><input id="smtpHost" name="smtpHost" type="text" value="${escapeHtml(s.smtpHost || '')}" placeholder="smtp.example.com"/></div>

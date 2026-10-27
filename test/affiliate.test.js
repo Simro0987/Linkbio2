@@ -8,7 +8,7 @@ const NOW = new Date('2026-06-15T12:00:00Z');
 const future = new Date('2027-01-01T00:00:00Z'), past = new Date('2026-01-01T00:00:00Z');
 
 t('tier boundaries 4/5/9/10/14/15/19/20 (12m package)', () => {
-  const exp = { 4: 0, 5: 1, 9: 1, 10: 3, 14: 3, 15: 6, 19: 6, 20: 12 };
+  const exp = { 4: 0, 5: 1, 9: 1, 10: 3, 14: 3, 15: 6, 19: 6, 20: 6 }; // 12m at 20 inherits +6 from ≥15 (12+12 removed)
   for (const [a, b] of Object.entries(exp)) assert.strictEqual(A.bonusFor(+a, 12, T), b, `active ${a}`);
   assert.strictEqual(A.tierFor(4, T), null);
   assert.strictEqual(A.tierFor(5, T).min, 5); assert.strictEqual(A.tierFor(9, T).min, 5);
@@ -18,13 +18,25 @@ t('tier boundaries 4/5/9/10/14/15/19/20 (12m package)', () => {
   assert.strictEqual(A.nextTier(4, T).min, 5); assert.strictEqual(A.nextTier(19, T).min, 20); assert.strictEqual(A.nextTier(20, T), null);
 });
 t('defaults per package + inheritance upward', () => {
-  // 3m: 5→1, 10/15 inherit 1, 20→3 ; 6m: 5→1, 10→3, 15 inherits 3, 20→6
-  assert.deepStrictEqual([5, 10, 15, 20].map((a) => A.bonusFor(a, 3, T)), [1, 1, 1, 3]);
+  // 3m: nothing below 20 (3+1 removed), 20→3 ; 6m: 5→1, 10→3, 15 inherits 3, 20→6 ; 12m: 1,3,6 and 20 inherits 6 (12+12 removed)
+  assert.deepStrictEqual([4, 5, 10, 15, 19, 20].map((a) => A.bonusFor(a, 3, T)), [0, 0, 0, 0, 0, 3]);
   assert.deepStrictEqual([5, 10, 15, 20].map((a) => A.bonusFor(a, 6, T)), [1, 3, 3, 6]);
-  assert.deepStrictEqual([5, 10, 15, 20].map((a) => A.bonusFor(a, 12, T)), [1, 3, 6, 12]);
+  assert.deepStrictEqual([5, 10, 15, 20, 50].map((a) => A.bonusFor(a, 12, T)), [1, 3, 6, 6, 6]);
+  assert.strictEqual(A.deviceAllowed(20, T), true); assert.strictEqual(A.deviceAllowed(19, T), false);
   for (const m of [1, 7, 15]) for (const a of [0, 5, 10, 15, 20, 99]) assert.strictEqual(A.bonusFor(a, m, T), 0, `no bonus for ${m}m`);
   const mx = A.matrix(T);
-  assert.deepStrictEqual(mx.rows.map((r) => r.bonus[3]), [1, 1, 1, 3]);
+  assert.deepStrictEqual(mx.rows.map((r) => r.bonus[3]), [0, 0, 0, 3]);
+  assert.deepStrictEqual(mx.rows.map((r) => r.bonus[12]), [1, 3, 6, 6]);
+});
+t('stored settings migrate only when equal to the OLD defaults', () => {
+  const mig = A.migrateTiers(JSON.stringify(A.OLD_DEF_TIERS));
+  assert.ok(mig); assert.deepStrictEqual(A.settings({ aff_tiers: mig }).tiers, A.cleanTiers(A.DEF_TIERS));
+  // key order / string numbers do not matter
+  assert.ok(A.migrateTiers(JSON.stringify([{ min: '20', device: true, bonus: { 12: '12', 6: 6, 3: 3 } }, { min: 5, bonus: { 12: 1, 6: 1, 3: 1 } }, { min: 10, bonus: { 6: 3, 12: 3 } }, { min: 15, bonus: { 12: 6 } }])));
+  // admin-edited table is left alone; already-new and empty too
+  assert.strictEqual(A.migrateTiers(JSON.stringify([{ min: 5, bonus: { 3: 2, 6: 1, 12: 1 } }, { min: 10, bonus: { 6: 3, 12: 3 } }, { min: 15, bonus: { 12: 6 } }, { min: 20, bonus: { 3: 3, 6: 6, 12: 12 }, device: true }])), null);
+  assert.strictEqual(A.migrateTiers(JSON.stringify(A.DEF_TIERS)), null);
+  assert.strictEqual(A.migrateTiers(''), null); assert.strictEqual(A.migrateTiers('garbage'), null);
 });
 t('admin-edited tiers are validated and used', () => {
   const st = A.settings({ aff_tiers: JSON.stringify([{ min: 3, bonus: { 1: 1 } }, { min: 2, bonus: { 12: 2 } }]) });
@@ -74,7 +86,7 @@ t('only paid orders count', async () => {
   assert.strictEqual((await A.processPaidOrder(s, order({ acct: null }), st, NOW)).skipped, 'not-paid');
 });
 t('idempotent per order', async () => {
-  const s = world(5); const o = order({ planMonths: 3 });
+  const s = world(5); const o = order({ planMonths: 6 });
   await A.processPaidOrder(s, o, st, NOW); const u1 = s.users.get(1).licence_until.getTime();
   assert.strictEqual((await A.processPaidOrder(s, o, st, NOW)).skipped, 'done');
   assert.strictEqual(s.users.get(1).licence_until.getTime(), u1); assert.strictEqual(s.ledger.length, 1);

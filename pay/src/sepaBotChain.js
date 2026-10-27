@@ -280,6 +280,7 @@ function normalizeConfig(j) {
   base.smtpPassEnc = j.smtpPassEnc || null;
   if (j.smtpPass && !base.smtpPassEnc) base.smtpPassEnc = encryptSecret(j.smtpPass);
   base.smtpFrom = String(j.smtpFrom || '').trim().slice(0, 200);
+  if (/tokigo\.test|example\.(test|com)$/i.test(base.smtpFrom)) base.smtpFrom = ''; // never keep the old placeholder sender
   // Never keep plaintext from older dumps
   if (j.channelBotToken && !base.channelBotTokenEnc) {
     base.channelBotTokenEnc = encryptSecret(j.channelBotToken);
@@ -1446,11 +1447,11 @@ function resolveProofCheckStep(c) {
   return c.steps[c.steps.length - 1];
 }
 
-function smtpSettings() {
+function smtpSettings(opt = {}) {
   const c = getConfig();
   const host = c.smtpHost || env('SMTP_HOST');
   const from = c.smtpFrom || env('SMTP_FROM');
-  if (!host || !from) return null;
+  if (!host || (!from && !opt.allowNoFrom)) return null; // lnkbio mailer may supply its own sender (mail_from)
   const port = Number(c.smtpPort || env('SMTP_PORT', '587')) || 587;
   const pass = decryptSecret(c.smtpPassEnc) || env('SMTP_PASS');
   const user = c.smtpUser || env('SMTP_USER');
@@ -1459,6 +1460,12 @@ function smtpSettings() {
 }
 
 async function sendProofEmail({ to, subject, text, buffer, filename, mime }) {
+  // lnkbio e-mail sender (HTTPS API: Brevo/Resend/Mailjet) – Render free tier blocks outbound SMTP ports
+  const M = global.__lnkMailer;
+  if (M && to && M.apiReady && M.apiReady()) {
+    const r = await M.send({ to, subject, text, attachments: buffer && filename ? [{ filename, content: buffer, contentType: mime }] : [] });
+    return { messageId: r.id || '', accepted: [to] };
+  }
   const smtp = smtpSettings();
   if (!smtp || !to) {
     const err = new Error('SMTP alebo notify email nie je nastavený');

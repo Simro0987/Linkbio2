@@ -3,7 +3,15 @@
 // The number of ACTIVE referred members (valid subscription: manual override > panel expiry > order licence) at the moment
 // the REFERRER buys a package selects the tier; the tier matrix gives bonus months on top of that package (price unchanged).
 // Lower tiers inherit upward when a higher tier has no value for a package. A tier may allow "2nd device" instead of months.
+// 2026-10-27: removed ≥5 '3m +1' and ≥20 '12m +12' → 3m has no bonus below 20 active; 12m at ≥20 inherits +6 from ≥15.
 const DEF_TIERS = [
+  { min: 5, bonus: { 6: 1, 12: 1 } },
+  { min: 10, bonus: { 6: 3, 12: 3 } },
+  { min: 15, bonus: { 12: 6 } },
+  { min: 20, bonus: { 3: 3, 6: 6 }, device: true },
+];
+// previous defaults – stored settings that still equal these are migrated to DEF_TIERS (admin-edited tables are left alone)
+const OLD_DEF_TIERS = [
   { min: 5, bonus: { 3: 1, 6: 1, 12: 1 } },
   { min: 10, bonus: { 6: 3, 12: 3 } },
   { min: 15, bonus: { 12: 6 } },
@@ -35,6 +43,13 @@ function bonusFor(active, months, tiers) {
   let b = 0;
   for (const t of tiers) if (active >= t.min && Object.prototype.hasOwnProperty.call(t.bonus, months)) b = t.bonus[months];
   return b;
+}
+const canon = (t) => JSON.stringify((t || []).map((x) => ({ min: +x.min, device: !!x.device, bonus: Object.keys(x.bonus || {}).map(Number).sort((a, b) => a - b).map((k) => [k, +x.bonus[k]]) })));
+/** stored aff_tiers JSON → new JSON string if it still equals the OLD defaults, else null (no change) */
+function migrateTiers(raw) {
+  if (!raw) return null;
+  let t = null; try { t = cleanTiers(JSON.parse(raw)); } catch { return null; }
+  return t && canon(t) === canon(OLD_DEF_TIERS) ? JSON.stringify(cleanTiers(DEF_TIERS)) : null;
 }
 const deviceAllowed = (active, tiers) => { const t = tierFor(active, tiers); return !!(t && t.device); };
 /** matrix of effective bonuses per tier (with inheritance) for display */
@@ -106,4 +121,4 @@ function memoryStore() {
     async addDevice(d) { devices.push(d); },
   };
 }
-module.exports = { DEF_TIERS, DEF_PACKAGES, cleanTiers, settings, tierFor, nextTier, bonusFor, deviceAllowed, matrix, addMonths, effectiveUntil, isActive, isPaidOrder, processPaidOrder, memoryStore };
+module.exports = { DEF_TIERS, OLD_DEF_TIERS, migrateTiers, DEF_PACKAGES, cleanTiers, settings, tierFor, nextTier, bonusFor, deviceAllowed, matrix, addMonths, effectiveUntil, isActive, isPaidOrder, processPaidOrder, memoryStore };

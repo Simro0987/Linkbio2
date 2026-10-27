@@ -447,7 +447,7 @@ async function main() {
       smtpHost: 'smtp.example.test',
       smtpPort: 587,
       smtpUser: 'u',
-      smtpFrom: 'noreply@tokigo.test',
+      smtpFrom: 'noreply@lnkbio-mail.test',
       smtpPass: 'secret-smtp-password-xyz',
       steps: [
         { id: 's1', name: 'B1', botUsername: 'B1', token: '1:TOK111111111111111', chatId: '', template: 'a', extract: ['raw'], timeoutSec: 5 },
@@ -463,7 +463,7 @@ async function main() {
     assert.ok(s.verdictPass.includes('PREŠLO') || s.verdictPass.includes('PRESLO') || s.verdictPass.some((x) => /PRE/.test(x)));
     assert.ok(s.verdictFail.some((x) => /NEPRE|ZAMIET/i.test(x)));
     assert.equal(s.smtpHost, 'smtp.example.test');
-    assert.equal(s.smtpFrom, 'noreply@tokigo.test');
+    assert.equal(s.smtpFrom, 'noreply@lnkbio-mail.test');
     assert.equal(s.smtpPassSet, true);
     assert.ok(!JSON.stringify(s).includes('secret-smtp-password'));
     const cfg = chain.getConfig();

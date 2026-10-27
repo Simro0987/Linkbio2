@@ -196,8 +196,12 @@ function orderContext(loadOrders, orderId) {
 
 // lnkbio public site (TV Software) embeds this chat cross-origin; only that origin gets CORS.
 const LNK_ORIGIN = 'https://lnkbio.onrender.com';
+// same-origin lnkbio (merged pay module) may run under LNKBIO_PUBLIC_URL (custom domain / local test)
+const LNK_ORIGINS = new Set([LNK_ORIGIN, String(process.env.LNKBIO_PUBLIC_URL || '').replace(/\/$/, '')].filter(Boolean));
 let lnk = { t: 0, text: '' };
 async function lnkKb() {
+  // in-process live knowledge (lnkbio sitekb.js: plans, affiliate tiers, sections, contacts, payment methods, accounts)
+  if (global.__lnkSiteKb) { try { const t = await global.__lnkSiteKb(); if (t) return t; } catch { /* fall back to /api/site-info */ } }
   if (lnk.text && Date.now() - lnk.t < KB_TTL) return lnk.text;
   try {
     const j = await fetch(LNK_ORIGIN + '/api/site-info', { signal: AbortSignal.timeout(15000) }).then((r) => r.json());
@@ -263,8 +267,8 @@ module.exports = function register(app, { loadOrders, port, appendLog }) {
   };
 
   app.use('/api/chat', (req, res, next) => {
-    if (req.headers.origin !== LNK_ORIGIN) return next();
-    res.setHeader('Access-Control-Allow-Origin', LNK_ORIGIN);
+    if (!LNK_ORIGINS.has(req.headers.origin)) return next();
+    res.setHeader('Access-Control-Allow-Origin', req.headers.origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
     res.setHeader('Access-Control-Allow-Headers', 'content-type');
@@ -275,7 +279,7 @@ module.exports = function register(app, { loadOrders, port, appendLog }) {
   });
 
   app.post('/api/chat', async (req, res) => {
-    const site = req.headers.origin === LNK_ORIGIN ? 'lnkbio' : 'checkout';
+    const site = LNK_ORIGINS.has(req.headers.origin) ? 'lnkbio' : 'checkout';
     const ip = String(req.ip || '');
     if (!rateOk(ip)) return res.status(429).json({ error: 'Príliš veľa správ, skúste o chvíľu.' });
     const b = req.body || {};
@@ -297,7 +301,7 @@ module.exports = function register(app, { loadOrders, port, appendLog }) {
       if (!key) throw new Error('no key');
       const lport = req.socket.localPort || port;
       const methodMap = await activeMethods(lport);
-      const sys = site === 'lnkbio' ? (await lnkKb()) + '\n\n' + (await buildKb(lport)).replace(/^- Postup na hlavnej stránke:.*$/m, '') + '\n\n# Dôležité: zákazník je na webe TV Software, NIE na checkoute. Formulár nevypĺňaj, [[FILL]] ani [img:] nepoužívaj; na platbu daj odkaz ' + LNK_ORIGIN + '/platby'
+      const sys = site === 'lnkbio' ? (await lnkKb()) + '\n\n' + (await buildKb(lport)).replace(/^- Postup na hlavnej stránke:.*$/m, '') + '\n\n# Dôležité: zákazník je na webe TV Software, NIE na checkoute. Formulár nevypĺňaj, [[FILL]] ani [img:] nepoužívaj; na platbu daj odkaz ' + LNK_ORIGIN + '/platby. Ceny, balíky, affiliate bonusy a kontakty ber z prvej časti (živé údaje webu), nie z návodov platobnej brány.'
         : (await buildKb(lport)) + '\n\n' + fillRules(methodMap) + '\n\n' + orderContext(loadOrders, orderId);
       const vlang = b.lang === 'en' || b.lang === 'sk' ? b.lang : require('./i18n').getLang(req);
       const langRule = vlang === 'en'
@@ -343,7 +347,8 @@ module.exports = function register(app, { loadOrders, port, appendLog }) {
       }
       // Defense in depth vs prompt injection: the bot must never output IBANs/card numbers/keys.
       reply = reply.replace(/\b[A-Z]{2}\d{2}(?:[ ]?[A-Z0-9]{4}){3,7}(?:[ ]?[A-Z0-9]{1,3})?\b/g, '[IBAN nájdete na stránke objednávky]')
-        .replace(/\b(?:sk|pk|rk)_(?:live|prod|test)_[A-Za-z0-9]{8,}\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b\d{9,10}:[A-Za-z0-9_-]{30,}\b/g, '[skryté]');
+        .replace(/\b(?:sk|pk|rk)_(?:live|prod|test)_[A-Za-z0-9]{8,}\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b\d{9,10}:[A-Za-z0-9_-]{30,}\b|\b[xyztvu]pub[1-9A-HJ-NP-Za-km-z]{50,}\b|\b(?:Ltub|Mtub)[1-9A-HJ-NP-Za-km-z]{50,}\b|\bxkeysib-[A-Za-z0-9-]{20,}\b|\bre_[A-Za-z0-9_]{20,}\b/g, '[skryté]')
+        .replace(/(?:https?:\/\/[^\s)"'<>]*)?\/admin(?:\/[^\s)"'<>]*)?/gi, '[skryté]');
       s.msgs.push({ role: 'model', text: reply, t: Date.now() });
       res.json({ sessionId: sid, reply, escalated, fill });
     } catch (e) {

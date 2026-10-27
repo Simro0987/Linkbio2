@@ -66,6 +66,7 @@ function install(ctx) {
     await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS panel_pending text`);
     await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS verify_hash text, ADD COLUMN IF NOT EXISTS verify_exp timestamptz`);
     await pool.query(`UPDATE acc_users SET email=lower(btrim(email)) WHERE email IS NOT NULL AND email<>lower(btrim(email))`).catch(() => {});
+    await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS remind_for timestamptz`); // licence end-date we already sent the 7-day reminder for
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS acc_users_email ON acc_users (lower(email)) WHERE email IS NOT NULL`).catch((e) => console.error('[acc] email index: ' + e.message));
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS acc_users_panel ON acc_users (lower(panel_user)) WHERE panel_user IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS acc_users_ref ON acc_users (referrer_id)`);
@@ -77,6 +78,8 @@ function install(ctx) {
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_panel_cfg (k text PRIMARY KEY, v text NOT NULL)`);
     await pool.query(`DELETE FROM acc_sessions WHERE expires_at < now()`);
     (await pool.query(`SELECT order_id FROM acc_orders`)).rows.forEach((x) => done.add(x.order_id));
+    // affiliate defaults changed (2026-10-27): migrate the stored tier table only if it still equals the old defaults
+    try { const st = await getSettings(), mig = AFF.migrateTiers(st.aff_tiers); if (mig) { await setSettings({ aff_tiers: mig }); console.log('[acc] affiliate tiers migrated to new defaults'); } } catch (e) { console.error('[acc] tier migration', e.message); }
   };
 
   // panel config – credentials encrypted at rest (AES-256-GCM via DATA_ENC_KEY)
@@ -221,6 +224,37 @@ function install(ctx) {
     } catch (e) { console.error('[acc] daily sync', e.message); }
   }, 30 * 60e3).unref();
 
+  // ---------- licence-expiry reminder: ~7 days before the end → e-mail to the customer (if e-mail sending is set up) + Telegram to admin ----------
+  const pubOrigin = () => String(process.env.LNKBIO_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '');
+  async function remindRun(now = new Date()) {
+    const s = await getSettings(); if (s.acc_remind === '0') return { skipped: 'off' };
+    const us = (await pool.query(`SELECT id,username,email, ${ACT()} AS eff, remind_for FROM acc_users WHERE NOT disabled AND ${ACT()} > $1 AND ${ACT()} <= $1::timestamptz + interval '7 days'
+      AND (remind_for IS NULL OR remind_for <> ${ACT()}) ORDER BY id LIMIT 200`, [now])).rows;
+    let mailed = 0, failed = 0;
+    for (const u of us) {
+      const until = fmtDate(u.eff), days = Math.max(1, Math.ceil((new Date(u.eff) - now) / 86400e3)); let how = 'bez e-mailu';
+      if (u.email && smtpOn()) {
+        try {
+          await sendMail(u.email, `${s.title || 'TV Software'} – predplatné končí ${until}`, `Dobrý deň ${u.username},\n\nvaše predplatné platí do ${until} (o ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}).\nPredĺžiť ho môžete tu: ${pubOrigin()}/platby\nStav predplatného: ${pubOrigin()}/ucet\n\nĎakujeme,\n${s.title || 'TV Software'}`);
+          mailed++; how = 'e-mail odoslaný';
+        } catch (e) { failed++; console.error('[acc] remind mail: ' + (e.code || 'ERR')); continue; } // retry on the next run
+      }
+      await pool.query(`UPDATE acc_users SET remind_for=$2 WHERE id=$1`, [u.id, u.eff]);
+      notify(`⏰ Predplatné zákazníka ${u.username} končí ${until} (${how}).`);
+    }
+    return { n: us.length, mailed, failed };
+  }
+  ctx.accRemind = remindRun;
+  const remindTick = async () => {
+    try {
+      const h = +new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Bratislava', hour: '2-digit', hourCycle: 'h23' }).format(new Date());
+      if (h < 9 || h > 20) return; // daytime only; de-duplicated per user + end date (remind_for)
+      const r = await remindRun(); if (r.n) console.log('[acc] expiry reminders', JSON.stringify(r));
+    } catch (e) { console.error('[acc] remind', e.message); }
+  };
+  setInterval(remindTick, 30 * 60e3).unref();
+  setTimeout(remindTick, Number(process.env.ACC_REMIND_FIRST_MS) || 120e3).unref(); // first pass soon after (re)deploy
+
   global.__lnkAccounts = { fromReq, planByAmount, kick };
 
   // ================= public pages =================
@@ -248,14 +282,11 @@ function install(ctx) {
   const OKM = new Set(['out', 'welcome', 'pwok', 'panelok', 'choice', 'resetok', 'del', 'sent', 'vsent', 'verified', 'emailok']);
   const msgOf = (k, en) => (MSG[k] ? `<div class="msg${OKM.has(k) ? '' : ' err'}" role="status">${esc(MSG[k][en ? 1 : 0])}</div>` : '');
   const msg = (req) => msgOf(String(req.query.m || ''), req.lang === 'en');
-  // e-mail: the site's existing SMTP (admin SEPA-chain SMTP settings, else env SMTP_*) – never logs addresses or tokens
-  const smtpCfg = () => { try { return require('./pay/src/sepaBotChain').smtpSettings(); } catch { return null; } };
-  const smtpOn = () => !!smtpCfg();
+  // e-mail goes through mailer.js (Brevo/Resend/Mailjet HTTPS API – Render free blocks SMTP – or SMTP)
+  const smtpOn = () => !!(global.__lnkMailer && global.__lnkMailer.ready());
   async function sendMail(to, subject, text) {
-    const c = smtpCfg(); if (!c || !to) { const e = new Error('SMTP nie je nastavený'); e.code = 'NO_SMTP'; throw e; }
-    const nm = require('nodemailer');
-    const t = nm.createTransport({ host: c.host, port: c.port, secure: c.secure, auth: c.user || c.pass ? { user: c.user, pass: c.pass } : undefined, connectionTimeout: 15e3, greetingTimeout: 15e3, socketTimeout: 20e3 });
-    await t.sendMail({ from: c.from, to, subject: String(subject).slice(0, 200), text: String(text).slice(0, 10000) });
+    if (!global.__lnkMailer || !to) { const e = new Error('E-mail nie je nastavený'); e.code = 'NO_SMTP'; throw e; }
+    await global.__lnkMailer.send({ to, subject: String(subject).slice(0, 200), text: String(text).slice(0, 10000) });
   }
   const normEmail = (v) => String(v || '').trim().toLowerCase().slice(0, 200);
   const newTok = () => crypto.randomBytes(32).toString('base64url');
@@ -287,7 +318,7 @@ function install(ctx) {
     return `<section class="card accpromo">${head}${table ? `<details><summary>🎁 ${tx(en, 'Tabuľka bonusov a cena za mesiac', 'Bonus table and price per month')}</summary>${table}</details>` : ''}<p><a class="b" href="/registracia">📝 ${tx(en, 'Zaregistrovať sa zadarmo', 'Sign up for free')}</a> <a class="btnl" href="/prihlasenie">🔑 ${tx(en, 'Prihlásiť sa', 'Log in')}</a></p></section>`;
   }
   ctx.accWhyForReq = async (req) => { if (!(await accOn()) || cookies(req)[C_SESS]) return ''; return whyHtml(req, false).catch(() => ''); };
-  const smtpWarn = () => (smtpOn() ? '' : `<div class="msg err">⚠️ SMTP nie je nastavený – e-maily „Zabudnuté heslo“ a overenie e-mailu sa neodosielajú (zákazník vidí rovnakú neutrálnu správu, vám príde Telegram notifikácia). Nastavte SMTP v <a href="/admin/platby/sepa-chain">Platby → SEPA bot reťaz → SMTP</a> alebo env <code>SMTP_HOST</code> + <code>SMTP_FROM</code> (+ <code>SMTP_USER</code>/<code>SMTP_PASS</code>), alebo zákazníkovi pošlite odkaz cez „🔐 Odkaz na reset hesla“ v jeho detaile.</div>`);
+  const smtpWarn = () => (smtpOn() ? '' : `<div class="msg err">⚠️ E-mail odosielanie nie je nastavené – e-maily „Zabudnuté heslo“ a overenie e-mailu sa neodosielajú (zákazník vidí rovnakú neutrálnu správu, vám príde Telegram notifikácia). Nastavte ho zadarmo v <a href="/admin/email">📧 E-mail odosielanie</a> (Brevo – Render free blokuje SMTP), alebo zákazníkovi pošlite odkaz cez „🔐 Odkaz na reset hesla“ v jeho detaile.</div>`);
   const safeNext = (v) => { const n = String(v || ''); return /^\/(platby|ucet)(\?[A-Za-z0-9=&_.%-]{0,200})?$/.test(n) ? n : ''; };
 
   app.get('/prihlasenie', wrap(async (req, res) => {
@@ -492,7 +523,7 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
       await pool.query(`UPDATE acc_users SET reset_hash=$2, reset_exp=now()+interval '1 hour' WHERE id=$1`, [u.id, sha(t)]);
       const link = `${origin(req)}/ucet/reset/${t}`, s = await getSettings();
       setImmediate(() => {
-        if (!smtpOn()) { notify(`🔐 Zákazník ${u.username} žiada o obnovu hesla, ale SMTP nie je nastavený – vygenerujte mu odkaz v admine (Zákazníci → ${u.username} → Odkaz na reset hesla).`); return; }
+        if (!smtpOn()) { notify(`🔐 Zákazník ${u.username} žiada o obnovu hesla, ale e-mail odosielanie nie je nastavené – vygenerujte mu odkaz v admine (Zákazníci → ${u.username} → Odkaz na reset hesla).`); return; }
         sendMail(u.email, `${s.title || 'TV Software'} – obnova hesla`, `Dobrý deň ${u.username},\n\nniekto (pravdepodobne vy) požiadal o obnovu hesla. Nové heslo nastavíte tu (odkaz platí 1 hodinu a dá sa použiť len raz):\n${link}\n\nAk ste o obnovu nežiadali, tento e-mail ignorujte – heslo ostáva nezmenené.\n`)
           .catch((e) => { console.error('[acc] reset mail: ' + (e.code || 'ERR')); notify(`⚠️ Obnova hesla pre ${u.username}: e-mail sa nepodarilo odoslať – vygenerujte odkaz v admine.`); });
       });
@@ -607,6 +638,8 @@ ${selfCheck(c) ? `<form method="post" action="/overit-predplatne" class="card ac
       plans: Object.fromEntries(plans.map((p) => { const b = bi ? bi.bonus(+p.period || 1) : 0; return [p.id, { months: +p.period || 1, bonus: b, label: b ? (dev ? tx(en, '+ druhé zariadenie zadarmo', '+ second device free') : `+${moLabel(b, en)} ${tx(en, 'zadarmo', 'free')}`) : '' }]; })) });
   }));
   ctx.accBonusForReq = async (req) => { const u = await fromReq(req); if (!u) return null; const bi = await bonusInfo(u); if (!bi) return null; const dev = bi.device && u.aff_choice === 'device'; return (m) => { const b = bi.bonus(+m || 1); return b ? (dev ? tx(req.lang === 'en', '+ druhé zariadenie zadarmo', '+ second device free') : `+${moLabel(b, req.lang === 'en')} ${tx(req.lang === 'en', 'zadarmo', 'free')}`) : ''; }; };
+  // public, non-secret facts for the AI customer assistant (sitekb.js) – no panel URL/credentials
+  ctx.accKbInfo = async () => { const c = await panelCfg(); return { on: await accOn(), panel: !!selfCheck(c), panelLinked: panelReady(c), mail: smtpOn(), packages: await packages() }; };
   ctx.accNavItem = (req) => { const en = req.lang === 'en'; return cookies(req)[C_SESS] ? ['/ucet', '👤', tx(en, 'Môj účet', 'My account')] : ['/prihlasenie', '🔑', tx(en, 'Prihlásenie / Registrácia', 'Log in / Sign up')]; };
 
   // ================= admin =================

@@ -101,7 +101,7 @@ async function init() {
 // ---- AES-256-GCM encryption at rest for sensitive settings (contacts) ----
 const ENC_KEY = /^[0-9a-f]{64}$/i.test(process.env.DATA_ENC_KEY || '') ? Buffer.from(process.env.DATA_ENC_KEY, 'hex') : null;
 if (!ENC_KEY) { console.error('Missing/invalid DATA_ENC_KEY (64 hex chars)'); process.exit(1); }
-const isEncKey = k => /^soc_/.test(k) || k === 'contact_text' || k === 'contact_text_en' || k === 'totp_secret' || k === 'totp_pending';
+const isEncKey = k => /^soc_/.test(k) || k === 'contact_text' || k === 'contact_text_en' || k === 'totp_secret' || k === 'totp_pending' || k === 'mail_key';
 function encrypt(buf, aad = 'linkbio') {
   const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', ENC_KEY, iv); c.setAAD(Buffer.from(aad));
   const ct = Buffer.concat([c.update(buf), c.final()]);
@@ -412,6 +412,7 @@ ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<
 ${payMethods.dashCard()}
 ${walletsAdmin.dashCard()}
 ${features.accountsAdminCard ? features.accountsAdminCard() : ''}
+<div class="card"><h2>📧 E-mail odosielanie</h2><p class="hint">Brevo / Resend / Mailjet (HTTPS, zadarmo) alebo SMTP – zabudnuté heslo, overenie e-mailu, pripomienka konca predplatného.</p><p class="row"><a class="btnl sm" href="/admin/email">📧 Nastaviť e-mail</a></p></div>
 ${payCard()}
 <form method="post" action="/admin/settings" class="card">${hid(req)}<h2>Stránka</h2>
 <label>Titulok</label><input name="title" value="${esc(s.title)}" maxlength="80" required>
@@ -987,6 +988,8 @@ require('./epg')(features);
 const payMethods = require('./paymethods')(features);
 const walletsAdmin = require('./wallets')(features);
 require('./xpubadmin')(features);
+require('./mailer').install(features);
+require('./sitekb').install(Object.assign(features, { getList, SOCIALS, socOn, socGrp, PAGES, LNK_PUBLIC, chTree }));
 require('./accounts').install(Object.assign(features, { encrypt, decrypt, getList }));
 app.use('/admin', admin);
 
@@ -1155,7 +1158,7 @@ features.sectionRoute((...a) => shell(...a), (r) => slugOk(r), T, loc);
 app.use((req, res) => res.status(404).send(page('404', `<h1>404</h1><p class="bio">${T(req, 'Stránka neexistuje.')}</p>`)));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
 
-init().then(initLists).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => features.sectionsInit()).then(() => features.epgInit()).then(() => features.xpubInit()).then(() => features.accountsInit()).then(() => {
+init().then(initLists).then(() => features.mailerInit && features.mailerInit()).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => features.sectionsInit()).then(() => features.epgInit()).then(() => features.xpubInit()).then(() => features.accountsInit()).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // Render free tier: lnkbio sleeps when idle (KEEP_AWAKE default off) so the checkout can stay awake 24/7
   // within the shared 750 free instance-hours. Visitors wake the checkout on demand (see middleware above).
