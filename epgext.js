@@ -320,12 +320,14 @@ function install({ pool, kv, channels, loadMap, onChange, imp }) {
   const extIds = async () => { if (!extSet) extSet = new Set((await pool.query(`SELECT DISTINCT epg_id FROM epg_prog WHERE epg_id LIKE 'ext:%'`)).rows.map((r) => +r.epg_id.slice(4))); return extSet; };
   async function run(force) {
     if (busy) return busy;
-    busy = (async () => { const last = Date.parse((await kv.get('ext_at')) || 0) || 0; if (force || Date.now() - last > HOURS * 3600e3 - 60e3) { await fetchAll(); await backtest().catch(() => {}); } return apply(); })()
+    busy = (async () => { if (force || (await stale())) { await fetchAll(); await backtest().catch(() => {}); } return apply(); })()
       .then((r) => { console.log(`EXT schedules ${JSON.stringify(r)} rss=${Math.round(process.memoryUsage().rss / 1048576)}MB`); return r; })
       .catch((e) => { console.error('EXT', e.message); }).finally(() => { busy = null; });
     return busy;
   }
-  const due = async () => !busy && Date.now() - (Date.parse((await kv.get('ext_at')) || 0) || 0) > HOURS * 3600e3 - 60e3;
+  // due every HOURS, or right away when a newly added source has never been read
+  const stale = async () => { if (Date.now() - (Date.parse((await kv.get('ext_at')) || 0) || 0) > HOURS * 3600e3 - 60e3) return true; const r = JSON.parse((await kv.get('ext_runs')) || '{}'); return SOURCES.some((S) => !r[S.id]); };
+  const due = async () => !busy && (await stale());
   // ---------- admin (/admin/udalosti#ext): sources, predictions with correction, unmapped names → aliases ----------
   const fmtT = (ms) => new Intl.DateTimeFormat('sk-SK', { timeZone: 'Europe/Bratislava', weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(ms);
   function mountAdmin({ admin, needAuth, csrf, wrap, esc, hid }) {
