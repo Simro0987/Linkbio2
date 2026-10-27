@@ -884,7 +884,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     /** PaysafeCard + G2A gift cards: amount/email/country filled on pay page / product link, not main form. */
     // Revolut (Guardarian) + keyless public gateways: customer enters ONLY the amount here.
     function isAmountOnly(p) {
-      return !!p && (['guardarian', 'keyless', 'revolut_manual', 'custom', 'crypto_direct', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin'].includes(String(p.gateway || '').toLowerCase()) || hasAmountLink(p));
+      return !!p && (['guardarian', 'keyless', 'revolut_manual', 'custom', 'crypto_direct', 'blink_ln', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin'].includes(String(p.gateway || '').toLowerCase()) || hasAmountLink(p));
     }
     // Admin „Odkazy podľa sumy“: exact amount match → amount-only + „Zaplatiť“ (link stays server-side).
     function hasAmountLink(p) {

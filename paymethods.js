@@ -20,9 +20,9 @@ module.exports = function install(ctx) {
   const GROUP_RE = /^[a-z0-9_-]{1,40}$/;
 
   class BridgeErr extends Error { constructor(kind, msg) { super(msg); this.kind = kind; } }
-  async function call(action, extra = {}, timeoutMs = 45000) {
+  async function call(action, extra = {}, timeoutMs = 45000, bridge = '/api/admin-bridge/pay-methods') {
     // merged payment module (PAY_MODULE=live|on): call the same actions in-process – no HTTP, no HMAC, no second service
-    const reg = MERGED() && global.__payBridge && global.__payBridge['/api/admin-bridge/pay-methods'];
+    const reg = MERGED() && global.__payBridge && global.__payBridge[bridge];
     if (reg) {
       const fn = Object.prototype.hasOwnProperty.call(reg, String(action)) ? reg[String(action)] : null;
       if (!fn) throw new BridgeErr('user', 'Neznáma akcia');
@@ -119,6 +119,28 @@ ${logoFields(r.logo, st, true)}<p class="row"><button>💾 Uložiť</button><a c
 <div class="rkwrap"><table class="rkt"><thead><tr><th>#</th><th>Spôsob platby</th><th>Objednávky</th><th>S dokladom</th><th>Zaplatené</th><th>Kliky</th><th>Skóre</th><th>Poplatok (admin)</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
 ${rs.auto ? '' : `<h3>Poradie skupín</h3><ul class="rkg">${groups}</ul>`}</div>`;
   }
+  // ---- ⚡ Bitcoin Lightning (Blink) settings – API key is write-only: shown only as (uložený)/(nenastavený), never echoed or logged ----
+  const BLINK = BASE + '/blink';
+  const callBlink = (action, extra) => call(action, extra, 45000, '/api/admin-bridge/blink');
+  function blinkCard(b, full) {
+    if (!b) return '';
+    const state = b.configured ? '<span class="tag ok">pripojené</span>' : '<span class="tag">nenastavené</span>';
+    if (!full) return `<div class="card pmw" id="blink"><h2>⚡ Bitcoin Lightning (Blink) ${state}</h2><p class="hint">Peňaženka: ${b.username ? esc(b.username) : '–'} · Lightning adresa: ${esc(b.lnAddressEffective || '–')} · API kľúč: ${esc(b.key)}. Metódu zapnete prepínačom „Bitcoin Lightning (Blink)“ nižšie (predvolene vypnutá).</p><p class="row"><a class="btnl sm g2" href="${BLINK}">⚙️ Nastaviť Blink</a></p></div>`;
+    return '';
+  }
+  function blinkForm(req, b) {
+    return `<form method="post" action="${BLINK}" class="card pmw" id="blink" autocomplete="off">${hid(req)}
+<h2>⚡ Bitcoin Lightning (Blink) ${b.configured ? '<span class="tag ok">pripojené</span>' : '<span class="tag">nenastavené</span>'}</h2>
+<p class="hint">Zákazník dostane Lightning faktúru (BOLT11) na presnú sumu objednávky v sats podľa aktuálneho kurzu BTC/EUR. Po zaplatení sa objednávka automaticky označí ako zaplatená a príde správa na Telegram. Na vytváranie faktúr stačí používateľské meno – API kľúč nie je potrebný.</p>
+<label for="blu">Blink používateľské meno</label><input id="blu" name="username" maxlength="50" pattern="@?[A-Za-z0-9_]{3,50}" value="${esc(b.username)}" placeholder="napr. mojmeno" spellcheck="false" autocapitalize="off">
+<p class="hint">Peňaženka: ${b.walletOk ? '<span class="tag ok">BTC peňaženka overená</span>' : '<span class="tag">neoverená</span>'} · overí sa pri uložení cez Blink API.</p>
+<label for="bla">Lightning adresa (zobrazená zákazníkom)</label><input id="bla" name="lnAddress" maxlength="250" value="${esc(b.lnAddress)}" placeholder="${esc(b.lnAddressDefault || 'meno@blink.sv')}" spellcheck="false" autocapitalize="off">
+<p class="hint">Prázdne = predvolená <code>${esc(b.lnAddressDefault || 'používateľské meno@blink.sv')}</code>. Zobrazí sa na platobnej stránke s tlačidlom Kopírovať a QR kódom.</p>
+<label for="blk">Blink API kľúč (voliteľný) <span class="tag${b.keySet ? ' ok' : ''}">${esc(b.key)}</span></label><input id="blk" name="apiKey" type="password" maxlength="200" value="" autocomplete="new-password" placeholder="${b.keySet ? 'nechajte prázdne = ponechať uložený kľúč' : 'nepovinné'}">
+<p class="hint">Použije sa len ako záloha, keď meno nestačí (oprávnenia Read + Receive). Kľúč sa uloží šifrovane a už sa nikdy nezobrazí.${b.encAvailable ? '' : ' <b>Chýba DATA_ENC_KEY – kľúč nie je možné uložiť.</b>'}</p>
+${b.keySet ? '<label class="ck"><input type="checkbox" name="clearKey" value="1"> Vymazať uložený API kľúč</label>' : ''}
+<p class="row"><button>💾 Uložiť Blink</button><a class="btnl g2" href="${BASE}">Späť</a></p></form>`;
+  }
   const shellPage = (req, title, body) => page(title, `<p class="row"><a class="btnl" href="/admin">← Admin</a><a class="btnl" href="${BASE}">💳 Platobné metódy</a></p>${body}`, 'a adm pmw0', '', HEAD);
   const msgOf = (req) => (MSGS[req.query.m] ? `<div class="msg">${esc(MSGS[req.query.m])}</div>` : '') + (req.query.e ? `<div class="msg err">${esc(String(req.query.e).slice(0, 200))}</div>` : '');
 
@@ -126,9 +148,10 @@ ${rs.auto ? '' : `<h3>Poradie skupín</h3><ul class="rkg">${groups}</ul>`}</div>
   admin.get('/platobne-metody', needAuth, wrap(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     let st, rs = null;
-    try { [st, rs] = await Promise.all([call('state'), call('rank_state').catch((e) => (e.kind === 'user' ? null : Promise.reject(e)))]); } catch (e) { return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`)); }
+    let bl = null;
+    try { [st, rs, bl] = await Promise.all([call('state'), call('rank_state').catch((e) => (e.kind === 'user' ? null : Promise.reject(e))), callBlink('blink_get').catch(() => null)]); } catch (e) { return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`)); }
     res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${msgOf(req)}<p class="hint">Spôsoby platby na checkoute <a href="${esc(ORIGIN ? ORIGIN + "/" : "/platby")}" target="_blank" rel="noopener noreferrer">${esc(ORIGIN ? ORIGIN.replace(/^https:\/\//, '') : 'lnkbio.onrender.com/platby')}</a>. Vypnuté metódy platobná stránka zákazníkom nezobrazí a ani ich nedovolí použiť.</p>
-${rankCard(req, rs)}<div class="card pmw" id="platobne-metody">${render(req, st, true)}</div>${customForm(req, st, {})}`));
+${rankCard(req, rs)}${blinkCard(bl, false)}<div class="card pmw" id="platobne-metody">${render(req, st, true)}</div>${customForm(req, st, {})}`));
   }));
   // dashboard fragment (loaded by /static/pm.js so a sleeping checkout never blocks /admin)
   admin.get('/platobne-metody/panel', needAuth, wrap(async (req, res) => {
@@ -145,6 +168,21 @@ ${rankCard(req, rs)}<div class="card pmw" id="platobne-metody">${render(req, st,
       return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`));
     }
     res.send(shellPage(req, 'Upraviť spôsob platby', `<h1>💳 Upraviť spôsob platby</h1>${msgOf(req)}${d.kind === 'custom' ? customForm(req, st, d.rec) : builtinForm(req, st, d)}`));
+  }));
+
+  admin.get('/platobne-metody/blink', needAuth, wrap(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    let b;
+    try { b = await callBlink('blink_get'); } catch (e) { return res.send(shellPage(req, 'Bitcoin Lightning (Blink)', `<h1>⚡ Bitcoin Lightning (Blink)</h1>${offBox(e)}`)); }
+    res.send(shellPage(req, 'Bitcoin Lightning (Blink)', `<h1>⚡ Bitcoin Lightning (Blink)</h1>${msgOf(req)}${blinkForm(req, b)}`));
+  }));
+  admin.post('/platobne-metody/blink', needAuth, csrf, wrap(async (req, res) => {
+    const b = req.body || {};
+    try {
+      const out = await callBlink('blink_save', { username: String(b.username || '').slice(0, 60), lnAddress: String(b.lnAddress || '').slice(0, 250), apiKey: String(b.apiKey || '').slice(0, 220), clearKey: b.clearKey === '1' ? '1' : '' });
+      await audit(req, 'paymethod_blink', `user=${out.username || '-'} wallet=${out.walletOk ? 'ok' : 'none'} key=${out.keySet ? 'set' : 'none'}`);
+      res.redirect(303, BLINK + '?m=saved');
+    } catch (e) { fail(req, res, e, BLINK); }
   }));
 
   // logo proxy (onrender.com is a public suffix → checkout logos are cross-site; serve them same-origin, sandboxed)

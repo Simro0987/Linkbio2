@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/tvch-import.test.js && node test/epgext.test.js && node test/evbig.test.js && node test/sections.test.js && node pay/scripts/test-sepa-bot-chain.js"
+    "test": "node test/tvch-import.test.js && node test/epgext.test.js && node test/evbig.test.js && node test/sections.test.js && node test/blink.test.js && node pay/scripts/test-sepa-bot-chain.js"
   },
   "engines": {
     "node": ">=18"

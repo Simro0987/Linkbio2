@@ -12,6 +12,7 @@ Only real, official brand marks. Copied locally (no hotlinking). PNGs resized to
 | azteco.png | Azteco | https://azte.co/favicon.ico |
 | banxa.png | Banxa | banxa.com site icon (cropped-favicon-180x180) |
 | bitpanda.png | Bitpanda | https://www.bitpanda.com/favicons/apple-touch-icon-image.png |
+| bitcoin.svg | Bitcoin | simple-icons v16 (`bitcoin`, source bitcoin.org), fill #F7931A |
 | btcpay.png | BTCPay Server | https://btcpayserver.org/apple-touch-icon.png |
 | changenow.png | ChangeNOW | changenow.io apple-touch-icon |
 | coinmate.svg | Coinmate | https://coinmate.io/favicons/favicon.svg |
@@ -20,6 +21,7 @@ Only real, official brand marks. Copied locally (no hotlinking). PNGs resized to
 | googlepay.svg | Google Pay | simple-icons v16 (`googlepay`) |
 | guardarian.png | Guardarian | https://guardarian.com/apple-touch-icon.png |
 | kriptomat.png | Kriptomat | kriptomat.io site icon (cropped-favicon-180x180) |
+| lightning.svg | Lightning Network | Wikimedia Commons – File:Lightning_Network.svg (official Lightning Network mark) |
 | mtpelerin.png | Mt Pelerin | https://www.mtpelerin.com/icons/apple-touch-icon.png |
 | paybis.png | Paybis | cdn.paybis.com android-chrome-192x192 |
 | paysafecard.svg | paysafecard | paysafecard.com favicon.svg |

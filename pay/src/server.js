@@ -29,6 +29,7 @@ const guideStore = require('./guideStore');
 const adminCategories = require('./adminCategories');
 const wallets = require('./wallets');
 const cryptoDirect = require('./cryptoDirect');
+const blink = require('./blink');
 const changelly = require('./changelly');
 const amountLinks = require('./amountLinks');
 const paysafecard = require('./paysafecard');
@@ -486,6 +487,14 @@ const METHOD_GROUPS = [
         gateway: 'crypto_direct',
         label: 'Krypto priamo na peňaženku',
         hint: 'BTC, LTC, USDT, USDC, ETH, SOL… · pošlete priamo na našu adresu · zadáte len sumu',
+      },
+      {
+        // ⚡ Blink Lightning invoice for the exact amount (off by default – payMethods DEFAULT_OFF; hidden until configured)
+        providerId: 'blink_ln',
+        aliasId: 'blink_ln',
+        gateway: 'blink_ln',
+        label: 'Bitcoin Lightning (Blink)',
+        hint: 'Lightning faktúra na presnú sumu · QR kód · potvrdenie automaticky · zadáte len sumu',
       },
     ],
   },
@@ -1012,6 +1021,7 @@ function ossStatus(gateway) {
   if (gateway === 'switchere') return switchere.status();
   if (gateway === 'revolut_manual') return { configured: true, hint: 'Revolut · Revtag cez Telegram' };
   if (gateway === 'keyless') return { configured: true, hint: 'verejná stránka, bez kľúča' };
+  if (gateway === 'blink_ln') return blink.status();
   if (gateway === 'crypto_direct') return { configured: cryptoDirect.enabled(), hint: 'adresy z „Adresy peňaženiek“ (admin)' };
   if (gateway === 'revolut_ramp') return { configured: changelly.enabled('revolut_ramp'), hint: 'ramp.revolut.com · LTC/BTC/DOGE/BCH na adresy z „Adresy peňaženiek“' };
   if (gateway === 'changelly') return { configured: changelly.enabled(), hint: 'changelly.com/buy · LTC/BTC/BCH/DOGE na adresy z „Adresy peňaženiek“' };
@@ -1091,7 +1101,7 @@ const LINK_BASED_GROUPS = new Set(['revolut', 'skrill']);
 const LINK_BASED_GATEWAYS = new Set(['revolut_manual', 'keyless', 'guardarian', 'mtpelerin', 'switchere', 'custom']);
 function amountLinkMethods() {
   const gw = {}; for (const g of METHOD_GROUPS) for (const en of g.entries) gw[String(en.aliasId || en.providerId).toLowerCase()] = en.gateway || 'chain2pay';
-  const out = builtinMethods().filter((m) => m.id !== 'crypto_direct' && m.id !== 'btcpay' && !/^(g2a|paysafe)/.test(m.id)).map((m) => ({ id: m.id, label: m.label, linkBased: LINK_BASED_GROUPS.has(m.group) || LINK_BASED_GATEWAYS.has(gw[m.id]) }));
+  const out = builtinMethods().filter((m) => m.id !== 'crypto_direct' && m.id !== 'blink_ln' && m.id !== 'btcpay' && !/^(g2a|paysafe)/.test(m.id)).map((m) => ({ id: m.id, label: m.label, linkBased: LINK_BASED_GROUPS.has(m.group) || LINK_BASED_GATEWAYS.has(gw[m.id]) }));
   try { for (const r of payMethods.customs ? payMethods.customs() : []) if (!r.deleted) out.push({ id: r.id, label: r.name + ' (vlastný odkaz)', linkBased: true }); } catch { /* none */ }
   return out;
 }
@@ -1128,6 +1138,7 @@ function groupProvidersBase(chainProviders) {
       if ((gateway === 'onramper' || pid === 'onramper') && !String(process.env.ONRAMPER_API_KEY || '').trim()) continue;
       // Direct crypto: hidden entirely until at least one wallet address is enabled.
       if (gateway === 'crypto_direct' && !cryptoDirect.enabled()) continue;
+      if (gateway === 'blink_ln' && !blink.configured()) continue;
       if (gateway === 'changelly' && !changelly.enabled()) continue;
       if (gateway === 'revolut_ramp' && !changelly.enabled('revolut_ramp')) continue;
       const selectId = String(entry.aliasId || entry.providerId).toLowerCase();
@@ -1146,7 +1157,7 @@ function groupProvidersBase(chainProviders) {
           minimum_currency = 'EUR';
         }
         const smoke = smokeStatusFor(selectId, pid, gateway);
-        const forceRevolutOss = /^revolut/.test(pid) || /^revolut_/.test(selectId) || gateway === 'guardarian' || gateway === 'mtpelerin' || gateway === 'meld' || gateway === 'keyless' || gateway === 'revolut_manual' || gateway === 'crypto_direct' || gateway === 'changelly' || gateway === 'revolut_ramp';
+        const forceRevolutOss = /^revolut/.test(pid) || /^revolut_/.test(selectId) || gateway === 'guardarian' || gateway === 'mtpelerin' || gateway === 'meld' || gateway === 'keyless' || gateway === 'revolut_manual' || gateway === 'crypto_direct' || gateway === 'blink_ln' || gateway === 'changelly' || gateway === 'revolut_ramp';
         if (!soon && configured && !smoke.ok && !forceRevolutOss) {
           soon = true;
           unavailableLabel = smoke.label || 'dočasne nedostupné';
@@ -1392,6 +1403,8 @@ adminCategories.mountAdmin(app, { appendLog, fetchPlan: (id) => fetchPlan(id) })
 amountLinks.mount(app, { loadOrders, saveOrders, appendLog });
 // Public: direct crypto pay page (/crypto-pay) — addresses from wallets
 cryptoDirect.mount(app, { loadOrders, saveOrders, appendLog });
+// Public: ⚡ Blink Lightning invoice page (/blink-pay) + admin bridge /api/admin-bridge/blink
+blink.mount(app, { loadOrders, saveOrders, appendLog });
 // Public: Changelly pre-redirect page (/changelly-pay) — coin/address from wallets, watched by chainWatcher
 changelly.mount(app, { loadOrders, saveOrders, appendLog });
 
@@ -1594,6 +1607,7 @@ async function handleCreateCheckout(req, res) {
       apple_google_revolut: 'guardarian_revolut',
       revolut_manual: 'revolut_manual',
       crypto_direct: 'crypto_direct',
+      blink_ln: 'blink_ln',
       changelly_card: 'changelly', changelly_sepa: 'changelly', changelly_revolut: 'changelly', revolut_ramp: 'revolut_ramp',
       revolut_1: 'guardarian_revolut',
       changenow_buy: 'keyless', paybis_buy: 'keyless', anycoin_buy: 'keyless', coinmate_buy: 'keyless', bitpanda_buy: 'keyless', kriptomat_buy: 'keyless',
@@ -1711,7 +1725,7 @@ async function handleCreateCheckout(req, res) {
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         email = '';
       }
-    } else if (['guardarian_revolut', 'keyless', 'revolut_manual', 'crypto_direct', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin'].includes(String(ALIAS_MAP[providerAlias] || provider).toLowerCase())) {
+    } else if (['guardarian_revolut', 'keyless', 'revolut_manual', 'crypto_direct', 'blink_ln', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin'].includes(String(ALIAS_MAP[providerAlias] || provider).toLowerCase())) {
       // Revolut / keyless public gateways: amount only — no email, name or country from the customer.
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) email = '';
     } else if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -1746,6 +1760,18 @@ async function handleCreateCheckout(req, res) {
       } catch (e) {
         appendLog(`CRYPTO_DIRECT_FAIL ${orderId} ${e.message}`);
         return res.status(e.status || 500).json({ error: e.status === 400 ? e.message : 'Krypto platbu sa nepodarilo vytvoriť. Skúste to znova.' });
+      }
+    }
+
+    if (providerLower === 'blink_ln') {
+      try {
+        // amount = server-validated order amount (plan price or checked amount); the invoice is built from the stored order only
+        const order = await blink.createOrder({ orderId, amountEur, countryCode, providerAlias, email, ip: req.ip, loadOrders, saveOrders, appendLog });
+        if (redirect) return res.redirect(302, order.checkoutUrl);
+        return res.json({ orderId, checkoutUrl: order.checkoutUrl, localPayUrl: order.checkoutUrl, provider: 'blink_ln', amountEur: order.amountEur, amount: order.amountEur, currency: 'EUR', status: order.status });
+      } catch (e) {
+        appendLog(`BLINK_FAIL ${orderId} ${String(e.message || '').slice(0, 200)}`);
+        return res.status(e.status || 502).json({ error: e.status === 400 || e.status === 429 ? e.message : 'Lightning faktúru sa nepodarilo vytvoriť. Skúste to znova alebo zvoľte iný spôsob.' });
       }
     }
 

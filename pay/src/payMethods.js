@@ -31,6 +31,7 @@ const BRAND = {
   skrill: L('skrill.png'), paysafecard: L('paysafecard.svg'), amazon: L('amazon.svg'), g2a: L('g2a.svg'), azteco: L('azteco.png'),
   btcpay: L('btcpay.png'), banxa: L('banxa.png'), stripe: L('stripe.svg'), transak: L('transak.png'), ramp: L('ramp.png'),
   alchemypay: L('alchemypay.png'), applepay: L('applepay.svg'), googlepay: L('googlepay.svg'), changelly: L('changelly.svg'), visa: L('visa.svg'), mastercard: L('mastercard.svg'),
+  lightning: L('lightning.svg'), bitcoin: L('bitcoin.svg'),
 };
 const GENERIC = { card: L('generic-card.svg'), bank: L('generic-bank.svg'), voucher: L('generic-voucher.svg'), link: L('generic-link.svg'), wallet: L('generic-wallet.svg') };
 const DEFAULT_LOGOS = {
@@ -38,7 +39,7 @@ const DEFAULT_LOGOS = {
   guardarian_card: ['guardarian'], is_guardarian: ['guardarian'], guardarian_revolut: ['guardarian'],
   bank_sepa_manual: ['sepa', 'electrocoin'], revolut_manual: ['revolut'], mtpelerin: ['mtpelerin'],
   changenow_buy: ['changenow'], paybis_buy: ['paybis'], anycoin_buy: ['anycoin'], coinmate_buy: ['coinmate'], bitpanda_buy: ['bitpanda'], kriptomat_buy: ['kriptomat'],
-  paysafecard: ['paysafecard'], btcpay: ['btcpay'],
+  paysafecard: ['paysafecard'], btcpay: ['btcpay'], blink_ln: ['lightning', 'bitcoin'],
   changelly_card: ['visa', 'mastercard', 'applepay', 'googlepay'], changelly_sepa: ['sepa'], changelly_revolut: ['revolut', 'changelly'], revolut_ramp: ['revolut'],
   banxa: ['banxa'], banxa_bank: ['banxa'], sepa_instant: ['banxa'], stripe: ['stripe'],
   is_transak: ['transak'], is_transak_sepa: ['transak'], transak: ['transak'], transak_sepa: ['transak'], is_ramp: ['ramp'], is_alchemy: ['alchemypay'],
@@ -122,7 +123,13 @@ function customFor(id) {
   const r = S.items.get(String(id || '').toLowerCase());
   return r && r.kind === 'custom' && !r.deleted && r.enabled !== false ? r : null;
 }
-function isBuiltinDisabled(id) { const o = override(id); return !!(o && o.enabled === false); }
+// Built-ins that start OFF until the admin explicitly switches them on (new methods that need configuration first).
+const DEFAULT_OFF = new Set(['blink_ln']);
+function isBuiltinDisabled(id) {
+  const o = override(id);
+  if (DEFAULT_OFF.has(String(id || '').toLowerCase())) return !(o && o.enabled === true);
+  return !!(o && o.enabled === false);
+}
 
 /* ---------- public: decorate grouped providers ---------- */
 function logosFor(item) {
@@ -492,7 +499,7 @@ ${del.length ? `<div class="card"><h2>🗑 Zmazané (${del.length})</h2><table c
     return page(req, 'Upraviť spôsob platby', `<div class="card"><h1>Upraviť: ${e(b.label)}</h1><p class="muted">Vstavaný spôsob platby (${e(b.id)} · ${e(groupLabel(b.group))}). Predvolené logo: <span class="lgs">${defaultLogos(b.id, b.group).map((s) => logoTag(s)).join('') || 'žiadne'}</span></p>
 <form method="post" action="/admin/platby/methods/save/${e(id)}" enctype="multipart/form-data">
 <label>Názov na tlačidle (prázdne = predvolený „${e(b.label)}“)</label><input name="name" maxlength="60" value="${e(o.name || '')}">
-<label class="chk"><input type="checkbox" name="enabled" value="1" ${o.enabled !== false ? 'checked' : ''}> Zapnuté (zobrazuje sa zákazníkom)</label>
+<label class="chk"><input type="checkbox" name="enabled" value="1" ${!isBuiltinDisabled(id) ? 'checked' : ''}> Zapnuté (zobrazuje sa zákazníkom)</label>
 ${logoFields(o.logo, { builtin: true })}
 <p><button>💾 Uložiť</button> <a href="/admin/platby/methods">Späť</a></p></form></div>`, '', err);
   }
@@ -726,8 +733,9 @@ if(location.hash==='#platobne-odkazy'&&!flash.hidden)setTimeout(function(){flash
     const b = builtins().find((x) => x.id === id);
     if (!b) return null;
     const o = override(id) || { id: 'ov:' + id, kind: 'override', builtin: id };
-    const enabled = want == null ? o.enabled === false : want;
-    if ((o.enabled !== false) !== enabled) await put({ ...o, enabled });
+    const cur = !isBuiltinDisabled(id);
+    const enabled = want == null ? !cur : want;
+    if (cur !== enabled) await put({ ...o, enabled });
     return { id, name: o.name || b.label, enabled };
   }
   const wantState = (req) => { const v = String((req.body || {}).state || '').toLowerCase(); return v === 'on' ? true : v === 'off' ? false : null; };
@@ -843,7 +851,7 @@ function mountBridge(app, h) {
     if (!b) return null;
     const o = override(id) || {};
     return { ok: true, kind: 'builtin', id, label: b.label, group: b.group, groupLabel: h.groupLabel(b.group), defaultLogos: defaultLogos(b.id, b.group),
-      rec: { name: o.name || '', enabled: o.enabled !== false, hideLogo: !!o.hideLogo, logo: o.logo || null } };
+      rec: { name: o.name || '', enabled: !isBuiltinDisabled(id), hideLogo: !!o.hideLogo, logo: o.logo || null } };
   }
   const filesOf = (logo) => {
     if (!logo || !logo.b64) return [];
