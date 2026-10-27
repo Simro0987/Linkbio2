@@ -20,6 +20,7 @@ module.exports = function install(ctx) {
     cache = { t: Date.now(), rows: r.rows }; return r.rows;
   };
   const drop = () => { cache = null; };
+  ctx.sectionsDrop = drop;
 
   ctx.sectionsInit = async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS site_sections (

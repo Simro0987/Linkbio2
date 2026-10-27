@@ -1198,7 +1198,9 @@ async function runChain(order, { loadOrders, saveOrders, appendLog, fallbackFn }
   // One LTC address per SEPA chain run — channel only, never shown to customer.
   let ltcPick = null;
   try {
-    ltcPick = pickLtcAddress(order.orderId);
+    const xpub = require('./xpub');
+    const hd = xpub.has('ltc') ? await xpub.nextAddress('ltc', order.orderId) : null; // admin xpub → derived address
+    ltcPick = hd ? { address: hd.address, index: hd.index, poolSize: 0, reused: !!hd.reused, xpub: true } : pickLtcAddress(order.orderId);
   } catch (e) {
     log('SEPA_CHAIN_LTC_PICK_FAIL ' + (e && e.message));
   }

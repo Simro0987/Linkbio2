@@ -48,6 +48,7 @@ const BY_ID = Object.fromEntries(ASSETS.map((a) => [a.id, a]));
 const NET_NOTE = { eth: 'sieť Ethereum', base: 'sieť Base', arbitrum: 'sieť Arbitrum One', optimism: 'sieť Optimism', polygon: 'sieť Polygon PoS', bsc: 'sieť BNB Smart Chain (BEP-20)', sol: 'sieť Solana', trx: 'sieť Tron (TRC-20)' };
 
 const addrFor = (a) => wallets.forChain(a.net);
+const xpub = require('./xpub');
 function available() { if (!wallets.isReady()) return []; return ASSETS.filter((a) => addrFor(a)); }
 const enabled = () => available().length > 0;
 
@@ -87,12 +88,15 @@ async function assign(order, assetId, appendLog) {
   const list = available();
   const a = BY_ID[assetId] && list.includes(BY_ID[assetId]) ? BY_ID[assetId] : list[0];
   if (!a) return 'Platba kryptom momentálne nie je dostupná.';
-  const w = addrFor(a);
+  let w = addrFor(a);
+  // xpub configured for this coin (admin → xpub) → fresh derived receive address per order; otherwise the fixed wallet address (unchanged)
+  const hd = a.watch && xpub.has(a.watch) ? await xpub.nextAddress(a.watch, order.orderId) : null;
+  if (hd) w = { address: hd.address, memo: null, id: `xpub:${a.watch}:${hd.index}` };
   const q = cryptoAmount(a, Number(order.amountEur), await prices());
   Object.assign(order, {
     asset: a.id, assetLabel: a.label, ticker: a.tk, network: a.net, address: w.address, memo: w.memo || null, walletId: w.id,
     amountCrypto: q ? q.amount : null, rateEur: q ? q.rate : null, rateAt: q ? q.at : null,
-    payoutCoin: a.watch || null, payoutAddress: a.watch ? w.address : null,
+    payoutCoin: a.watch || null, payoutAddress: a.watch ? w.address : null, xpubAddr: hd ? { coin: a.watch, index: hd.index } : null,
     chainBaseline: null, chainBaselinePending: !!a.watch, chainStatus: null, watched: !!a.watch,
   });
   if (a.watch) {

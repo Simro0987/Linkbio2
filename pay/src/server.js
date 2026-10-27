@@ -139,6 +139,7 @@ function loadOrders() {
 }
 
 function saveOrders(orders) {
+  try { if (global.__lnkAccounts) setImmediate(global.__lnkAccounts.kick); } catch { /* accounts optional */ }
   try { for (const o of Object.values(orders || {})) require('./statusLinks').ensureOrder(o); } catch (e) { appendLog('STATUS_TOKEN_FAIL ' + e.message); }
   if (orderDb.enabled()) { orderDb.save(orders, appendLog); return; } // Neon is the store – no extra in-memory/disk copies
   Object.keys(memoryOrders).forEach((k) => delete memoryOrders[k]);
@@ -151,6 +152,7 @@ function saveOrders(orders) {
   }
 }
 
+global.__payOrders = { load: () => loadOrders() };
 function appendLog(line) {
   const stamp = new Date().toISOString();
   const msg = `[${stamp}] ${line}`;
@@ -1347,6 +1349,7 @@ if (require('./payMode').jobs()) require('./chainWatcher').start({
   saveOrders,
   appendLog,
   onStatus: (order, status, r) => {
+    if (status === 'unconfirmed' || status === 'confirmed') require('./xpub').markUsed(order && order.orderId).catch(() => {});
     if (order && (order.provider === 'changelly' || order.provider === 'revolut_ramp')) {
       changelly.onChainStatus(order, status, r, { loadOrders, saveOrders, appendLog }).catch((e) => appendLog('CHANGELLY_CHAIN_FAIL ' + (e && e.message)));
     }
@@ -3406,9 +3409,47 @@ function tagMethod(handler) {
     return handler(req, res);
   };
 }
-app.post('/api/checkout', tagMethod(handleCreateCheckout));
-app.post('/create-checkout', tagMethod(handleCreateCheckout));
-app.post('/api/create-checkout', tagMethod(handleCreateCheckout));
+/** Logged-in lnkbio customer → link the new order to the account (+ plan months for the licence/affiliate ledger). Never changes the flow or price. */
+function tagAccount(handler) {
+  return async (req, res) => {
+    let acct = null; let months = 0; let planId = null;
+    try {
+      const A = global.__lnkAccounts; const u = A ? await A.fromReq(req) : null;
+      if (u) {
+        acct = { id: u.id, u: u.username };
+        const b = req.body || {};
+        if (b.plan_id != null && String(b.plan_id) !== '') { const pl = await fetchPlan(b.plan_id).catch(() => null); if (pl) { months = Number(pl.period) || 1; planId = pl.id; } }
+        if (!months) { const pl = await A.planByAmount(b.amount ?? b.amountEur ?? b.suma).catch(() => null); if (pl) { months = pl.period; planId = pl.id; } }
+      }
+    } catch (x) { appendLog('ACCT_TAG_FAIL ' + x.message); acct = null; }
+    if (acct) {
+      const json = res.json.bind(res);
+      res.json = (b) => {
+        try {
+          if (b && b.orderId && res.statusCode < 400) {
+            const all = loadOrders(); const o = all[b.orderId];
+            if (o && !o.acct) { o.acct = acct; o.planMonths = months || null; o.planId = planId; saveOrders(all); }
+          }
+        } catch (x) { appendLog('ACCT_TAG_FAIL ' + x.message); }
+        return json(b);
+      };
+      // form posts answer with a redirect (no orderId in the body) – tag the order this request just created
+      const t0 = Date.now() - 1000; const redir = res.redirect.bind(res);
+      res.redirect = (...args) => {
+        try {
+          const all = loadOrders(); let best = null;
+          for (const [id, o] of Object.entries(all)) { const t = Date.parse(o && o.createdAt); if (o && !o.acct && t >= t0 && (!best || t > best.t)) best = { id, t }; }
+          if (best) { const o = all[best.id]; o.acct = acct; o.planMonths = months || null; o.planId = planId; saveOrders(all); }
+        } catch (x) { appendLog('ACCT_TAG_FAIL ' + x.message); }
+        return redir(...args);
+      };
+    }
+    return handler(req, res);
+  };
+}
+app.post('/api/checkout', tagMethod(tagAccount(handleCreateCheckout)));
+app.post('/create-checkout', tagMethod(tagAccount(handleCreateCheckout)));
+app.post('/api/create-checkout', tagMethod(tagAccount(handleCreateCheckout)));
 
 /**
  * Proxy second_step for an existing order (used by /checkout-bridge).

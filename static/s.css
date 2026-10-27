@@ -156,3 +156,28 @@ body.fx::after{background:radial-gradient(rgba(255,255,255,.085) 1px,transparent
 /* admin: sekcie */
 .secrow .sech{display:flex;gap:12px;align-items:center}.seci{font-size:1.6rem;width:40px;text-align:center}.secrow .row form{display:inline}
 .g2{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 14px}.tb{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px}.tb button{margin:0;padding:6px 10px}
+/* customer accounts (/ucet, /prihlasenie, /registracia, /overit-predplatne) */
+.acc{max-width:720px}.acc .card{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:18px;margin:0 0 16px;box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.acc h2{font-size:1.15rem;margin:0 0 10px}.acc label{color:#9aa3c7}.acc input,.acc select{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.15);color:#fff;border-radius:10px}
+.acc input:focus{outline:2px solid #e50914;outline-offset:1px}.acc .hint{color:#94a3b8}.acc a{color:#7fb0ff}
+.acc button{background:linear-gradient(135deg,#e50914,#b20710);box-shadow:0 3px 12px #e5091440}.acc button.btnl,.acc .btnl{background:#1d4ed8;border:0;color:#fff}
+.acc .b{display:inline-block;text-align:center;padding:12px 20px;margin:8px 0 0;border-radius:12px;background:linear-gradient(135deg,#e50914,#b20710);border:0;color:#fff;box-shadow:0 3px 12px #e5091440;font-size:1rem}
+.acc .b::after{content:none}.acc .b.sm,.acc .sm{padding:9px 14px;font-size:.9rem}
+.accf{display:flex;flex-direction:column;gap:2px}.accf button{align-self:flex-start}.accf .chk,.acc .chk{display:flex;align-items:center;gap:6px;color:#e2e8f0;margin:6px 0}.acc .chk input{width:auto;margin:0}
+.accl{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}.accl input{flex:1 1 220px;min-width:0;font-family:ui-monospace,monospace;font-size:.9rem}.accl button{margin:0}
+.accqr{margin:12px 0;width:168px;max-width:100%;background:#fff;border-radius:12px;padding:8px}.accqr svg{display:block;width:100%;height:auto}
+.accbar{height:10px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin:6px 0 12px}.accbar span{display:block;height:100%;background:linear-gradient(90deg,#e50914,#f97316)}
+.accbar .w0{width:0}.accbar .w5{width:5%}.accbar .w10{width:10%}.accbar .w15{width:15%}.accbar .w20{width:20%}.accbar .w25{width:25%}.accbar .w30{width:30%}.accbar .w35{width:35%}.accbar .w40{width:40%}.accbar .w45{width:45%}.accbar .w50{width:50%}
+.accbar .w55{width:55%}.accbar .w60{width:60%}.accbar .w65{width:65%}.accbar .w70{width:70%}.accbar .w75{width:75%}.accbar .w80{width:80%}.accbar .w85{width:85%}.accbar .w90{width:90%}.accbar .w95{width:95%}.accbar .w100{width:100%}
+.accst{font-size:1.05rem;padding:10px 12px;border-radius:10px;margin:0 0 6px}.accst.ok{background:rgba(22,163,74,.15);border:1px solid rgba(22,163,74,.5)}.accst.bad{background:rgba(229,9,20,.12);border:1px solid rgba(229,9,20,.5)}
+.accb{padding-left:18px;margin:6px 0}.accb li{margin:3px 0}.accout{margin-top:10px}.acc details{margin:8px 0}.acc summary{cursor:pointer;font-weight:600}
+.acc .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.inl{display:inline}.tblw{overflow-x:auto;-webkit-overflow-scrolling:touch}.tbl{width:100%;border-collapse:collapse;font-size:.9rem}.tbl th,.tbl td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left;vertical-align:top}
+.adm .tbl input{padding:6px;font-size:.85rem}.mono{font-family:ui-monospace,monospace;font-size:.85rem;word-break:break-all}
+.accbon{margin:4px 0 0;font-weight:700;color:#22c55e}
+@media (max-width:480px){.acc .card{padding:14px}.accl button{flex:1 1 100%}}
+.accwhy{list-style:none;padding:0;margin:6px 0 10px}.accwhy li{padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06);line-height:1.45}.accwhy li:last-child{border-bottom:0}
+.acctier{font-size:.85rem;min-width:420px}.acctier td,.acctier th{text-align:center}.acctier th:first-child{text-align:left;white-space:nowrap}.accdisc{color:#22c55e;font-weight:700}
+.accpromo{margin-top:18px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:18px;text-align:left}.accpromo h2{font-size:1.2rem;margin:0 0 6px}
+.accpromo .b{display:inline-block;text-align:center;padding:12px 20px;margin:8px 8px 0 0;border-radius:12px;background:linear-gradient(135deg,#e50914,#b20710);border:0;color:#fff;font-size:1rem;box-shadow:0 3px 12px #e5091440}.accpromo .b::after{content:none}
+.accpromo .tblw,.acc .tblw{margin:8px 0}.accpromo summary{cursor:pointer;font-weight:600;margin:6px 0}.accok{color:#22c55e;font-weight:600}

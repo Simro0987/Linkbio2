@@ -42,6 +42,7 @@ const MIN_EUR = () => num(process.env.CHANGELLY_MIN_EUR, 10); // below ~10 € t
 const MIN_EUR_REVOLUT = () => num(process.env.CHANGELLY_MIN_EUR_REVOLUT, 20); // MoonPay (Revolut) minimum is 20 €
 const MIN_EUR_RAMP = () => num(process.env.REVOLUT_RAMP_MIN_EUR, 6); // Ramp limits minAmount = 600 (EUR cents)
 const PAID_RATIO = () => Math.min(1, num(process.env.CHANGELLY_PAID_RATIO, 0.85));
+const xpub = require('./xpub');
 const asset = (coin) => cryptoDirect.ASSETS.find((a) => a.id === coin);
 
 function pickCoin(gw) {
@@ -89,7 +90,9 @@ async function createOrder({ orderId, amountEur, countryCode, providerAlias, ema
   if (!(amountEur >= min)) { const e = new Error(`Minimálna suma pre túto metódu je ${min} EUR.`); e.status = 400; throw e; }
   const coin = pickCoin(gw);
   if (!coin) { const e = new Error('Táto metóda momentálne nie je dostupná.'); e.status = 400; throw e; }
-  const w = nextAddress(coin, loadOrders(), gw);
+  let w = nextAddress(coin, loadOrders(), gw);
+  const hd = xpub.has(coin) ? await xpub.nextAddress(coin, orderId) : null; // derived fresh address when an xpub is set
+  if (hd) w = { address: hd.address, id: `xpub:${coin}:${hd.index}` };
   const a = asset(coin);
   const px = await cryptoDirect.prices();
   const p = px && px[a.cg];
