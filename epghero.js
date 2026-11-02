@@ -64,7 +64,7 @@ function diversify(list, n, opt = {}) {
 }
 const catOf = (t, kind) => { if (/^(film|series|doc)$/.test(kind || '')) return KINDCAT[kind]; for (const [k, re] of CATS) if (re.test(t)) return k; return KINDCAT[kind] || 'stadium'; };
 const gmodels = () => [...new Set((process.env.EVH_GEMINI_MODELS || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.8-flash').split(',').map((x) => x.trim()).filter((x) => /^[\w.-]{3,60}$/.test(x)))].slice(0, 4);
-const RV = 4, ALG = 2; // ALG: bump to recompute the cached week after ranking changes
+const RV = 4, ALG = 3; // ALG: bump to recompute the cached week after ranking changes
 const BIG = require('./evbig');
 const RK = require('./evrank'); // ranking algorithm: priority, merge, variety, Slovak date labels (documented there)
 const FX_TTL = 12 * 3600e3, FX_MAX = 16; // official fixture lookups (TheSportsDB): cache per pairing, max new lookups per refresh
@@ -222,7 +222,7 @@ module.exports = function hero(ctx, h, E) {
   // cached per pairing in epg_kv (12 h), max FX_MAX new lookups per refresh, ~2 s apart (free-tier rate limit)
   async function fixtures(list, now) {
     let c = {}; try { c = JSON.parse((await kv.get('evh_fx')) || '{}') || {}; } catch {}
-    const out = new Map(); let n = 0;
+    const out = new Map(); let n = 0; out.err = 0;
     for (const x of list) {
       const pk = RK.pairKey(x.teams); let hit = c[pk];
       if (!hit || now - hit.t > FX_TTL) {
@@ -235,7 +235,7 @@ module.exports = function hero(ctx, h, E) {
           try { const r = await get(url, 'application/json', 1e6); const j = JSON.parse(r.buf.toString('utf8')); for (const e of (j && j.event) || []) evs.push(RK.tsdbEvent(e)); } catch (e) { fail = true; if (/429/.test(e.message)) n = FX_MAX; break; } // rate limit → stop, retry next refresh
           if (evs.length) break;
         }
-        if (fail && !evs.length) { if (hit) out.set(x.k, RK.classify(x.s, x.teams, hit.ev)); continue; } // keep the old cache entry, never cache an error
+        if (fail && !evs.length) { out.err++; if (hit) out.set(x.k, RK.classify(x.s, x.teams, hit.ev)); continue; } // keep the old cache entry, never cache an error
         hit = c[pk] = { t: now, ev: evs.slice(0, 6) };
       }
       out.set(x.k, RK.classify(x.s, x.teams, hit.ev));
@@ -387,7 +387,7 @@ module.exports = function hero(ctx, h, E) {
     const slim = (x) => ({ k: x.k, tk: x.tk, title: x.title, sub: C.clip(x.sub, 90), s: x.s, e: x.e, kind: x.kind, ch: { id: x.ch.id, name: x.ch.name, category: x.ch.category }, chName: x.chName, pred: x.pred ? 1 : 0, score: x.score, kw: x.kw, why: x.why, src: x.src || 'epg', img: x.img || '', imgM: x.imgM || '', img0: x.img0 || '', imgSrc: x.imgSrc || '', credit: x.credit || '', imgPage: x.imgPage || '', imgLog: x.imgLog || [], fbOff: x.fbOff || 0, genre: x.genre || '', desc: x.desc || '', descSrc: x.descSrc || '', cat: x.cat || catOf(x.title, x.kind), place: x.place || '', reason: x.reason || '', startOnly: !!x.startOnly, live: x.live, teams: x.teams || null, comp: x.comp || '', ko: x.ko || 0, hbI: x.hbI || '', abI: x.abI || '', alt: x.alt || [], official: x.official || '', prio: x.prio == null ? x.score : x.prio });
     const chInfo = { ok: chs.ok.length, epg: chs.ok.filter((r) => r.has).length, noEpg: chs.ok.filter((r) => !r.has && !r.shifted).map((r) => ({ id: r.id, name: r.name, category: r.category, mapped: !!r.epg })),
       okNames: chs.ok.filter((r) => r.has && !r.shifted).map((r) => r.name), excl: chs.no.length, exclFeeds: chs.no.filter((r) => /feed|EPG|zozname|admin/.test(r.why) && !/vod|rádi|radi/i.test(r.category)).map((r) => r.name + ' – ' + r.why).slice(0, 200) };
-    wk = { t: now, rv: RV, alg: ALG, n: N, chans: chInfo, rank, picks: picks.map(slim), top: top.map((x) => Object.assign(slim(x), { imgLog: [] })), okt, ground: Object.assign({}, R.groundStatus(), { at: now }) };
+    wk = { t: now, rv: RV, alg: ALG, n: N, fxErr: fx.err || 0, chans: chInfo, rank, picks: picks.map(slim), top: top.map((x) => Object.assign(slim(x), { imgLog: [] })), okt, ground: Object.assign({}, R.groundStatus(), { at: now }) };
     await kv.set('evh_week', JSON.stringify(wk)).catch(() => {});
     side = null;
     return wk;
@@ -404,7 +404,7 @@ module.exports = function hero(ctx, h, E) {
     if (!wk) { await Promise.race([refresh(), new Promise((r) => setTimeout(r, 9e3).unref())]); return wk; }
     const live = wk.picks.filter((x) => x.e > now).length;
     let N = MAX_DEF; try { N = maxOf(hcfg(await getSettings())); } catch {}
-    if (wk.dirty || wk.rv !== RV || wk.alg !== ALG || now - wk.t > REFRESH || (live < N && now - wk.t > 20 * 60e3) || (wk.n || 3) !== N) refresh();
+    if (wk.dirty || wk.rv !== RV || wk.alg !== ALG || now - wk.t > REFRESH || (live < N && now - wk.t > 20 * 60e3) || (wk.fxErr && now - wk.t > 30 * 60e3) || (wk.n || 3) !== N) refresh();
     return wk;
   }
   // pins + admin image overrides change rarely – 60 s cache
