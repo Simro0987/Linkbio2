@@ -386,12 +386,13 @@ module.exports = function hero(ctx, h, E) {
       } else {
         tpl = RK.cleanEpg(x.descr, x.title);
         const sb = String(x.sub || '').replace(/\s+/g, ' ').trim();
-        if (!tpl && sb.length >= 8 && !/^(live|naživo|priamy prenos|přímý přenos)$/i.test(sb) && RK.fold(sb) !== RK.fold(x.title)) tpl = `${x.title}: ${sb.replace(/[.\s]+$/, '')}.`;
+        if (!tpl && sb.length >= 12 && !/^(live|naživo|priamy prenos|přímý přenos)$/i.test(sb) && !RK.fold(x.title).includes(RK.fold(sb))) tpl = `${x.title}: ${sb.replace(/[.\s]+$/, '')}.`;
         if (x.descr && x.descr.length > 25) f.push({ src: 'epg', lang: 'sk', text: C.clip(x.descr, 400) });
       }
       if (/okt/.test(x.src || '')) { const m = /^(oktagon\s*\d+)\s*:\s*(.+)$/i.exec(x.title); if (m) { f.push({ src: 'oktagon', lang: 'sk', text: `${m[1]} – hlavný zápas večera: ${m[2]}${x.place ? '; miesto: ' + x.place : ''} (oficiálny kalendár OKTAGON MMA)` }); tpl = tpl || `${m[2].replace(/\s+vs\.?\s+/i, ' proti ')} v hlavnom zápase večera${x.place ? ' – ' + x.place : ''}.`; } }
       const ord = S.DESC_ORDER[x.genre] || S.DESC_ORDER._, ix = (z) => { const n = ord.indexOf(String(z.src).split(' ')[0]); return n < 0 ? 99 : n; };
       if (!x.teams) f.push(...[...x.facts].sort((a, b) => ix(a) - ix(b)));
+      if (!tpl && !x.teams) for (const z of f) { const c = z.lang === 'sk' && RK.cleanEpg(z.text.replace(/^[^:]{0,80}:\s/, ''), x.title); if (c) { tpl = c; break; } }
       const it = { id: 'e' + (i + 1), tk: x.tk, title: dispTitle(x) + (x.comp ? ' (' + x.comp + ')' : ''), genre: x.genre || x.kind, facts: f.slice(0, 5), tpl, teams: x.teams };
       it.h = sha('d2|' + it.title + '|' + JSON.stringify(it.facts.map((z) => z.text))).slice(0, 16);
       return it;
