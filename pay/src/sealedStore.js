@@ -39,12 +39,16 @@ function open(label, enc) {
 function create(id, defaults, log = () => {}) {
   const file = path.join(__dirname, '..', 'data', id + '.json');
   let CFG = JSON.parse(JSON.stringify(defaults || {}));
+  let loadFailed = false;
   return {
     get: () => CFG,
+    /** true when the last load() could not read Postgres (DB configured but query failed). */
+    loadFailed: () => loadFailed,
     set: (c) => { CFG = { ...CFG, ...c }; },
     async load() {
+      loadFailed = false;
       try { const j = JSON.parse(fs.readFileSync(file, 'utf8')); if (j && typeof j === 'object') CFG = { ...CFG, ...j }; } catch { /* none */ }
-      try { const p = await table(); if (p) { const r = await p.query('SELECT data FROM pay_config WHERE id=$1', [id]); if (r.rows[0]) CFG = { ...CFG, ...r.rows[0].data }; } } catch (x) { log(id.toUpperCase() + '_CONFIG_DB_FAIL ' + x.message); }
+      try { const p = await table(); if (p) { const r = await p.query('SELECT data FROM pay_config WHERE id=$1', [id]); if (r.rows[0]) CFG = { ...CFG, ...r.rows[0].data }; } } catch (x) { loadFailed = true; log(id.toUpperCase() + '_CONFIG_DB_FAIL ' + x.message); }
       return CFG;
     },
     async save(next) {

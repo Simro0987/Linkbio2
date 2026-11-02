@@ -208,7 +208,7 @@ ${rankCard(req, rs)}${blinkCard(bl, false)}${extrasCard(gc, ox, c2, pg)}<div cla
   function extrasCard(gc, ox, c2, pg) {
     const li = (href, title, st, note) => `<li class="pmr"><span class="pmn"><b>${title}</b> ${st}<small>${note}</small></span><span class="pma"><a class="btnl sm g2" href="${href}">⚙️ Nastaviť</a></span></li>`;
     return `<div class="card pmw" id="pm-extras"><h2>➕ Ďalšie platobné možnosti</h2><ul class="pml0">
-${li(GC, '🎁 Darčekové karty', gc ? tagOn(true, gc.cards.filter((c) => c.enabled).length + '/' + gc.cards.length + ' zapnutých') : tagOn(false, '', 'nedostupné'), 'Amazon, Google Play, Apple, Steam, Xbox, PlayStation, … – pridať, odobrať, poradie.')}
+${li(GC, '🎁 Darčekové karty', gc ? tagOn(true, gc.cards.filter((c) => c.enabled).length + '/' + gc.cards.length + ' zapnutých') : tagOn(false, '', 'nedostupné'), 'Azteco, Azteco Onchain, Azteco Lightning, Amazon DE – pridať, odobrať, poradie.')}
 ${li(OX, '🪙 OxaPay (krypto faktúra)', ox ? (ox.configured ? tagOn(true, 'aktívne') : tagOn(false, '', ox.keySet ? 'vypnuté' : 'nenastavené')) : tagOn(false, '', 'nedostupné'), 'Merchant API kľúč, zapnutie, meny, test spojenia.')}
 ${li(WG.card2crypto, '💳 Karta / Apple Pay / Google Pay – Card2Crypto', c2 ? (c2.configured ? tagOn(true, 'aktívne') : tagOn(false, '', c2.addressSet ? 'vypnuté' : 'nenastavené')) : tagOn(false, '', 'nedostupné'), 'Výplata v USDC (Polygon) na vašu adresu.')}
 ${li(WG.paygate, '💳 Karta / Apple Pay / Google Pay – PayGate.to', pg ? (pg.configured ? tagOn(true, 'aktívne') : tagOn(false, '', pg.addressSet ? 'vypnuté' : 'nenastavené')) : tagOn(false, '', 'nedostupné'), 'Rovnaký systém priamo od PayGate.to (bez prirážky sprostredkovateľa).')}
@@ -230,8 +230,8 @@ ${li(WG.paygate, '💳 Karta / Apple Pay / Google Pay – PayGate.to', pg ? (pg.
     const lib = (v.logos || []).map((l) => `<label class="pmlib"><input type="radio" name="logo" value="${esc(l)}"${l === cur ? ' checked' : ''}>${logoTag(l)}<span>${esc(l.replace(/^\/logos\//, '').replace(/\.(svg|png|webp|jpg)$/, ''))}</span></label>`).join('');
     const form = `<form method="post" action="${GC}/ulozit" class="card pmw" id="gcform" autocomplete="off">${tok}${e ? `<input type="hidden" name="id" value="${esc(e.id)}">` : ''}
 <h2>${e ? '✏️ Upraviť kartu „' + esc(e.name) + '“' : '➕ Pridať darčekovú kartu'}</h2>
-<label for="gcn">Názov</label><input id="gcn" name="name" maxlength="60" required value="${esc(e ? e.name : '')}" placeholder="napr. Steam">
-<label for="gcu">Odkaz na kúpu (https://)</label><input id="gcu" name="url" type="url" maxlength="500" required value="${esc(e ? e.url : '')}" placeholder="https://dundle.com/sk/steam/">
+<label for="gcn">Názov</label><input id="gcn" name="name" maxlength="60" required value="${esc(e ? e.name : '')}" placeholder="napr. Azteco">
+<label for="gcu">Odkaz na kúpu (https://)</label><input id="gcu" name="url" type="url" maxlength="500" required value="${esc(e ? e.url : '')}" placeholder="https://azte.co/buy">
 <label for="gct">Poznámka pre zákazníka (nepovinné)</label><input id="gct" name="note" maxlength="200" value="${esc(e ? e.note || '' : '')}">
 <fieldset class="pmfs"><legend>Logo</legend><div class="pmlibs">${lib}</div><p class="hint">Vlastné logo nahrajte cez „Upraviť“ pri vlastnom spôsobe platby, alebo použite knižnicu.</p></fieldset>
 <label class="ck"><input type="checkbox" name="enabled" value="1"${!e || e.enabled ? ' checked' : ''}> Zapnutá (zobraziť zákazníkom)</label>

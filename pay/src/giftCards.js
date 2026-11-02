@@ -4,6 +4,7 @@
  * Shown in the „Poukážky / darčekové karty“ group as gc_* methods; the customer opens /giftcard/<id>
  * (buy link + guide + secure code form → Telegram to Ryan), same flow as PaysafeCard / G2A.
  * Existing PaysafeCard and G2A entries stay as they were (built-ins).
+ * Default list = Azteco, Azteco Onchain, Azteco Lightning, Amazon DE (MIGRATION_FLAG rewrites an older saved list once).
  * Seed buy links were checked to load (HTTP 200) on 2026-11-02; logos are real brand marks in /logos (see SOURCES.md).
  */
 const fs = require('fs');
@@ -13,20 +14,12 @@ const store = require('./sealedStore');
 const ID_RE = /^gc_[a-z0-9_]{2,40}$/;
 const MAX = 60;
 const LOGO_DIR = path.join(__dirname, '..', 'public', 'logos');
+// Ryan 2026-11-02: only these four, in this order (everything else removed).
 const SEED = [
-  ['gc_amazon', 'Amazon', '/logos/amazon.svg', 'https://dundle.com/sk/amazon/'],
-  ['gc_googleplay', 'Google Play', '/logos/googleplay.svg', 'https://dundle.com/sk/google-play/'],
-  ['gc_apple', 'Apple Gift Card (iTunes)', '/logos/apple.svg', 'https://dundle.com/sk/itunes/'],
-  ['gc_steam', 'Steam', '/logos/steam.svg', 'https://dundle.com/sk/steam/'],
-  ['gc_xbox', 'Xbox', '/logos/xbox.svg', 'https://dundle.com/sk/xbox/'],
-  ['gc_playstation', 'PlayStation (PSN)', '/logos/playstation.svg', 'https://dundle.com/sk/playstation/'],
-  ['gc_netflix', 'Netflix', '/logos/netflix.svg', 'https://dundle.com/sk/netflix/'],
-  ['gc_spotify', 'Spotify', '/logos/spotify.svg', 'https://dundle.com/sk/spotify/'],
-  ['gc_binance', 'Binance Gift Card', '/logos/binance.svg', 'https://www.binance.com/sk/gift-card'],
-  ['gc_bitrefill', 'Bitrefill', '/logos/bitrefill.svg', 'https://www.bitrefill.com/sk/en/'],
-  ['gc_neosurf', 'Neosurf', '/logos/neosurf.png', 'https://dundle.com/sk/neosurf/'],
-  ['gc_cashtocode', 'CashToCode', '/logos/cashtocode.png', 'https://dundle.com/sk/cashtocode/'],
-  ['gc_razergold', 'Razer Gold', '/logos/razer.svg', 'https://dundle.com/sk/razer-gold/'],
+  ['gc_azteco', 'Azteco', '/logos/azteco.png', 'https://azte.co/buy'],
+  ['gc_azteco_onchain', 'Azteco Onchain', '/logos/azteco.png', 'https://dundle.com/sk/azteco/'],
+  ['gc_azteco_lightning', 'Azteco Lightning', '/logos/azteco.png', 'https://dundle.com/sk/azteco/'],
+  ['gc_amazon_de', 'Amazon DE', '/logos/amazon.svg', 'https://dundle.com/sk/amazon/'],
 ].map(([id, name, logo, url]) => ({ id, name, logo, url, enabled: true, note: '' }));
 
 let log = () => {};
@@ -108,6 +101,27 @@ function mount(app, deps = {}) {
   };
   require('./payMethods').serveSigned(app, '/api/admin-bridge/giftcards', ACTIONS, 'GIFTCARDS');
 }
-async function init(appendLog) { if (appendLog) log = appendLog; await cfg.load(); }
+/**
+ * One-time, idempotent migration (flag MIGRATION_FLAG in the stored config): the saved list becomes exactly the 4 SEED cards
+ * in SEED order. An existing saved entry of one of those 4 (same id or same name) keeps its config (link, logo, note, enabled).
+ * Later admin edits are never touched again (flag is set).
+ */
+const MIGRATION_FLAG = 'mig_azteco_amazon4';
+const norm = (v) => String(v || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '');
+function migrateCards(saved) {
+  const old = Array.isArray(saved) ? saved : [];
+  return SEED.map((d) => {
+    const hit = old.find((c) => c && c.id === d.id) || old.find((c) => c && norm(c.name) === norm(d.name));
+    return hit ? { ...d, ...hit, id: d.id } : { ...d };
+  });
+}
+async function migrate() {
+  const c = cfg.get(); if (c[MIGRATION_FLAG]) return false;
+  if (cfg.loadFailed()) { log('GIFTCARDS_MIGRATE_SKIP db-load-failed'); return false; } // never overwrite later edits we could not read
+  const before = Array.isArray(c.cards) ? c.cards.length : 'seed';
+  await cfg.save({ cards: migrateCards(c.cards), [MIGRATION_FLAG]: new Date().toISOString() });
+  log(`GIFTCARDS_MIGRATED ${MIGRATION_FLAG} ${before} -> ${SEED.length}`); return true;
+}
+async function init(appendLog) { if (appendLog) log = appendLog; await cfg.load(); try { await migrate(); } catch (e) { log('GIFTCARDS_MIGRATE_FAIL ' + (e && e.message)); } }
 
-module.exports = { SEED, list, enabled, get, items, inject, mount, init, logoLibrary, _validUrl: validUrl, _validLogo: validLogo, _set: (c) => cfg.set(c) };
+module.exports = { SEED, list, enabled, get, items, inject, mount, init, logoLibrary, _validUrl: validUrl, _validLogo: validLogo, _set: (c) => cfg.set(c), _migrate: migrate, _migrateCards: migrateCards, MIGRATION_FLAG };

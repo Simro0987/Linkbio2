@@ -54,9 +54,23 @@ function req(port, method, p, body, headers = {}) {
     assert.ok(Array.isArray(out) && !out.includes('bogus'));
   });
   await t('giftCards validation + seed', () => {
-    assert.ok(giftCards.SEED.length >= 13);
+    assert.deepStrictEqual(giftCards.SEED.map((c) => c.name), ['Azteco', 'Azteco Onchain', 'Azteco Lightning', 'Amazon DE']);
+    assert.ok(!/tokigo/i.test(JSON.stringify(giftCards.SEED)) && !/poplat|fee/i.test(JSON.stringify(giftCards.items())));
     for (const c of giftCards.SEED) { assert.ok(giftCards._validUrl(c.url), c.url); assert.ok(giftCards._validLogo(c.logo), c.logo); assert.ok(fs.existsSync(path.join(__dirname, '..', 'pay', 'public', c.logo))); }
     assert.ok(!giftCards._validUrl('http://x.sk')); assert.ok(!giftCards._validUrl('javascript:alert(1)')); assert.ok(!giftCards._validLogo('https://evil/x.svg'));
+  });
+  await t('giftCards one-time migration → only the 4, keeps their config, idempotent', async () => {
+    try { fs.unlinkSync(path.join(DATA, 'gift-cards.json')); } catch { /* */ }
+    giftCards._set({ cards: [{ id: 'gc_steam', name: 'Steam', url: 'https://x.test/', logo: '/logos/steam.svg', enabled: true },
+      { id: 'gc_amazon_de', name: 'Amazon DE', url: 'https://my.test/amz', logo: '/logos/amazon.svg', enabled: false, note: 'n' },
+      { id: 'gc_x', name: 'Azteco Lightning', url: 'https://my.test/ln', logo: '/logos/lightning.svg', enabled: true }], [giftCards.MIGRATION_FLAG]: undefined });
+    assert.strictEqual(await giftCards._migrate(), true);
+    const l = giftCards.list();
+    assert.deepStrictEqual(l.map((c) => c.id), ['gc_azteco', 'gc_azteco_onchain', 'gc_azteco_lightning', 'gc_amazon_de']);
+    assert.strictEqual(l[3].url, 'https://my.test/amz'); assert.strictEqual(l[3].enabled, false); assert.strictEqual(l[2].logo, '/logos/lightning.svg');
+    giftCards._set({ cards: l.slice(0, 2) }); // later admin edit is never overwritten
+    assert.strictEqual(await giftCards._migrate(), false); assert.strictEqual(giftCards.list().length, 2);
+    try { fs.unlinkSync(path.join(DATA, 'gift-cards.json')); } catch { /* */ }
   });
   await t('oxapay HMAC verify', () => {
     const raw = Buffer.from('{"a":1}'); const h = crypto.createHmac('sha512', 'K').update(raw).digest('hex');
