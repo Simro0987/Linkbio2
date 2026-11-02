@@ -14,9 +14,9 @@ const EXTERNAL = require('./epgext');
 
 const TZ = 'Europe/Bratislava';
 const FEED_URL = (f) => `https://epgshare01.online/epgshare01/epg_ripper_${f}.xml.gz`;
-const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1', 'RO1', 'RS1', 'GR1', 'BG1', 'LV1', 'IE1', 'MUSICBOX1', 'DELUXEMUSIC1', 'SPORTKLUB1', ...Object.keys(ALT_URL)];
 // built-in free alternative XMLTV files (fill channels epgshare lacks or has stale): iptv-epg.org per-country files, epg.pw Russia
 const ALT_URL = { IEPGRU1: 'https://iptv-epg.org/files/epg-ru.xml.gz', IEPGUA1: 'https://iptv-epg.org/files/epg-ua.xml.gz', IEPGCZ1: 'https://iptv-epg.org/files/epg-cz.xml.gz', IEPGPL1: 'https://iptv-epg.org/files/epg-pl.xml.gz', IEPGDE1: 'https://iptv-epg.org/files/epg-de.xml.gz', IEPGHU1: 'https://iptv-epg.org/files/epg-hu.xml.gz', IEPGGB1: 'https://iptv-epg.org/files/epg-gb.xml.gz', PWRU1: 'https://epg.pw/xmltv/epg_RU.xml.gz' };
+const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1', 'RO1', 'RS1', 'GR1', 'BG1', 'LV1', 'IE1', 'MUSICBOX1', 'DELUXEMUSIC1', 'SPORTKLUB1', ...Object.keys(ALT_URL)];
 const isAltFeed = (f) => Object.prototype.hasOwnProperty.call(ALT_URL, f);
 const FEEDS_V3 = ['MUSICBOX1', 'DELUXEMUSIC1', 'SPORTKLUB1', 'IEPGRU1', 'IEPGUA1', 'IEPGCZ1', 'IEPGPL1', 'IEPGDE1', 'PWRU1']; // added 2026-11: music/KHL/Russian/Ukrainian channels with stale or no epgshare data
 const FEEDS_V2 = ['BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1']; // added 2026-10: Deluxe/ANIXE+/Red Bull, MDR, Arena Sport 3, My Hits, Россия 24, TSN, Fox Sports; RAKUTEN1: Red Bull TV

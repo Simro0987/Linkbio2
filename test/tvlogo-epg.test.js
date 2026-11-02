@@ -29,4 +29,5 @@ t('pickCovered: priority unless the guide is (almost) empty', () => {
   assert.strictEqual(C.pickCovered([{ id: 'k', n: 2 }, { id: 'a', n: 40 }]).id, 'a');
   assert.strictEqual(C.pickCovered([{ id: 'k', n: 0 }, { id: 'a', n: 3 }]).id, 'a');
 });
+t('modules load (no TDZ/init errors)', () => { for (const m of ['../epg', '../tvch', '../features', '../wdlogo', '../logoproxy']) assert.strictEqual(typeof require(m), m === '../wdlogo' || m === '../logoproxy' ? 'object' : 'function', m); });
 console.log(`${n} tvlogo-epg tests, ${bad} failed`); if (bad) process.exit(1);
