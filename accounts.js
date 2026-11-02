@@ -153,7 +153,8 @@ function install(ctx) {
   async function bonusInfo(user) {
     const st = await affSettings(); if (!st.on || !user) return null;
     const { active, total } = await refCounts(user.id);
-    return { st, active, total, tier: AFF.tierFor(active, st.tiers), next: AFF.nextTier(active, st.tiers), device: AFF.deviceAllowed(active, st.tiers), bonus: (m) => AFF.bonusFor(active, +m, st.tiers) };
+    return { st, active, total, tier: AFF.tierFor(active, st.tiers), next: AFF.nextTier(active, st.tiers), device: AFF.deviceAllowed(active, st.tiers), bonus: (m) => AFF.bonusFor(active, +m, st.tiers),
+      devFor: (m) => AFF.deviceFor(active, +m, st.tiers), reward: (m) => AFF.rewardFor(active, +m, st.tiers, user.aff_choice) };
   }
 
   // paid-order processing
@@ -298,14 +299,17 @@ function install(ctx) {
   }
   // „Prečo sa zaregistrovať?“ – tier table generated from the admin-editable affiliate settings + current price list
   const eur = (n) => (Math.round(n * 100) / 100).toFixed(2).replace('.', ',') + ' €';
+  async function priceByMonths() { const byM = new Map(); for (const p of await plansList()) { const m = +p.period || 1, pr = +p.price; if (!/zariaden|device/i.test(p.name + ' ' + (p.name_en || '')) && (!byM.has(m) || pr < byM.get(m))) byM.set(m, pr); } return byM; }
   async function whyHtml(req, full) {
     const en = req.lang === 'en', st = await affSettings();
-    const byM = new Map(); for (const p of await plansList()) { const m = +p.period || 1, pr = +p.price; if (!/zariaden|device/i.test(p.name + ' ' + (p.name_en || '')) && (!byM.has(m) || pr < byM.get(m))) byM.set(m, pr); }
+    const byM = await priceByMonths();
     const mx = st.on ? AFF.matrix(st.tiers, [...byM.keys()]) : null;
-    const pk = mx ? mx.packages.filter((m) => byM.has(m) && mx.rows.some((r) => r.bonus[m])) : [];
-    const cell = (m, b) => { const pr = byM.get(m); if (!b) return '–'; const eff = pr / (m + b), disc = Math.round((b / (m + b)) * 100); return `<b>${m} + ${b} m</b><br>${eur(eff)} / ${tx(en, 'mes.', 'mo')}<br><span class="accdisc">−${disc} %</span>`; };
-    const table = pk.length ? `<div class="tblw"><table class="tbl acctier"><thead><tr><th>${tx(en, 'Aktívni odporučení', 'Active referrals')}</th>${pk.map((m) => `<th>${esc(moLabel(m, en))}<br><span class="hint">${eur(byM.get(m))} · ${eur(byM.get(m) / m)}/${tx(en, 'mes.', 'mo')}</span></th>`).join('')}</tr></thead><tbody>${mx.rows.map((r) => `<tr><th>≥ ${r.min}${r.device ? ' *' : ''}</th>${pk.map((m) => `<td>${cell(m, r.bonus[m])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-<p class="hint">${tx(en, 'Bonusové mesiace dostanete k balíku, ktorý si sami zaplatíte – cena sa nemení. Platí najvyššia dosiahnutá úroveň podľa počtu aktívnych odporučených v čase nákupu. Cena za mesiac = cena balíka / (mesiace + bonus).', 'Bonus months are added to the package you pay for – same price. The highest tier reached (active referrals at purchase time) applies. Price per month = package price / (months + bonus).')}${mx.rows.some((r) => r.device) ? ' ' + tx(en, '* Na tejto úrovni si môžete namiesto mesiacov vybrať druhé zariadenie – nepotrebujete 2 zariadenia? Druhé jednoducho dajte niekomu a máte pre seba zadarmo.', '* At this tier you can choose a second device instead – don\'t need two? Give the second one to someone and yours is free.') : ''}</p>` : '';
+    const pk = mx ? mx.packages.filter((m) => byM.has(m) && mx.rows.some((r) => r.bonus[m] || r.dev[m])) : [];
+    const devTxt = tx(en, '2. zariadenie zadarmo', '2nd device free');
+    const cell = (m, b, d) => { const pr = byM.get(m); if (!b) return d ? `<b>🖥️ ${devTxt}</b>` : '–'; const eff = pr / (m + b), disc = Math.round((b / (m + b)) * 100); return `<b>${m} + ${b} m</b><br>${eur(eff)} / ${tx(en, 'mes.', 'mo')}<br><span class="accdisc">−${disc} %</span>${d ? `<br><span class="hint">${tx(en, 'alebo', 'or')} 🖥️ ${devTxt} *</span>` : ''}`; };
+    const rows = mx ? mx.rows.filter((r) => pk.some((m) => r.bonus[m] || r.dev[m])) : [];
+    const table = pk.length ? `<div class="tblw"><table class="tbl acctier"><thead><tr><th>${tx(en, 'Aktívni odporučení', 'Active referrals')}</th>${pk.map((m) => `<th>${esc(moLabel(m, en))}<br><span class="hint">${eur(byM.get(m))} · ${eur(byM.get(m) / m)}/${tx(en, 'mes.', 'mo')}</span></th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr><th>${r.min > 0 ? '≥ ' + r.min : tx(en, 'každý', 'everyone')}</th>${pk.map((m) => `<td>${cell(m, r.bonus[m], r.dev[m])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+<p class="hint">${tx(en, 'Bonusové mesiace dostanete k balíku, ktorý si sami zaplatíte – cena sa nemení. Platí najvyššia dosiahnutá úroveň podľa počtu aktívnych odporučených v čase nákupu. Cena za mesiac = cena balíka / (mesiace + bonus).', 'Bonus months are added to the package you pay for – same price. The highest tier reached (active referrals at purchase time) applies. Price per month = package price / (months + bonus).')}${rows.some((r) => pk.some((m) => r.dev[m] && r.bonus[m])) ? ' ' + tx(en, '* Na tejto úrovni si môžete namiesto mesiacov vybrať druhé zariadenie – nepotrebujete 2 zariadenia? Druhé jednoducho dajte niekomu a máte pre seba zadarmo.', '* At this tier you can choose a second device instead – don\'t need two? Give the second one to someone and yours is free.') : ''}</p>` : '';
     const li = [
       st.on ? tx(en, '🤝 <b>Vlastný affiliate odkaz a mesiace zadarmo</b> – odporučte nás známym a pri každom vašom nákupe dostanete mesiace navyše.', '🤝 <b>Your own affiliate link and free months</b> – refer friends and get extra months with every purchase.') : '',
       tx(en, '📅 <b>Prehľad, do kedy platí predplatné</b> – kedykoľvek na jednom mieste.', '📅 <b>See when your subscription ends</b> – anytime, in one place.'),
@@ -314,10 +318,15 @@ function install(ctx) {
       tx(en, '🧾 <b>História platieb</b> – všetky zaplatené objednávky prehľadne.', '🧾 <b>Payment history</b> – all your paid orders at a glance.'),
     ].filter(Boolean);
     const head = `<h2>✨ ${tx(en, 'Prečo sa zaregistrovať?', 'Why sign up?')}</h2><ul class="accwhy">${li.map((x) => `<li>${x}</li>`).join('')}</ul>`;
+    if (full === 'table') return table;
     if (full) return `<div class="card">${head}${table ? `<h3>🎁 ${tx(en, 'Koľko ušetríte s odporúčaniami', 'How much you save with referrals')}</h3>${table}` : ''}</div>`;
     return `<section class="card accpromo">${head}${table ? `<details><summary>🎁 ${tx(en, 'Tabuľka bonusov a cena za mesiac', 'Bonus table and price per month')}</summary>${table}</details>` : ''}<p><a class="b" href="/registracia">📝 ${tx(en, 'Zaregistrovať sa zadarmo', 'Sign up for free')}</a> <a class="btnl" href="/prihlasenie">🔑 ${tx(en, 'Prihlásiť sa', 'Log in')}</a></p></section>`;
   }
   ctx.accWhyForReq = async (req) => { if (!(await accOn()) || cookies(req)[C_SESS]) return ''; return whyHtml(req, false).catch(() => ''); };
+  // section manager (sections.js): full benefits/affiliate table card, sign-up promo box, login state
+  ctx.accWhyHtml = async (req, full) => ((await accOn()) ? whyHtml(req, full).catch(() => '') : '');
+  ctx.accLogged = (req) => !!cookies(req)[C_SESS];
+  ctx.accEnabled = accOn;
   const smtpWarn = () => (smtpOn() ? '' : `<div class="msg err">⚠️ E-mail odosielanie nie je nastavené – e-maily „Zabudnuté heslo“ a overenie e-mailu sa neodosielajú (zákazník vidí rovnakú neutrálnu správu, vám príde Telegram notifikácia). Nastavte ho zadarmo v <a href="/admin/email">📧 E-mail odosielanie</a> (Brevo – Render free blokuje SMTP), alebo zákazníkovi pošlite odkaz cez „🔐 Odkaz na reset hesla“ v jeho detaile.</div>`);
   const safeNext = (v) => { const n = String(v || ''); return /^\/(platby|ucet)(\?[A-Za-z0-9=&_.%-]{0,200})?$/.test(n) ? n : ''; };
 
@@ -440,8 +449,8 @@ ${!u.panel_user ? `<form method="post" action="/ucet/panel-meno" class="accf">${
     if (bi) {
       const link = `${origin(req)}/?ref=${u.ref_code}`, mx = AFF.matrix(bi.st.tiers, await packages());
       const nx = bi.next, cur = bi.tier;
-      const shown = mx.packages.filter((m) => mx.rows.some((r) => r.bonus[m]));
-      const perPk = shown.map((m) => { const b = bi.bonus(m), nb = nx ? AFF.bonusFor(nx.min, m, bi.st.tiers) : 0; return `<li>${esc(moLabel(m, en))}: <b>${b ? `+${esc(moLabel(b, en))} ${tx(en, 'zadarmo', 'free')}` : '–'}</b>${nb > b ? ` <span class="hint">(${tx(en, 'od', 'from')} ${nx.min} ${tx(en, 'aktívnych', 'active')}: +${nb})</span>` : ''}</li>`; }).join('');
+      const shown = mx.packages.filter((m) => mx.rows.some((r) => r.bonus[m] || r.dev[m]));
+      const perPk = shown.map((m) => { const b = bi.bonus(m), d = bi.devFor(m), nb = nx ? AFF.bonusFor(nx.min, m, bi.st.tiers) : 0; return `<li>${esc(moLabel(m, en))}: <b>${b ? `+${esc(moLabel(b, en))} ${tx(en, 'zadarmo', 'free')}` : d ? '' : '–'}${d ? `${b ? ` ${tx(en, 'alebo', 'or')} ` : ''}🖥️ ${tx(en, '2. zariadenie zadarmo', '2nd device free')}` : ''}</b>${nb > b ? ` <span class="hint">(${tx(en, 'od', 'from')} ${nx.min} ${tx(en, 'aktívnych', 'active')}: +${nb})</span>` : ''}</li>`; }).join('');
       const earned = (await pool.query(`SELECT COALESCE(sum(bonus_months) FILTER (WHERE kind='bonus'),0)::int m, count(*) FILTER (WHERE kind='device')::int d FROM acc_ledger WHERE user_id=$1`, [u.id])).rows[0];
       const devs = (await pool.query(`SELECT from_at,until_at,panel_user FROM acc_devices WHERE user_id=$1 ORDER BY id DESC LIMIT 10`, [u.id])).rows;
       const pct = nx ? Math.min(100, Math.round((bi.active / nx.min) * 100)) : 100;
@@ -453,7 +462,7 @@ ${!u.panel_user ? `<form method="post" action="/ucet/panel-meno" class="accf">${
 <div class="accbar"><span class="w${Math.round(pct / 5) * 5}"></span></div>
 <p>${tx(en, 'Bonus k vášmu ďalšiemu nákupu (cena ostáva rovnaká)', 'Bonus on your next purchase (same price)')}:</p><ul class="accb">${perPk}</ul>
 ${earned.m || earned.d ? `<p>${tx(en, 'Doteraz získané', 'Earned so far')}: <b>${esc(moLabel(earned.m, en))}</b>${earned.d ? ` + ${earned.d}× ${tx(en, 'druhé zariadenie', 'second device')}` : ''}</p>` : ''}
-${bi.device || u.aff_choice === 'device' ? `<form method="post" action="/ucet/volba" class="accf">${csrfField(req, res)}<p><b>${tx(en, 'Na najvyššej úrovni si môžete vybrať', 'At the top tier you can choose')}:</b></p>
+${bi.device || u.aff_choice === 'device' ? `<form method="post" action="/ucet/volba" class="accf">${csrfField(req, res)}<p><b>${tx(en, 'Na vašej úrovni si môžete vybrať (pri balíkoch, kde je to možné)', 'At your tier you can choose (for packages where available)')}:</b></p>
 <label class="chk"><input type="radio" name="choice" value="months"${u.aff_choice !== 'device' ? ' checked' : ''}> ${tx(en, 'Bonusové mesiace', 'Bonus months')}</label>
 <label class="chk"><input type="radio" name="choice" value="device"${u.aff_choice === 'device' ? ' checked' : ''}> ${tx(en, 'Druhé zariadenie (na rovnaké obdobie ako kúpený balík)', 'Second device (same period as the package)')}</label>
 <p class="hint">${tx(en, 'Nepotrebujete 2 zariadenia? Druhé jednoducho dajte niekomu a máte pre seba zadarmo', "Don't need 2 devices? Simply give the second one to someone and yours is free")}</p><button class="btnl sm">${tx(en, 'Uložiť voľbu', 'Save choice')}</button></form>` : ''}
@@ -635,9 +644,9 @@ ${selfCheck(c) ? `<form method="post" action="/overit-predplatne" class="card ac
     const bi = await bonusInfo(u), plans = await plansList(), en = req.lang === 'en';
     const dev = !!(bi && bi.device && u.aff_choice === 'device');
     res.json({ logged: true, username: u.username, active: bi ? bi.active : 0, device: dev,
-      plans: Object.fromEntries(plans.map((p) => { const b = bi ? bi.bonus(+p.period || 1) : 0; return [p.id, { months: +p.period || 1, bonus: b, label: b ? (dev ? tx(en, '+ druhé zariadenie zadarmo', '+ second device free') : `+${moLabel(b, en)} ${tx(en, 'zadarmo', 'free')}`) : '' }]; })) });
+      plans: Object.fromEntries(plans.map((p) => { const r = bi ? bi.reward(+p.period || 1) : { bonus: 0, device: false }; return [p.id, { months: +p.period || 1, bonus: r.bonus, device: r.device, label: r.device ? tx(en, '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, en)} ${tx(en, 'zadarmo', 'free')}` : '' }]; })) });
   }));
-  ctx.accBonusForReq = async (req) => { const u = await fromReq(req); if (!u) return null; const bi = await bonusInfo(u); if (!bi) return null; const dev = bi.device && u.aff_choice === 'device'; return (m) => { const b = bi.bonus(+m || 1); return b ? (dev ? tx(req.lang === 'en', '+ druhé zariadenie zadarmo', '+ second device free') : `+${moLabel(b, req.lang === 'en')} ${tx(req.lang === 'en', 'zadarmo', 'free')}`) : ''; }; };
+  ctx.accBonusForReq = async (req) => { const u = await fromReq(req); if (!u) return null; const bi = await bonusInfo(u); if (!bi) return null; return (m) => { const r = bi.reward(+m || 1); return r.device ? tx(req.lang === 'en', '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, req.lang === 'en')} ${tx(req.lang === 'en', 'zadarmo', 'free')}` : ''; }; };
   // public, non-secret facts for the AI customer assistant (sitekb.js) – no panel URL/credentials
   ctx.accKbInfo = async () => { const c = await panelCfg(); return { on: await accOn(), panel: !!selfCheck(c), panelLinked: panelReady(c), mail: smtpOn(), packages: await packages() }; };
   ctx.accNavItem = (req) => { const en = req.lang === 'en'; return cookies(req)[C_SESS] ? ['/ucet', '👤', tx(en, 'Môj účet', 'My account')] : ['/prihlasenie', '🔑', tx(en, 'Prihlásenie / Registrácia', 'Log in / Sign up')]; };
@@ -664,32 +673,56 @@ ${selfCheck(c) ? `<form method="post" action="/overit-predplatne" class="card ac
   }));
   admin.get('/zakaznici/ledger', needAuth, wrap(async (req, res) => {
     const r = await pool.query(`SELECT l.*, u.username FROM acc_ledger l LEFT JOIN acc_users u ON u.id=l.user_id ORDER BY l.id DESC LIMIT 500`);
-    res.send(apage('Bonusy – ledger', `<h1>📒 Bonusy (ledger)</h1><div class="tblw"><table class="tbl"><thead><tr><th>Kedy</th><th>Účet</th><th>Typ</th><th>Objednávka</th><th>Balík</th><th>Bonus</th><th>Aktívni odp.</th><th>Úroveň</th><th>Poznámka</th></tr></thead><tbody>${r.rows.map((l) => `<tr><td>${esc(fmtDT(l.created_at))}</td><td>${l.username ? `<a href="${AB}/${l.user_id}">${esc(l.username)}</a>` : '#' + l.user_id}</td><td>${esc(l.kind === 'bonus' ? 'bonus' : l.kind === 'device' ? '2. zariadenie' : 'ručne')}</td><td>${l.order_id ? `<code>${esc(l.order_id)}</code>` : '–'}</td><td>${l.package_months ? l.package_months + ' m' : '–'}</td><td>${l.bonus_months > 0 ? '+' : ''}${l.bonus_months} m</td><td>${l.active_count}</td><td>${l.tier_min ? '≥' + l.tier_min : '–'}</td><td>${esc(l.note)}</td></tr>`).join('') || '<tr><td colspan="9">Zatiaľ nič.</td></tr>'}</tbody></table></div>`));
+    res.send(apage('Bonusy – ledger', `<h1>📒 Bonusy (ledger)</h1><div class="tblw"><table class="tbl"><thead><tr><th>Kedy</th><th>Účet</th><th>Typ</th><th>Objednávka</th><th>Balík</th><th>Bonus</th><th>Aktívni odp.</th><th>Úroveň</th><th>Poznámka</th></tr></thead><tbody>${r.rows.map((l) => `<tr><td>${esc(fmtDT(l.created_at))}</td><td>${l.username ? `<a href="${AB}/${l.user_id}">${esc(l.username)}</a>` : '#' + l.user_id}</td><td>${esc(l.kind === 'bonus' ? 'bonus' : l.kind === 'device' ? '2. zariadenie' : 'ručne')}</td><td>${l.order_id ? `<code>${esc(l.order_id)}</code>` : '–'}</td><td>${l.package_months ? l.package_months + ' m' : '–'}</td><td>${l.bonus_months > 0 ? '+' : ''}${l.bonus_months} m</td><td>${l.active_count}</td><td>${l.kind === 'bonus' || l.kind === 'device' ? '≥' + l.tier_min : '–'}</td><td>${esc(l.note)}</td></tr>`).join('') || '<tr><td colspan="9">Zatiaľ nič.</td></tr>'}</tbody></table></div>`));
   }));
-  admin.get('/zakaznici/nastavenia', needAuth, wrap(async (req, res) => {
-    const s = await getSettings(), st = AFF.settings(s), pk = await packages();
-    const rows = [...st.tiers, { min: '', bonus: {}, device: false }];
-    const mx = AFF.matrix(st.tiers, pk);
-    res.send(apage('Affiliate nastavenia', `<h1>🤝 Affiliate – nastavenia</h1>${amsg(req)}<form method="post" action="${AB}/nastavenia" class="card">${hid(req)}
-<label class="chk"><input type="checkbox" name="acc_on" value="1"${s.acc_on !== '0' ? ' checked' : ''}> Registrácia zákazníkov zapnutá</label>
-<label class="chk"><input type="checkbox" name="aff_on" value="1"${st.on ? ' checked' : ''}> Affiliate bonusy zapnuté</label>
-<label class="chk"><input type="checkbox" name="aff_block_ip" value="1"${st.blockIp ? ' checked' : ''}> Blokovať odporúčanie z rovnakej IP ako odporúčateľ (rovnaké zariadenie sa blokuje vždy, rovnaká IP sa inak len označí)</label>
-<h2>Tabuľka úrovní</h2><p class="hint">Riadok = počet AKTÍVNYCH odporučených (≥) v čase, keď si odporúčateľ kupuje vlastný balík. Stĺpec = balík (mesiace). Hodnota = bonusové mesiace navyše (cena sa nemení). Prázdne = zdedí sa z nižšej úrovne, 0 = bez bonusu. Riadok bez počtu sa zmaže; posledný prázdny riadok slúži na pridanie novej úrovne. „2. zariadenie“ = zákazník si môže namiesto mesiacov zvoliť druhé zariadenie na rovnaké obdobie.</p>
-<input type="hidden" name="pk" value="${pk.join(',')}"><input type="hidden" name="rows" value="${rows.length}"><div class="tblw"><table class="tbl"><thead><tr><th>Aktívnych ≥</th>${pk.map((m) => `<th>${m} m</th>`).join('')}<th>2. zariadenie</th></tr></thead><tbody>
-${rows.map((t, i) => `<tr><td><input name="t${i}_min" value="${esc(t.min)}" inputmode="numeric" size="4" maxlength="5" aria-label="Počet aktívnych"></td>${pk.map((m) => `<td><input name="t${i}_m${m}" value="${Object.prototype.hasOwnProperty.call(t.bonus, m) ? t.bonus[m] : ''}" inputmode="numeric" size="3" maxlength="3" aria-label="Bonus ${m} m"></td>`).join('')}<td><input type="checkbox" name="t${i}_dev" value="1"${t.device ? ' checked' : ''} aria-label="2. zariadenie"></td></tr>`).join('')}
-</tbody></table></div><p class="row"><button>💾 Uložiť</button></p></form>
-<div class="card"><h2>Výsledné bonusy (po zdedení)</h2><div class="tblw"><table class="tbl"><thead><tr><th>Aktívnych ≥</th>${mx.packages.map((m) => `<th>${m} m</th>`).join('')}</tr></thead><tbody>${mx.rows.map((r) => `<tr><td>${r.min}${r.device ? ' (alebo 2. zariadenie)' : ''}</td>${mx.packages.map((m) => `<td>${r.bonus[m] ? '+' + r.bonus[m] : '–'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></div>`));
-  }));
+  // Affiliate tier editor: rows = threshold of ACTIVE referred people, columns = every package from Cenník (+ defaults),
+  // explicit values (0 = none, no inheritance), per tier+package "2nd device free"; live preview in /static/affadm.js (CSP-safe).
+  const AFF_V = (() => { try { return crypto.createHash('sha1').update(require('fs').readFileSync(require('path').join(__dirname, 'static', 'affadm.js'))).digest('hex').slice(0, 10); } catch { return '1'; } })();
+  const TERR = { min: 'Počet aktívnych musí byť celé číslo 0 – 100000.', dup: 'Každá úroveň musí mať iný počet aktívnych.', val: 'Bonus musí byť celé číslo 0 – 120 mesiacov.', max: 'Najviac 20 úrovní.' };
+  async function affEditor(req, res, form) {
+    const s = await getSettings(), st = AFF.settings(s), pk = await packages(), byM = await priceByMonths();
+    const rows = form ? form.rows : AFF.materialize(st.tiers, pk);
+    const flags = form ? form.flags : { acc_on: s.acc_on !== '0', aff_on: st.on, aff_block_ip: st.blockIp };
+    const prices = Object.fromEntries(pk.map((m) => [m, byM.has(m) ? Math.round(byM.get(m) * 100) / 100 : null]));
+    const plan = new Map((await plansList()).map((p) => [+p.period || 1, p.name])); const nm = (m) => plan.get(m) || '';
+    const rowHtml = (t, i) => `<tr class="afr"><td class="afmin"><label class="sr" for="t${i}_min">Aktívnych ≥</label><input id="t${i}_min" name="t${i}_min" value="${esc(t.min)}" type="number" min="0" max="100000" step="1" inputmode="numeric" placeholder="napr. 5" aria-label="Počet aktívnych odporučených (≥)"></td>${pk.map((m) => `<td><input name="t${i}_m${m}" value="${esc(t.bonus && t.bonus[m] != null ? t.bonus[m] : 0)}" type="number" min="0" max="120" step="1" inputmode="numeric" aria-label="Bonus mesiace zadarmo – ${m} m"><label class="afdev" title="Druhé zariadenie zadarmo"><input type="checkbox" name="t${i}_d${m}" value="1"${t.devPk && t.devPk[m] ? ' checked' : ''}> 🖥️ 2. zar.</label></td>`).join('')}<td><label class="ck afdel"><input type="checkbox" name="t${i}_del" value="1"> zmazať</label><button type="button" class="g sm afrm" aria-label="Odstrániť úroveň">🗑️</button></td></tr>`;
+    const body = [...rows, { min: '', bonus: {}, devPk: {} }].map(rowHtml).join('');
+    res.send(apage('Affiliate nastavenia', `<h1>🤝 Affiliate – nastavenia</h1>${amsg(req)}${form && form.err ? `<div class="msg err" role="alert">${esc(form.err)}</div>` : ''}<form method="post" action="${AB}/nastavenia" class="card" id="afform">${hid(req)}
+<label class="chk"><input type="checkbox" name="acc_on" value="1"${flags.acc_on ? ' checked' : ''}> Registrácia zákazníkov zapnutá</label>
+<label class="chk"><input type="checkbox" name="aff_on" value="1"${flags.aff_on ? ' checked' : ''}> Affiliate bonusy zapnuté</label>
+<label class="chk"><input type="checkbox" name="aff_block_ip" value="1"${flags.aff_block_ip ? ' checked' : ''}> Blokovať odporúčanie z rovnakej IP ako odporúčateľ (rovnaké zariadenie sa blokuje vždy, rovnaká IP sa inak len označí)</label>
+<h2>Tabuľka úrovní</h2><p class="hint">Riadok = úroveň podľa počtu <b>AKTÍVNYCH</b> odporučených (≥) v čase, keď si odporúčateľ sám kupuje balík (0 = platí pre každého prihláseného zákazníka). Stĺpec = balík z Cenníka (nové balíky sa pridajú automaticky). Číslo = <b>bonus mesiace zadarmo</b> navyše k balíku (0 = žiadny, cena sa nemení). <b>🖥️ 2. zar.</b> = druhé zariadenie zadarmo na rovnaké obdobie: ak je bonus 0, dostane ho automaticky; ak je aj bonus, zákazník si v účte vyberie mesiace alebo 2. zariadenie. Platí najvyššia dosiahnutá úroveň – čo vidíte v riadku, to dostane (nič sa nededí).</p>
+<input type="hidden" name="pk" value="${pk.join(',')}"><input type="hidden" name="rows" value="${rows.length + 1}" id="afrows">
+<div class="tblw"><table class="tbl afft" id="afft" data-prices="${esc(JSON.stringify(prices))}"><thead><tr><th>Aktívnych ≥</th>${pk.map((m) => `<th>${m} m${nm(m) ? `<br><span class="hint">${esc(nm(m))}</span>` : ''}${prices[m] == null ? '<br><span class="hint">nie je v Cenníku</span>' : ''}</th>`).join('')}<th></th></tr></thead><tbody>${body}</tbody></table></div>
+<p class="row"><button type="button" class="btnl sm" id="afadd">➕ Pridať úroveň</button></p>
+<p class="msg err" id="aferr" hidden role="alert"></p>
+<h2>Živý náhľad – čo uvidí zákazník v „Prečo sa zaregistrovať“</h2><div class="tblw" id="afprev"><p class="hint">Náhľad sa zobrazí po načítaní stránky (vyžaduje JavaScript). Po uložení ho nájdete aj verejne v Cenníku.</p></div>
+<p class="row"><button id="afsave">💾 Uložiť</button></p></form>
+<script src="/static/affadm.js?v=${AFF_V}" defer></script>`));
+  }
+  admin.get('/zakaznici/nastavenia', needAuth, wrap(async (req, res) => affEditor(req, res, null)));
   admin.post('/zakaznici/nastavenia', needAuth, adminCsrf, wrap(async (req, res) => {
-    const b = req.body, pk = String(b.pk || '').split(',').map(Number).filter((n) => n >= 1 && n <= 120).slice(0, 30), n = Math.min(25, parseInt(b.rows, 10) || 0), tiers = [];
+    const b = req.body, allPk = await packages();
+    const pk = [...new Set(String(b.pk || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 1 && n <= 120))].slice(0, 30);
+    for (const m of allPk) if (!pk.includes(m)) pk.push(m);
+    const n = Math.min(60, Math.max(0, parseInt(b.rows, 10) || 0)), rows = []; let err = '';
     for (let i = 0; i < n; i++) {
-      const min = String(b[`t${i}_min`] || '').trim(); if (!min) continue;
-      const bonus = {}; for (const m of pk) { const v = String(b[`t${i}_m${m}`] || '').trim(); if (v !== '') { if (!/^\d{1,3}$/.test(v)) return res.redirect(303, AB + '/nastavenia?m=tiers'); bonus[m] = v; } }
-      if (!/^\d{1,5}$/.test(min)) return res.redirect(303, AB + '/nastavenia?m=tiers');
-      tiers.push({ min, bonus, device: b[`t${i}_dev`] === '1' });
+      const min = String(b[`t${i}_min`] == null ? '' : b[`t${i}_min`]).trim(); if (min === '' || b[`t${i}_del`] === '1') continue;
+      const bonus = {}, devPk = {};
+      for (const m of pk) {
+        const v = String(b[`t${i}_m${m}`] == null ? '' : b[`t${i}_m${m}`]).trim() || '0';
+        if (!/^\d{1,3}$/.test(v) || +v > 120) { err = err || TERR.val; bonus[m] = v.slice(0, 6); } else bonus[m] = +v;
+        if (b[`t${i}_d${m}`] === '1') devPk[m] = true;
+      }
+      if (!/^\d{1,6}$/.test(min) || +min > 100000) err = err || TERR.min;
+      rows.push({ min: /^\d{1,6}$/.test(min) ? +min : min.slice(0, 8), bonus, devPk });
     }
-    const t = AFF.cleanTiers(tiers); if (!t) return res.redirect(303, AB + '/nastavenia?m=tiers');
-    await setSettings({ acc_on: b.acc_on === '1' ? '1' : '0', aff_on: b.aff_on === '1' ? '1' : '0', aff_block_ip: b.aff_block_ip === '1' ? '1' : '0', aff_tiers: JSON.stringify(t) });
+    const mins = rows.map((r) => String(r.min)); if (!err && new Set(mins).size !== mins.length) err = TERR.dup;
+    if (!err && rows.length > 20) err = TERR.max;
+    const t = err ? null : AFF.cleanTiers(rows);
+    const flags = { acc_on: b.acc_on === '1', aff_on: b.aff_on === '1', aff_block_ip: b.aff_block_ip === '1' };
+    if (!t) { res.status(400); return affEditor(req, res, { rows, flags, err: err || 'Neplatná tabuľka úrovní.' }); }
+    await setSettings({ acc_on: flags.acc_on ? '1' : '0', aff_on: flags.aff_on ? '1' : '0', aff_block_ip: flags.aff_block_ip ? '1' : '0', aff_tiers: JSON.stringify(t) });
     audit(req, 'affiliate_settings', `${t.length} úrovní`);
     res.redirect(303, AB + '/nastavenia?m=ok');
   }));

@@ -43,7 +43,9 @@ t('admin-edited tiers are validated and used', () => {
   assert.deepStrictEqual(st.tiers.map((x) => x.min), [2, 3]);
   assert.strictEqual(A.bonusFor(3, 1, st.tiers), 1); assert.strictEqual(A.bonusFor(3, 12, st.tiers), 2);
   assert.strictEqual(A.cleanTiers([{ min: 5, bonus: {} }, { min: 5, bonus: {} }]), null);
-  assert.strictEqual(A.cleanTiers([{ min: 0, bonus: {} }]), null);
+  assert.strictEqual(A.cleanTiers([{ min: -1, bonus: {} }]), null);
+  assert.strictEqual(A.cleanTiers([{ min: '1.5', bonus: {} }]), null);
+  assert.strictEqual(A.cleanTiers([{ min: 0, bonus: {} }])[0].min, 0); // threshold 0 = every registered customer
   assert.strictEqual(A.settings({ aff_tiers: 'garbage' }).tiers.length, 4);
   assert.strictEqual(A.settings({ aff_on: '0' }).on, false);
 });
@@ -110,6 +112,43 @@ t('licence extends from current end when still active', async () => {
 t('affiliate disabled → no bonus', async () => {
   const s = world(20); const r = await A.processPaidOrder(s, order(), A.settings({ aff_on: '0' }), NOW);
   assert.strictEqual(r.bonus, 0);
+});
+
+// ---- 2026-11 editor: explicit per-package values + per-package 2nd device ----
+const PK = [1, 3, 6, 7, 12, 15];
+t('materialize(defaults) = exactly the current effective table (prefill of the editor)', () => {
+  const m = A.materialize(T, PK);
+  assert.deepStrictEqual(m.map((r) => r.min), [5, 10, 15, 20]);
+  assert.deepStrictEqual(m.map((r) => [r.bonus[3], r.bonus[6], r.bonus[12]]), [[0, 1, 1], [0, 3, 3], [0, 3, 6], [3, 6, 6]]);
+  assert.deepStrictEqual(m.map((r) => Object.keys(r.devPk).map(Number)), [[], [], [], [3, 6, 12]]);
+  // saving the prefilled editor unchanged gives identical rewards for every active count / package / choice
+  const saved = A.cleanTiers(m);
+  for (let a = 0; a <= 30; a++) for (const mo of PK) for (const ch of ['months', 'device']) assert.deepStrictEqual(A.rewardFor(a, mo, saved, ch), A.rewardFor(a, mo, T, ch), `a=${a} m=${mo} ${ch}`);
+});
+t('per-package device: with bonus → choice, without bonus → automatic, no inheritance', () => {
+  const tiers = A.cleanTiers([{ min: 0, bonus: { 1: 0, 12: 1 } }, { min: 5, bonus: { 1: 0, 12: 2 }, devPk: { 1: true, 12: true } }, { min: 10, bonus: { 1: 0, 12: 4 }, devPk: {} }]);
+  assert.deepStrictEqual(A.rewardFor(0, 12, tiers, 'device'), { bonus: 1, device: false, alt: false });
+  assert.deepStrictEqual(A.rewardFor(6, 12, tiers, 'months'), { bonus: 2, device: false, alt: true });
+  assert.deepStrictEqual(A.rewardFor(6, 12, tiers, 'device'), { bonus: 0, device: true, alt: 2 });
+  assert.deepStrictEqual(A.rewardFor(6, 1, tiers, 'months'), { bonus: 0, device: true, alt: 0 }); // 0 months + device → automatic
+  assert.strictEqual(A.deviceFor(12, 12, tiers), false); // higher tier without device flag does not inherit it
+  assert.strictEqual(A.deviceAllowed(6, tiers), true); assert.strictEqual(A.deviceAllowed(12, tiers), false);
+  const mx = A.matrix(tiers, [1, 12]);
+  assert.deepStrictEqual(mx.rows.map((r) => [r.dev[1], r.dev[12], r.device]), [[false, false, false], [true, true, true], [false, false, false]]);
+});
+t('cleanTiers validates devPk and new packages are listed automatically', () => {
+  assert.strictEqual(A.cleanTiers([{ min: 1, bonus: {}, devPk: { 0: true } }]), null);
+  assert.strictEqual(A.cleanTiers([{ min: 1, bonus: { 2: 121 } }]), null);
+  const c = A.cleanTiers([{ min: 1, bonus: { 24: 3 }, devPk: { 24: true, 6: false } }]);
+  assert.deepStrictEqual(c[0].devPk, { 24: true }); assert.strictEqual(c[0].device, true);
+  assert.ok(A.matrix(c, PK).packages.includes(24));
+  assert.ok(A.materialize(T, [...PK, 24])[0].bonus[24] === 0);
+});
+t('ledger: automatic device at 0 bonus months', async () => {
+  const tiers = A.cleanTiers([{ min: 0, bonus: { 1: 0 }, devPk: { 1: true } }]);
+  const s = world(0); const r = await A.processPaidOrder(s, order({ planMonths: 1 }), { on: true, tiers }, NOW);
+  assert.strictEqual(r.device, true); assert.strictEqual(r.bonus, 0);
+  assert.strictEqual(s.ledger[0].kind, 'device'); assert.strictEqual(s.ledger[0].note, '2. zariadenie zadarmo');
 });
 
 (async () => {

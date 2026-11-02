@@ -181,3 +181,5 @@ body.fx::after{background:radial-gradient(rgba(255,255,255,.085) 1px,transparent
 .accpromo{margin-top:18px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:18px;text-align:left}.accpromo h2{font-size:1.2rem;margin:0 0 6px}
 .accpromo .b{display:inline-block;text-align:center;padding:12px 20px;margin:8px 8px 0 0;border-radius:12px;background:linear-gradient(135deg,#e50914,#b20710);border:0;color:#fff;font-size:1rem;box-shadow:0 3px 12px #e5091440}.accpromo .b::after{content:none}
 .accpromo .tblw,.acc .tblw{margin:8px 0}.accpromo summary{cursor:pointer;font-weight:600;margin:6px 0}.accok{color:#22c55e;font-weight:600}
+.afft input[type=number]{width:4.2em;padding:5px;font-size:.85rem}.afft td{white-space:nowrap}.afft .afdev{display:flex;align-items:center;gap:3px;font-size:.72rem;margin-top:4px;color:#cbd5e1}.afft .afdev input{margin:0}
+.afft input.bad{border-color:#ef4444;outline:2px solid #ef4444}.afrm{display:none}.afjs .afrm{display:inline-block}.afjs .afdel{display:none}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}

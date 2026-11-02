@@ -68,16 +68,16 @@ function build(d) {
 - Každý registrovaný zákazník má na ${O}/ucet svoj odkaz (a QR). Kto sa cez neho zaregistruje, je jeho „odporučený“. Počítajú sa len AKTÍVNI odporučení (s platným predplatným).
 - Bonus sa pripíše, keď si odporúčateľ sám kúpi balík: dostane mesiace navyše ZADARMO (cena sa nemení). Rozhoduje počet aktívnych odporučených v čase nákupu.
 - Aktuálna tabuľka (počet aktívnych → bonus podľa balíka):`);
+    const dv = (r, m) => !!(r.dev ? r.dev[m] : r.device && r.bonus[m]);
     for (const r of a.rows) {
-      const parts = a.packages.filter((m) => r.bonus[m]).map((m) => `${mo(m)} balík +${mo(r.bonus[m])}`);
-      L.push(`  - ${r.min} a viac: ${parts.length ? parts.join(', ') : 'bez bonusu'}${r.device ? '; ALEBO namiesto mesiacov 2. zariadenie zadarmo' : ''}`);
+      const parts = a.packages.filter((m) => r.bonus[m] || dv(r, m)).map((m) => (r.bonus[m] ? `${mo(m)} balík +${mo(r.bonus[m])}${dv(r, m) ? ' ALEBO namiesto toho 2. zariadenie zadarmo' : ''}` : `${mo(m)} balík: 2. zariadenie zadarmo`));
+      L.push(`  - ${r.min > 0 ? r.min + ' a viac' : 'každý registrovaný (0 a viac)'}: ${parts.length ? parts.join(', ') : 'bez bonusu'}`);
     }
-    const none = a.packages.filter((m) => !a.rows.some((r) => r.bonus[m]));
+    const none = a.packages.filter((m) => !a.rows.some((r) => r.bonus[m] || dv(r, m)));
     if (none.length) L.push(`- Balíky ${none.map((m) => m + ' m').join(', ')} bonus nemajú.`);
-    const first = {}; for (const m of a.packages) { const r = a.rows.find((x) => x.bonus[m]); if (r) first[m] = r.min; }
-    L.push(`- Bonus pre balík platí od uvedeného počtu (${Object.entries(first).map(([m, n]) => `${m} m od ${n} ľudí`).join(', ')}); pri vyššom počte ostáva najvyšší dosiahnutý bonus pre ten balík.`);
-    const dev = a.rows.find((r) => r.device);
-    if (dev) L.push(`- Voľba 2. zariadenia: od ${dev.min} aktívnych odporučených si môže na ${O}/ucet zvoliť „2. zariadenie zadarmo“ namiesto mesiacov navyše (pri nákupe balíka dostane predplatné pre 2 zariadenia za cenu jedného).`);
+    L.push('- Platí VŽDY riadok najvyššej dosiahnutej úrovne (počet aktívnych odporučených v čase nákupu) presne tak, ako je v tabuľke.');
+    const dev = a.rows.find((r) => a.packages.some((m) => dv(r, m) && r.bonus[m]));
+    if (dev) L.push(`- Voľba 2. zariadenia: kde je pri balíku uvedené „ALEBO 2. zariadenie“, zákazník si na ${O}/ucet zvolí „2. zariadenie zadarmo“ namiesto mesiacov navyše (pri nákupe balíka dostane predplatné pre 2 zariadenia za cenu jedného). Kde je len „2. zariadenie zadarmo“, dostane ho automaticky.`);
     L.push('- Podvody (vlastné viacnásobné účty, rovnaké zariadenie) sa nepočítajú.');
   }
   // sections + videos

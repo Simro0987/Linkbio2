@@ -23,8 +23,8 @@ t('plans with live prices and 2-device flag', () => {
 t('affiliate table from tiers (3m only at 20, 12m inherits +6, device at 20)', () => {
   const s = K.build(D());
   assert.ok(/5 a viac: 6 mesiacov balík \+1 mesiac, 12 mesiacov balík \+1 mesiac\n/.test(s), s);
-  assert.ok(/20 a viac: 3 mesiace balík \+3 mesiace, 6 mesiacov balík \+6 mesiacov, 12 mesiacov balík \+6 mesiacov; ALEBO namiesto mesiacov 2\. zariadenie/.test(s));
-  assert.ok(s.includes('3 m od 20 ľudí')); assert.ok(s.includes('od 20 aktívnych odporučených'));
+  assert.ok(/20 a viac: 3 mesiace balík \+3 mesiace ALEBO namiesto toho 2\. zariadenie zadarmo, 6 mesiacov balík \+6 mesiacov ALEBO[^\n]*12 mesiacov balík \+6 mesiacov ALEBO namiesto toho 2\. zariadenie/.test(s), s);
+  assert.ok(s.includes('Platí VŽDY riadok najvyššej dosiahnutej úrovne'));
   assert.ok(!/12 mesiacov balík \+12/.test(s)); assert.ok(!/5 a viac: 3 mesiace/.test(s));
 });
 t('sections/videos, contacts groups, account pages, Blink, SEPA recipient', () => {
