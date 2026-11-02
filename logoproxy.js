@@ -16,7 +16,7 @@ async function get(url, hops = 0) {
   if (!all.length || all.some((a) => privateIp(a.address))) throw new Error('blokovaná adresa');
   const addr = all[0];
   return new Promise((resolve, reject) => {
-    const rq = https.request(u, { method: 'GET', timeout: 10000, servername: net.isIP(u.hostname) ? undefined : u.hostname, headers: { 'user-agent': 'Mozilla/5.0 (lnkbio logo cache)', accept: 'image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8' },
+    const rq = https.request(u, { method: 'GET', timeout: 10000, servername: net.isIP(u.hostname) ? undefined : u.hostname, headers: { 'user-agent': /(^|\.)(wikimedia|wikipedia|wikidata)\.org$/.test(u.hostname) ? 'lnkbio-logo-cache/1.1 (https://lnkbio.onrender.com/tv; logo thumbnails for a TV channel list)' : 'Mozilla/5.0 (lnkbio logo cache)', accept: 'image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8' },
       lookup: (h, o, cb) => (o && o.all ? cb(null, [addr]) : cb(null, addr.address, addr.family)) }, (r) => {
       if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) { r.resume(); if (hops >= 3) return reject(new Error('príliš veľa presmerovaní')); return resolve(get(new URL(r.headers.location, u).href, hops + 1)); }
       if (r.statusCode !== 200) { r.resume(); return reject(new Error('HTTP ' + r.statusCode)); }

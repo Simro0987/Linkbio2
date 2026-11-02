@@ -171,7 +171,7 @@ module.exports = function install(ctx) {
   async function ensureLogo(ch, force) {
     const cur = (await pool.query('SELECT src,ok,err,fetched_at,png FROM tv_logo_cache WHERE channel_id=$1', [ch.id])).rows[0];
     if (UPL.test(ch.logo)) return cur && cur.src === ch.logo ? cur : { src: ch.logo, ok: false, err: 'nahraté logo chýba v cache', png: null };
-    if (!force && cur && cur.src === ch.logo && (cur.ok || Date.now() - new Date(cur.fetched_at) < 6 * 3600e3)) return cur;
+    if (!force && cur && cur.src === ch.logo && (cur.ok || Date.now() - new Date(cur.fetched_at) < 3600e3)) return cur;
     const k = ch.id + '|' + ch.logo; if (inflight.has(k)) return inflight.get(k);
     const p = (async () => {
       await slot();
@@ -198,7 +198,7 @@ module.exports = function install(ctx) {
     const y0 = 108 - ((L.length - 1) * fs * 1.1) / 2 + fs * 0.35;
     return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="hsl(${hue},55%,26%)"/><stop offset="1" stop-color="#0d0d10"/></linearGradient></defs><rect width="200" height="200" rx="28" fill="url(#g)"/><rect x="1.5" y="1.5" width="197" height="197" rx="27" fill="none" stroke="hsl(${hue},70%,55%)" stroke-opacity=".45" stroke-width="3"/><path d="M18 18 L34 27 L18 36 Z" fill="#e50914"/><rect x="18" y="170" width="${Math.min(164, 30 + String(cat || '').length * 7)}" height="4" rx="2" fill="hsl(${hue},75%,55%)"/>${L.map((l, i) => `<text x="100" y="${(y0 + i * fs * 1.1).toFixed(1)}" text-anchor="middle" font-family="Inter,Segoe UI,Roboto,Arial,Helvetica,sans-serif" font-weight="800" font-size="${fs}" fill="#fff">${xe(l)}</text>`).join('')}</svg>`;
   }
-  const sendBadge = (res, ch) => { res.set({ 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" }); res.send(badge(ch.name, ch.category)); };
+  const sendBadge = (res, ch) => { res.set({ 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': ch.logo ? 'public, max-age=1800' : 'public, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'" }); res.send(badge(ch.name, ch.category)); };
   app.get('/tvlogo/:id(\\d+)', wrap(async (req, res) => {
     const ch = (await all()).find((r) => r.id === +req.params.id);
     if (!ch) return res.status(404).end();
@@ -390,6 +390,10 @@ ${j.bad.length ? `<div class="card"><h2>Nefunkčné</h2>${j.bad.slice(0, 500).ma
   async function autoLogos() {
     if (auto.running) return; auto.running = true; auto.n = 0; auto.found = 0;
     try {
+      // repair pass: auto-applied logos whose cached copy failed (e.g. a transient 429) are fetched again, slowly
+      const rep = (await pool.query('SELECT t.id,t.name,t.category,t.logo FROM tv_channels t JOIN tv_logo_auto a ON a.channel_id=t.id AND a.applied AND a.url=t.logo LEFT JOIN tv_logo_cache c ON c.channel_id=t.id AND c.src=t.logo WHERE c.ok IS NOT TRUE')).rows;
+      for (const ch of rep) { await ensureLogo(ch, true).catch(() => null); await sleep(2000); }
+      if (rep.length) { brokenCache = null; drop(); }
       const broken = await brokenIds(), tried = new Map((await pool.query('SELECT channel_id,url,applied,tried_at FROM tv_logo_auto')).rows.map((r) => [r.channel_id, r]));
       const list = (await all()).filter((r) => (!r.logo || (broken.has(r.id) && !UPL.test(r.logo))) && (() => { const t = tried.get(r.id); if (!t) return true; if (t.applied) return false; return Date.now() - new Date(t.tried_at) > 7 * 86400e3; })());
       auto.total = list.length; let idx = null;
@@ -397,8 +401,12 @@ ${j.bad.length ? `<div class="card"><h2>Nefunkčné</h2>${j.bad.slice(0, 500).ma
         if (!idx) idx = await LOGOS.getIndex();
         const r = await LOGOS.resolveOne(ch, idx).catch(() => null); let applied = false;
         if (r && r.url) {
-          const ok = await LP.fetchPng(r.url).then(() => true, () => false);
-          if (ok && (await pool.query('UPDATE tv_channels SET logo=$1 WHERE id=$2 AND logo=$3', [r.url, ch.id, ch.logo])).rowCount) { applied = true; auto.found++; drop(); }
+          const got = await LP.fetchPng(r.url).catch(() => null);
+          if (got && (await pool.query('UPDATE tv_channels SET logo=$1 WHERE id=$2 AND logo=$3', [r.url, ch.id, ch.logo])).rowCount) {
+            // keep the bytes we just fetched – no second download (Wikimedia rate limits)
+            await pool.query(`INSERT INTO tv_logo_cache (channel_id,src,png,ok,err,fetched_at) VALUES ($1,$2,$3,true,'',now()) ON CONFLICT (channel_id) DO UPDATE SET src=$2,png=$3,ok=true,err='',fetched_at=now()`, [ch.id, r.url, got.png]);
+            applied = true; auto.found++; drop(); brokenCache = null;
+          }
         }
         await pool.query(`INSERT INTO tv_logo_auto (channel_id,url,src,applied,tried_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (channel_id) DO UPDATE SET url=$2,src=$3,applied=$4,tried_at=now()`, [ch.id, (r && r.url) || '', (r && r.src) || '', applied]);
         auto.n++; await sleep(1500);
