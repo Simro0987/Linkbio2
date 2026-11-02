@@ -885,7 +885,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     /** PaysafeCard + G2A gift cards: amount/email/country filled on pay page / product link, not main form. */
     // Revolut (Guardarian) + keyless public gateways: customer enters ONLY the amount here.
     function isAmountOnly(p) {
-      return !!p && (['guardarian', 'keyless', 'revolut_manual', 'custom', 'crypto_direct', 'blink_ln', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin'].includes(String(p.gateway || '').toLowerCase()) || hasAmountLink(p));
+      return !!p && (['guardarian', 'keyless', 'revolut_manual', 'custom', 'crypto_direct', 'blink_ln', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin', 'oxapay'].includes(String(p.gateway || '').toLowerCase()) || hasAmountLink(p));
     }
     // Admin „Odkazy podľa sumy“: exact amount match → amount-only + „Zaplatiť“ (link stays server-side).
     function hasAmountLink(p) {
@@ -897,12 +897,12 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     function isDeferredAmountEmail(p) {
       if (!p) {
         const id = String(providerEl.value || '').toLowerCase();
-        return id === 'paysafecard' || id.startsWith('paysafe') || id.startsWith('g2a_') || id === 'g2a';
+        return id === 'paysafecard' || id.startsWith('paysafe') || id.startsWith('g2a_') || id === 'g2a' || id.startsWith('gc_');
       }
       const id = String(p.id || '').toLowerCase();
       const gw = String(p.gateway || '').toLowerCase();
       return (
-        gw === 'paysafecard' || gw === 'g2a' ||
+        gw === 'paysafecard' || gw === 'g2a' || gw === 'giftcard' || id.startsWith('gc_') ||
         id === 'paysafecard' || id.startsWith('paysafe') ||
         id.startsWith('g2a_') || id === 'g2a'
       );

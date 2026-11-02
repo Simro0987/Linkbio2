@@ -30,6 +30,10 @@ const adminCategories = require('./adminCategories');
 const wallets = require('./wallets');
 const cryptoDirect = require('./cryptoDirect');
 const blink = require('./blink');
+const methodCoins = require('./methodCoins');
+const giftCards = require('./giftCards');
+const oxapay = require('./oxapay');
+const walletGw = require('./walletGateway');
 const changelly = require('./changelly');
 const amountLinks = require('./amountLinks');
 const paysafecard = require('./paysafecard');
@@ -1074,7 +1078,7 @@ function buildExtraProviders() {
 
 /** Built-in methods + admin overrides (logo / on-off / name / order) + admin-added custom payment links. */
 function groupProviders(chainProviders) {
-  const res = payMethods.apply(groupProvidersBase(chainProviders), METHOD_GROUPS.map((g) => ({ key: g.key, label: g.label, color: g.color || null })));
+  const res = payMethods.apply(walletGw.inject(oxapay.inject(giftCards.inject(groupProvidersBase(chainProviders)))), METHOD_GROUPS.map((g) => ({ key: g.key, label: g.label, color: g.color || null })));
   // Per-amount payment links: expose only the matching amounts (never URLs) so the UI can go amount-only on an exact match.
   const al = amountLinks.amountsByMethod();
   const tag = (it) => { if (it && al[it.id]) it.amountLinks = al[it.id]; };
@@ -1321,8 +1325,10 @@ function isChain2PayHost(urlStr) {
 }
 
 const __jsonSmall = express.json({ limit: '1mb' });
-app.use((req, res, next) => (req.path === '/api/proof' || req.path === payMethods.BRIDGE_PATH || req.path.startsWith('/api/admin-bridge/') ? next() : __jsonSmall(req, res, next)));
-app.use(express.urlencoded({ extended: true }));
+// /oxapay/callback needs the raw body for its HMAC → parsed by express.raw on the route itself.
+app.use((req, res, next) => (req.path === '/api/proof' || req.path === payMethods.BRIDGE_PATH || req.path.startsWith('/api/admin-bridge/') || req.path === '/oxapay/callback' ? next() : __jsonSmall(req, res, next)));
+const __urlenc = express.urlencoded({ extended: true });
+app.use((req, res, next) => (req.path === '/oxapay/callback' ? next() : __urlenc(req, res, next)));
 app.use((req, res, next) => (req.body && typeof req.body === 'object' && Object.keys(req.body).length ? readThrough(req, res, next) : next()));
 // index.html via res.send so the language middleware can translate it + add the toggle
 app.get(['/', '/index.html'], (req, res) => {
@@ -1408,6 +1414,10 @@ amountLinks.mount(app, { loadOrders, saveOrders, appendLog });
 cryptoDirect.mount(app, { loadOrders, saveOrders, appendLog });
 // Public: ⚡ Blink Lightning invoice page (/blink-pay) + admin bridge /api/admin-bridge/blink
 blink.mount(app, { loadOrders, saveOrders, appendLog });
+giftCards.mount(app, { appendLog });
+// 🪙 OxaPay invoices (/oxapay-pay, /oxapay/callback) + 💳 Card2Crypto / PayGate.to card payments (/wg-pay, /wg-callback) – hidden until configured in admin
+oxapay.mount(app, { loadOrders, saveOrders, appendLog });
+walletGw.mount(app, { loadOrders, saveOrders, appendLog });
 // Public: Changelly pre-redirect page (/changelly-pay) — coin/address from wallets, watched by chainWatcher
 changelly.mount(app, { loadOrders, saveOrders, appendLog });
 
@@ -1728,7 +1738,7 @@ async function handleCreateCheckout(req, res) {
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         email = '';
       }
-    } else if (['guardarian_revolut', 'keyless', 'revolut_manual', 'crypto_direct', 'blink_ln', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin'].includes(String(ALIAS_MAP[providerAlias] || provider).toLowerCase())) {
+    } else if (['guardarian_revolut', 'keyless', 'revolut_manual', 'crypto_direct', 'blink_ln', 'changelly', 'revolut_ramp', 'btcpay', 'mtpelerin', 'oxapay'].includes(String(ALIAS_MAP[providerAlias] || provider).toLowerCase())) {
       // Revolut / keyless public gateways: amount only — no email, name or country from the customer.
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) email = '';
     } else if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -1763,6 +1773,19 @@ async function handleCreateCheckout(req, res) {
       } catch (e) {
         appendLog(`CRYPTO_DIRECT_FAIL ${orderId} ${e.message}`);
         return res.status(e.status || 500).json({ error: e.status === 400 ? e.message : 'Krypto platbu sa nepodarilo vytvoriť. Skúste to znova.' });
+      }
+    }
+
+    if (providerLower === 'oxapay' || walletGw.isMethod(providerLower)) {
+      const isOx = providerLower === 'oxapay';
+      try {
+        const args = { methodId: providerLower, orderId, amountEur, email, countryCode, ip: req.ip, baseUrl: publicBaseFromReq(req), loadOrders, saveOrders, appendLog };
+        const order = isOx ? await oxapay.createOrder(args) : await walletGw.createOrder(args);
+        if (redirect) return res.redirect(302, order.checkoutUrl);
+        return res.json({ orderId, checkoutUrl: order.checkoutUrl, localPayUrl: order.checkoutUrl, provider: order.provider, amountEur: order.amountEur, amount: order.amountEur, currency: 'EUR', status: order.status });
+      } catch (e) {
+        appendLog(`${isOx ? 'OXAPAY' : 'WG'}_FAIL ${orderId} ${String(e.message || '').slice(0, 200)}`);
+        return res.status(e.status === 400 || e.status === 429 ? e.status : 502).json({ error: e.status === 400 || e.status === 429 ? e.message : 'Platbu sa nepodarilo vytvoriť. Skúste to znova alebo zvoľte iný spôsob.' });
       }
     }
 
@@ -1838,6 +1861,7 @@ async function handleCreateCheckout(req, res) {
           orderId, amountEur, amount: amountEur, email, country: countryCode, customer, currency: 'EUR',
           provider: 'keyless', providerAlias, providerName: k.name, gateway: 'keyless', paymentMethod: 'link',
           customMethod: true, customMode: 'link', customInstructions: customMethod.description || '', proofForm: customMethod.proofForm !== false,
+          ...(Array.isArray(payMethods.coinsFor(providerAlias)) ? { coins: payMethods.coinsFor(providerAlias) } : {}),
           checkoutUrl: localPayUrl, localPayUrl, providerCheckoutUrl: url, providerHost: new URL(url).hostname,
           resolution: 'custom_link', status: 'pending', createdAt: new Date().toISOString(),
         };
@@ -1860,6 +1884,7 @@ async function handleCreateCheckout(req, res) {
           payoutSource: dest.source || 'pool', payoutCurrency: 'BTC', prefill: k.prefill,
           providerHost: new URL(fb.result.url).hostname, resolution: 'keyless_public', status: 'pending', createdAt: new Date().toISOString(),
           ...(customMethod ? { customMethod: true, customMode: 'btc', customInstructions: customMethod.description || '', proofForm: customMethod.proofForm !== false } : {}),
+          ...(Array.isArray(payMethods.coinsFor(providerAlias)) ? { coins: payMethods.coinsFor(providerAlias) } : {}),
         };
         saveOrders(orders);
         appendLog(`ORDER_CREATED ${orderId} eur=${amountEur} provider=keyless:${providerAlias} dst=btc:${dest.address} src=${dest.source}`);
@@ -4665,10 +4690,13 @@ button.bankbtn small{display:block;color:var(--muted);font-weight:500;font-size:
 app.get('/onramp-bridge', onrampBridgePage);
 app.get('/switchere-pay', switcherePayPage);
 
-function guardarianPayPage(req, res) {
+async function guardarianPayPage(req, res) {
   const orderId = String(req.query.orderId || '');
   const o = loadOrders()[orderId];
   if (!o || !['guardarian_revolut', 'mtpelerin', 'meld', 'keyless'].includes(o.provider)) return res.status(404).send('Objednávka sa nenašla');
+  // 🪙 admin per-method coin choice (o.coins set at checkout): show only those coins' addresses, each with a copy button
+  const coinSel = Array.isArray(o.coins);
+  const coinBlock = coinSel ? methodCoins.html(await methodCoins.ensure(o, o.coins, { loadOrders, saveOrders, log: appendLog }).catch(() => []), { amountEur: o.amountEur }) : '';
   const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const pName = o.providerName || { mtpelerin: 'Mt Pelerin', meld: 'Meld' }[o.provider] || 'Guardarian';
   const methodLabel = o.provider === 'mtpelerin' ? 'kartou / bankou (Mt Pelerin)' : o.provider === 'meld' ? 'cez Meld' : o.provider === 'keyless' ? `cez ${o.providerName}` : { card: 'kartou Revolut', revolut_pay: 'Revolut Pay', apple_pay: 'Apple Pay', google_pay: 'Google Pay' }[o.paymentMethod] || 'kartou';
@@ -4688,13 +4716,13 @@ button,.btn{background:#8b5cf6;color:#fff;border:0;border-radius:8px;padding:10p
 </style><link rel="stylesheet" href="/tv-theme.css?v=20261026"/></head><body>
 <h2>Platba ${esc(methodLabel)}</h2>${state}
 <div class="box"><div>Suma</div><div class="cprow"><code id="amt" style="font-size:20px">${esc(o.amountEur)}</code><span class="unit">EUR</span><button class="big" data-cp="amt">Kopírovať sumu</button></div>
-${linkOnly ? '</div>' : `<div style="margin-top:6px">Mena: <b>${esc(o.payoutCurrency)}</b> · sieť: <b>${o.payoutCurrency === 'BTC' ? 'Bitcoin' : esc(o.payoutCurrency)}</b></div></div>
+${coinSel ? '</div>' + coinBlock : linkOnly ? '</div>' : `<div style="margin-top:6px">Mena: <b>${esc(o.payoutCurrency)}</b> · sieť: <b>${o.payoutCurrency === 'BTC' ? 'Bitcoin' : esc(o.payoutCurrency)}</b></div></div>
 <div class="box"><div>${locked ? 'Adresa (už predvyplnená):' : `<b>${esc(o.payoutCurrency)} adresa</b> — skopírujte a vložte ju u ${esc(pName)}:`}</div>
 <code id="addr" style="display:block;font-size:16px;margin:8px 0;word-break:break-all;background:#f5f5f5;padding:8px;border-radius:8px">${esc(o.payoutAddress)}</code>
 <button class="big" style="width:100%;padding:16px;font-size:17px" data-cp="addr">📋 Kopírovať adresu</button></div>`}
 ${instr}
 ${locked || linkOnly || o.customMethod ? '' : o.provider === 'mtpelerin' ? `<div class="box"><small><b>U ${pName} je už všetko vyplnené:</b> suma <b>${esc(o.amountEur)} EUR</b>, mena <b>${esc(o.payoutCurrency)}</b> aj adresa – nič nemeňte a stlačte „Buy“. E-mail / telefón a overenie (KYC) zadáte priamo u ${pName}.<br><span style="opacity:.75">Amount, coin and address are prefilled at ${pName} – change nothing, just tap “Buy”.</span></small></div>` : `<div class="box"><small><b>U ${pName} urobíte:</b> 1) zvoľte <b>EUR → ${esc(o.payoutCurrency)}</b>, 2) zadajte sumu <b>${esc(o.amountEur)} EUR</b>, 3) vložte skopírovanú adresu, 4) zvoľte platbu <b>${esc(methodLabel)}</b>, 5) e-mail a overenie (KYC) zadáte priamo u ${pName}.</small></div>`}
-${o.customMethod && !linkOnly ? `<div class="box"><small><b>Postup:</b> 1) zadajte sumu <b>${esc(o.amountEur)} EUR</b>, 2) ak sa pýta adresa, vložte skopírovanú BTC adresu, 3) dokončite platbu podľa pokynov poskytovateľa.</small></div>` : ''}
+${o.customMethod && !linkOnly ? `<div class="box"><small><b>Postup:</b> 1) zadajte sumu <b>${esc(o.amountEur)} EUR</b>, 2) ak sa pýta adresa, vložte skopírovanú ${coinSel ? '' : 'BTC '}adresu, 3) dokončite platbu podľa pokynov poskytovateľa.</small></div>` : ''}
 <script>function cp(id,b){navigator.clipboard.writeText(document.getElementById(id).textContent.trim()).then(function(){var o=b.textContent;b.textContent='✅ Skopírované';setTimeout(function(){b.textContent=o},1500)})}</script>
 <a class="btn" href="${esc(o.providerCheckoutUrl)}" target="_blank" rel="noopener">Pokračovať na ${esc(pName)}</a>
 ${o.provider === 'mtpelerin' ? guideStore.html('mtpelerin', { amount: o.amountEur, coin: o.payoutCurrency }) : ''}
@@ -4703,7 +4731,7 @@ ${linkOnly ? '' : `<div id="chainStatus" data-order-id="${esc(o.orderId)}"></div
 ${o.customMethod && o.proofForm !== false ? '<div id="proofSlot"></div><script src="/proof-form.js" defer></script>' : ''}
 </body></html>`);
 }
-app.get('/guardarian-pay', guardarianPayPage);
+app.get('/guardarian-pay', (req, res) => guardarianPayPage(req, res).catch((e) => { appendLog('GUARDARIAN_PAY_PAGE_FAIL ' + e.message); if (!res.headersSent) res.status(500).send('Chyba'); }));
 
 app.get('/api/storage/status', async (_req, res) => {
   res.json({ db: await orderDb.status(), proofs: await proofStore.check() });
@@ -4732,9 +4760,11 @@ app.post('/api/revolut/:orderId/paid', async (req, res) => {
     try { if (global.__telegramBot) await global.__telegramBot.notifyRevolutPaid(o); } catch (e) { appendLog(`TELEGRAM_REVOLUT_PAID_FAIL ${o.orderId} ${e.message}`); } }
   res.json({ ok: true, status: o.status, alreadyMarked: !first });
 });
-app.get('/revolut-pay', (req, res) => {
+app.get('/revolut-pay', async (req, res) => {
   const o = loadOrders()[String(req.query.orderId || '')];
   if (!o || o.provider !== 'revolut_manual') return res.status(404).send('Objednávka sa nenašla');
+  const rvCoins = Array.isArray(o.coins) ? o.coins : payMethods.coinsFor(o.providerAlias || 'revolut_manual');
+  const coinBlock = Array.isArray(rvCoins) && rvCoins.length ? methodCoins.html(await methodCoins.ensure(o, rvCoins, { loadOrders, saveOrders, log: appendLog }).catch(() => []), { title: 'Alebo zaplaťte kryptom', amountEur: o.amountEur }) : '';
   const id = JSON.stringify(o.orderId);
   res.set('Cache-Control', 'no-store');
   res.type('html').send(`<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -4756,7 +4786,7 @@ button,.btn{background:#0666eb;color:#fff;border:0;border-radius:8px;padding:12p
 <div class="box"><div>Suma</div><div class="cprow"><code id="amt"></code><span class="unit">EUR</span><button data-cp="amt">Kopírovať sumu</button></div></div>
 ${guideStore.html('revolut_manual', { amount: o.amountEur, title: 'Návod – ako zaplatiť v Revolute' })}
 <button id="paid" class="btn wide ok">Zaplatil som</button> <p id="pst"></p>
-</div>
+</div>${coinBlock}
 <p><small>Objednávka ${o.orderId.replace(/[^a-z0-9_]/gi, '')}</small></p>
 <script>
 var ID=${id};
@@ -5143,6 +5173,9 @@ app.get('/giftcard/:method', (req, res) => {
   if (id.startsWith('g2a_')) {
     const pr = require('./g2a').getProduct(id);
     if (pr) { name = pr.label || pr.shortLabel; url = pr.buyUrl; btn = 'Prejsť na G2A ↗'; }
+  } else if (id.startsWith('gc_')) {
+    const gc = giftCards.get(id);
+    if (gc && gc.enabled !== false) { name = gc.name; url = gc.url; btn = `Kúpiť ${gc.name} ↗`; }
   } else if (id === 'paysafecard' || id.startsWith('paysafe')) {
     name = 'PaysafeCard'; url = 'https://www.herne-kupony.sk/paysafecard/'; btn = 'Kúpiť PaysafeCard (herne-kupony.sk) ↗';
   }
@@ -5195,6 +5228,9 @@ async function payBoot() {
   await step('ADMIN_LINKS', () => adminCategories.init(appendLog));
   await step('METHOD_RANK', () => methodRank.init({ appendLog, pool: () => orderDb.pool(), loadOrders }));
   await step('WALLETS', () => wallets.init(appendLog));
+  await step('GIFTCARDS', () => giftCards.init(appendLog));
+  await step('OXAPAY', () => oxapay.init(appendLog));
+  await step('WALLET_GW', () => walletGw.init(appendLog));
   await step('AMOUNT_LINKS', () => amountLinks.init(appendLog, { methods: amountLinkMethods }));
   await step('SEPA_CHAIN', () => sepaBotChain.load(appendLog));
   const mode = require('./payMode').mode();

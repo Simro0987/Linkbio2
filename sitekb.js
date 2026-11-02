@@ -43,6 +43,10 @@ function build(d) {
   L.push(`- Platí sa na ${O}/platby: vyberie sa balík/suma a spôsob platby (napr. karta, Revolut, SEPA bankový prevod, krypto, darčekové karty – podľa toho, čo je práve zapnuté).`);
   if (d.blink) L.push('- ⚡ Bitcoin Lightning (Blink): zapnuté. Zákazník dostane Lightning faktúru (QR) na presnú sumu, zaplatí ju z ľubovoľnej Lightning peňaženky (napr. Blink, Wallet of Satoshi, Phoenix) a platba sa potvrdí automaticky v priebehu pár sekúnd. Faktúra má obmedzenú platnosť – po vypršaní treba vytvoriť novú objednávku.');
   else L.push('- Bitcoin Lightning (Blink) momentálne NIE JE zapnutý – neponúkaj ho.');
+  if (d.cardPay) L.push(`- 💳 ${d.cardPay}: zapnuté. Zákazník vyberie túto metódu, zadá sumu a e-mail a bude presmerovaný na zabezpečenú platobnú stránku partnera, kde zaplatí kartou Visa/Mastercard, Apple Pay alebo Google Pay (bez registrácie). Platba sa potvrdí automaticky po zaplatení. Poplatky neuvádzaj.`);
+  if (d.oxapay) L.push('- 🪙 Kryptomeny (OxaPay): zapnuté. Zákazník dostane faktúru na presnú sumu v EUR, na stránke OxaPay si vyberie kryptomenu' + (d.oxapayCoins && d.oxapayCoins.length ? ' (napr. ' + d.oxapayCoins.join(', ') + ')' : '') + ', zaplatí a platba sa potvrdí automaticky. Faktúra platí 30 minút – potom treba vytvoriť novú objednávku.');
+  if (d.giftCards && d.giftCards.length) L.push('- 🎁 Darčekové karty: zákazník si môže kúpiť darčekovú kartu (' + d.giftCards.join(', ') + ') cez odkaz „Kúpiť“ na platobnej stránke a potom poslať kód cez bezpečný formulár na stránke objednávky. Kód karty nikdy nepýtaj v chate.');
+  L.push('- Pri niektorých spôsoboch platby (Revolut, Skrill a vlastné odkazy) môže stránka objednávky ponúknuť aj platbu kryptomenou – zobrazia sa len kryptomeny vybrané pre danú metódu, s tlačidlom Kopírovať (adresu nikdy neuvádzaj v chate, je len na stránke objednávky).');
   if (d.sepaRecipient) L.push(`- SEPA bankový prevod: na stránke objednávky sa okrem IBAN a poznámky zobrazí aj meno príjemcu „${d.sepaRecipient}“ – je to v poriadku, platba ide správne. (IBAN nikdy neuvádzaj, je len na stránke objednávky.)`);
   if (d.payText) L.push('### Text stránky Platby\n' + scrub(strip(d.payText)).slice(0, 2500));
 
@@ -120,10 +124,14 @@ function install(ctx) {
     let blink = false, sepaRecipient = '';
     try { blink = require('./pay/src/blink').configured() && !require('./pay/src/payMethods').isBuiltinDisabled('blink_ln'); } catch { /* */ }
     try { sepaRecipient = require('./pay/src/sepaBotChain').recipientName() || ''; } catch { /* */ }
+    let cardPay = '', oxapay = false, oxapayCoins = [], giftCards = [];
+    try { const w = require('./pay/src/walletGateway').items(); if (w.length) cardPay = w[0].provider_name; } catch { /* */ }
+    try { const ox = require('./pay/src/oxapay'); oxapay = ox.configured(); oxapayCoins = oxapay ? ox.coinsShown().slice(0, 10) : []; } catch { /* */ }
+    try { giftCards = require('./pay/src/giftCards').enabled().map((c) => c.name).slice(0, 20); } catch { /* */ }
     const t = chTree ? await chTree().catch(() => new Map()) : new Map();
     return { origin: LNK_PUBLIC, title: s.title, bio: s.bio, pages: Object.fromEntries(Object.entries(PAGES).map(([, [n, u]]) => [n, base + u])),
       plans, pricingIntro: s.pricing_intro, pricingNote: s.pricing_note, payText: s.pay_text, contactText: s.contact_text, about: s.about_text,
-      faq: (await getList('faq')).map((x) => ({ q: x.q, a: x.a })), sections, blink, sepaRecipient, acc,
+      faq: (await getList('faq')).map((x) => ({ q: x.q, a: x.a })), sections, blink, sepaRecipient, acc, cardPay, oxapay, oxapayCoins, giftCards,
       aff: { on: st.on, packages: mx.packages, rows: mx.rows },
       contacts: { groups: on.filter(([k]) => socGrp(s, k) === 'g').map(([k, n]) => [n, s['soc_' + k]]), direct: on.filter(([k]) => socGrp(s, k) !== 'g').map(([k, n]) => [n, s['soc_' + k]]) },
       channels: [...t.entries()].map(([r, m]) => ({ region: r, categories: [...m.entries()].map(([c, l]) => ({ name: c, items: l.slice(0, 40).map((x) => x.name) })) })) };

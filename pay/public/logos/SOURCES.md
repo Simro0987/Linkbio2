@@ -35,3 +35,15 @@ Only real, official brand marks. Copied locally (no hotlinking). PNGs resized to
 | changelly.svg | Changelly | https://changelly.com/web-assets/favicons/favicon.svg (official rocket mark; media kit: cdn.changelly.com/press/Changelly_Media_Kit_2025.pdf) |
 | visa.svg | Visa | https://commons.wikimedia.org/wiki/File:Visa_Inc._logo_(2021%E2%80%93present).svg (official 2021 wordmark) |
 | mastercard.svg | Mastercard | https://commons.wikimedia.org/wiki/File:Mastercard-logo.svg (official 2016 mark) |
+| googleplay.svg | Google Play | simple-icons v16 (googleplay), brand colour |
+| apple.svg | Apple / iTunes | simple-icons v16 (apple) |
+| steam.svg | Steam | simple-icons v16 (steam) |
+| playstation.svg | PlayStation | simple-icons v16 (playstation), #0070D1 |
+| netflix.svg | Netflix | simple-icons v16 (netflix), #E50914 |
+| spotify.svg | Spotify | simple-icons v16 (spotify), #1ED760 |
+| binance.svg | Binance | simple-icons v16 (binance), #F0B90B |
+| razer.svg | Razer Gold | simple-icons v16 (razer) |
+| xbox.svg | Xbox | https://commons.wikimedia.org/wiki/File:Xbox_one_logo.svg |
+| bitrefill.svg | Bitrefill | https://www.bitrefill.com/favicon.svg |
+| neosurf.png | Neosurf | https://www.neosurf.com favicon (cropped, 180px → 96px) |
+| cashtocode.png | CashToCode | https://www.cashtocode.com logo icon (webp → png 96px) |

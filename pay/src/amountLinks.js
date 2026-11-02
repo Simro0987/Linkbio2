@@ -184,9 +184,15 @@ const ID_RE = /^ord_[a-f0-9]{16}$/;
 function mount(app, { loadOrders, saveOrders, appendLog }) {
   if (appendLog) log = appendLog;
   const find = (id) => { const o = ID_RE.test(String(id || '')) ? loadOrders()[id] : null; return o && o.provider === 'amount_link' ? o : null; };
-  app.get('/link-pay', (req, res) => {
+  app.get('/link-pay', async (req, res) => {
     const o = find(req.query.orderId);
     if (!o) return res.status(404).type('html').send('<p>Objednávka sa nenašla. <a href="/platby">Späť</a></p>');
+    // 🪙 admin per-method coin choice for the order's method (Revolut, Skrill, custom…): addresses + copy buttons
+    let coinBlock = '';
+    try {
+      const mc = require('./methodCoins'); const coins = require('./payMethods').coinsFor(o.providerAlias);
+      if (Array.isArray(coins) && coins.length) coinBlock = mc.html(await mc.ensure(o, coins, { loadOrders, saveOrders, log }), { title: 'Alebo zaplaťte kryptom', amountEur: o.amountEur });
+    } catch (x) { log('LINK_PAY_COINS_FAIL ' + x.message); }
     res.set('Cache-Control', 'no-store');
     const amt = Number(o.amountEur).toLocaleString('sk-SK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     res.type('html').send(`<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -196,7 +202,7 @@ function mount(app, { loadOrders, saveOrders, appendLog }) {
 .btn{background:#0666eb;color:#fff;border:0;border-radius:12px;padding:18px;font-size:19px;font-weight:700;cursor:pointer;text-decoration:none;display:block;width:100%}
 small{color:#666}</style><link rel="stylesheet" href="/tv-theme.css?v=20261026"/></head><body>
 <div class="box"><div>Suma na zaplatenie</div><div class="amt">${e(amt)} €</div>
-<form method="post" action="/link-pay/go/${e(o.orderId)}" target="_blank" rel="noopener"><button class="btn" type="submit">Zaplatiť</button></form></div>
+<form method="post" action="/link-pay/go/${e(o.orderId)}" target="_blank" rel="noopener"><button class="btn" type="submit">Zaplatiť</button></form></div>${coinBlock}
 <p><small>Objednávka ${e(o.orderId)}</small></p><script src="/chat-widget.js" defer></script></body></html>`);
   });
   const go = (req, res) => {

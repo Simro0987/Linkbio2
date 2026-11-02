@@ -14,6 +14,7 @@ const net = require('net');
 const orderDb = require('./db');
 const { layout, escapeHtml: e } = require('./adminSepa');
 const methodRank = require('./methodRank');
+const methodCoins = new Proxy({}, { get: (_t, k) => require('./methodCoins')[k] }); // lazy (wallets/xpub ↔ payMethods cycle)
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const FILE = path.join(DATA_DIR, 'pay-methods.json');
@@ -43,6 +44,7 @@ const DEFAULT_LOGOS = {
   changelly_card: ['visa', 'mastercard', 'applepay', 'googlepay'], changelly_sepa: ['sepa'], changelly_revolut: ['revolut', 'changelly'], revolut_ramp: ['revolut'],
   banxa: ['banxa'], banxa_bank: ['banxa'], sepa_instant: ['banxa'], stripe: ['stripe'],
   is_transak: ['transak'], is_transak_sepa: ['transak'], transak: ['transak'], transak_sepa: ['transak'], is_ramp: ['ramp'], is_alchemy: ['alchemypay'],
+  card2crypto: ['visa', 'mastercard', 'applepay', 'googlepay'], paygate_direct: ['visa', 'mastercard', 'applepay', 'googlepay'], oxapay: ['bitcoin'],
 };
 const GENERIC_BY_ID = { crypto_direct: 'wallet', btcpay_onramp: 'card', onramp_btcpay: 'card', is_multihosted: 'card' };
 const GENERIC_BY_GROUP = { cards: 'card', sepa: 'bank', wallets: 'wallet', vouchers: 'voucher', g2a_amazon: 'voucher', g2a_azteco: 'voucher', paysafecard: 'voucher' };
@@ -57,6 +59,7 @@ function defaultLogos(id, group) {
     return [BRAND.applepay, BRAND.googlepay, ...rest.map((b) => BRAND[b])];
   }
   if (/^revolut/.test(id)) return [BRAND.revolut];
+  if (id.startsWith('gc_')) { try { const c = require('./giftCards').get(id); if (c && /^\/logos\/[a-z0-9._-]+$/i.test(String(c.logo || '').split('?')[0])) return [String(c.logo).split('?')[0] + '?v=' + LOGO_V]; } catch (_) {} }
   if (GENERIC_BY_ID[id]) return [GENERIC[GENERIC_BY_ID[id]]];
   if (GENERIC_BY_GROUP[group]) return [GENERIC[GENERIC_BY_GROUP[group]]];
   return [];
@@ -125,6 +128,12 @@ function customFor(id) {
 }
 // Built-ins that start OFF until the admin explicitly switches them on (new methods that need configuration first).
 const DEFAULT_OFF = new Set(['blink_ln']);
+/** Admin per-method coin choice: array (possibly empty) or undefined = legacy behaviour. */
+function coinsFor(id) {
+  const k = String(id || '').toLowerCase(); const r = S.items.get(k);
+  if (r && r.kind === 'custom') return Array.isArray(r.coins) ? r.coins : undefined;
+  const o = override(k); return o && Array.isArray(o.coins) ? o.coins : undefined;
+}
 function isBuiltinDisabled(id) {
   const o = override(id);
   if (DEFAULT_OFF.has(String(id || '').toLowerCase())) return !(o && o.enabled === true);
@@ -688,6 +697,7 @@ if(location.hash==='#platobne-odkazy'&&!flash.hidden)setTimeout(function(){flash
       description: String(fields.description || '').trim().slice(0, 600),
       mode: fields.mode === 'link' ? 'link' : 'btc', proofForm: !!fields.proofForm, enabled: !!fields.enabled,
       logo: await resolveLogo(fields, files, prev.logo),
+      coins: methodCoins.parse(fields, prev.coins),
     };
   }
   app.post('/admin/platby/methods/new', async (req, res) => {
@@ -716,6 +726,7 @@ if(location.hash==='#platobne-odkazy'&&!flash.hidden)setTimeout(function(){flash
         o.enabled = !!fields.enabled;
         o.hideLogo = !!fields.hideLogo;
         o.logo = await resolveLogo(fields, files, o.logo);
+        o.coins = methodCoins.parse(fields, o.coins);
         await put(o);
       }
       log(`PAYMETHOD_SAVED ${id} by=${req.adminSession.email}`);
@@ -842,16 +853,16 @@ function mountBridge(app, h) {
     }));
     const deleted = customs().filter((r) => r.deleted).map((r) => ({ id: r.id, name: r.name, url: r.url, logo: r.logo || null }));
     return { ok: true, groups, deleted, counts: h.counts(), groupChoices: h.groupsAll().map(([k, v]) => [k, (CATEGORY_CHOICES.find((c) => c[0] === k) || [k, v])[1]]),
-      library: libraryLogos().filter((f) => !f.startsWith('generic-')).map((f) => ({ file: f, src: L(f) })) };
+      library: libraryLogos().filter((f) => !f.startsWith('generic-')).map((f) => ({ file: f, src: L(f) })), coinChoices: methodCoins.choices() };
   }
   function detail(id) {
     const r = S.items.get(id);
-    if (r && r.kind === 'custom' && !r.deleted) return { ok: true, kind: 'custom', id, rec: { id: r.id, name: r.name, group: r.group, url: r.url, description: r.description || '', minEur: r.minEur, mode: r.mode || 'btc', proofForm: r.proofForm !== false, enabled: r.enabled !== false, logo: r.logo || null } };
+    if (r && r.kind === 'custom' && !r.deleted) return { ok: true, kind: 'custom', id, rec: { id: r.id, name: r.name, group: r.group, url: r.url, description: r.description || '', minEur: r.minEur, mode: r.mode || 'btc', proofForm: r.proofForm !== false, enabled: r.enabled !== false, logo: r.logo || null, coins: Array.isArray(r.coins) ? r.coins : null }, coinChoices: methodCoins.choices() };
     const b = h.builtins().find((x) => x.id === id);
     if (!b) return null;
     const o = override(id) || {};
     return { ok: true, kind: 'builtin', id, label: b.label, group: b.group, groupLabel: h.groupLabel(b.group), defaultLogos: defaultLogos(b.id, b.group),
-      rec: { name: o.name || '', enabled: !isBuiltinDisabled(id), hideLogo: !!o.hideLogo, logo: o.logo || null } };
+      rec: { name: o.name || '', enabled: !isBuiltinDisabled(id), hideLogo: !!o.hideLogo, logo: o.logo || null, coins: Array.isArray(o.coins) ? o.coins : null }, coinChoices: methodCoins.choices() };
   }
   const filesOf = (logo) => {
     if (!logo || !logo.b64) return [];
@@ -904,6 +915,7 @@ function mountBridge(app, h) {
         o.name = String(fields.name || '').trim().slice(0, 60) || null;
         o.enabled = !!fields.enabled; o.hideLogo = !!fields.hideLogo;
         o.logo = await resolveLogoShared(fields, files, o.logo);
+        o.coins = methodCoins.parse(fields, o.coins);
         await put(o);
       }
       log(`PAYMETHOD_SAVED ${id} by=lnkbio-admin`);
@@ -984,4 +996,4 @@ function register(app) {
 
 /** Read-only hooks for the category admin (filled in mount). */
 const ADMIN = {};
-module.exports = { ADMIN, BRIDGE_PATH, serveSigned, sameOrigin, nostore, customs, init, mount, register, apply, customFor, isBuiltinDisabled, buildUrl, defaultLogos, EXTRA_GROUPS, _sniffImage: sniffImage, _svgSafe: svgSafe };
+module.exports = { coinsFor, ADMIN, BRIDGE_PATH, serveSigned, sameOrigin, nostore, customs, init, mount, register, apply, customFor, isBuiltinDisabled, buildUrl, defaultLogos, EXTRA_GROUPS, _sniffImage: sniffImage, _svgSafe: svgSafe };

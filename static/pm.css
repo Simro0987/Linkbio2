@@ -50,3 +50,8 @@
 @container (max-width:760px){.rkt thead{display:none}.rkt tr{display:grid;grid-template-columns:2rem 1fr;gap:.15rem .5rem;border:1px solid rgba(148,163,184,.3);border-radius:10px;padding:.5rem;margin:.45rem 0}
 .rkt td{display:block;border:0;padding:0}.rkt td.rkn{text-align:left}.rkt td:nth-child(n+3){grid-column:2}.rkt td[data-l]::before{content:attr(data-l) ': ';opacity:.65}
 .rkt td:last-child{grid-column:1/-1}.rkt td:last-child button{width:100%;min-height:44px}}
+/* 🪙 per-method coin choice */
+.pmcoing{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:.4rem .9rem;margin-top:.4rem}
+.pmcoing>div{display:flex;flex-direction:column;gap:.15rem}.pmcoin{display:flex;flex-wrap:wrap;align-items:baseline;gap:.35rem;margin:.1rem 0}
+.pmcoin small{flex-basis:100%;margin-left:1.6rem;font-size:.75rem}.pmcoin.dis{opacity:.55}
+@media(max-width:640px){.pmcoing{grid-template-columns:1fr}}

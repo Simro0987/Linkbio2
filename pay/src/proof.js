@@ -56,6 +56,7 @@ module.exports = function register(app, { loadOrders, saveOrders, appendLog }) {
       id = 'gs_' + crypto.randomBytes(6).toString('hex');
       let label = clip(b.giftMethod, 60), amount = null;
       try { const p = require('./g2a').getProduct(label); if (p) { label = p.label; amount = p.amountEur || p.faceValueEur || null; } } catch { /* */ }
+      try { const gc = /^gc_/.test(label) && require('./giftCards').get(label); if (gc) label = gc.name; } catch { /* */ }
       ctx = { kind: 'gift', method: label, amount, contact: vc.contact };
     } else return res.status(400).json({ error: 'Objednávka sa nenašla.' });
 

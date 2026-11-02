@@ -77,6 +77,18 @@ ${full && x.kind === 'custom' ? `<form method="post" action="${BASE}/zmazat" cla
 <label>alebo URL loga (https://…)</label><input type="url" name="logoUrl" maxlength="500" placeholder="https://…">
 <details><summary>alebo vybrať z knižnice (${(st.library || []).length} skutočných lôg)</summary><div class="pmlibs"><label class="pmlib"><input type="radio" name="lib" value="" checked><span>bez zmeny</span></label>${lib}</div></details></fieldset>`;
   }
+  // 🪙 per-method coin choice: which of Ryan's crypto addresses the customer sees for this method (unchecked „vlastný výber“ = as before)
+  function coinFields(r, choices) {
+    if (!Array.isArray(choices) || !choices.length) return '';
+    const sel = Array.isArray(r.coins) ? new Set(r.coins) : null;
+    const groups = [];
+    for (const c of choices) { let g = groups.find((x) => x.k === c.group); if (!g) groups.push(g = { k: c.group, items: [] }); g.items.push(c); }
+    const box = (c) => `<label class="ck pmcoin${c.available ? '' : ' dis'}"><input type="checkbox" name="coins" value="${esc(c.id)}"${sel && sel.has(c.id) && c.available ? ' checked' : ''}${c.available ? '' : ' disabled'}> ${esc(c.label)} <small class="hint">${esc(c.note)}</small></label>`;
+    return `<fieldset class="pmfs pmcoins"><legend>🪙 Kryptomeny pre zákazníka</legend><input type="hidden" name="coinsSent" value="1">
+<label class="ck"><input type="checkbox" name="coinsCustom" value="1"${sel ? ' checked' : ''}> Vlastný výber – na platobnej stránke tejto metódy zobraziť adresy len vybraných mien</label>
+<p class="hint">Nezaškrtnuté = ako doteraz. Pri BTC a LTC s nastaveným xpub dostane každá objednávka novú adresu, inak sa použije adresa z 👛 Adresy peňaženiek. Každá adresa má tlačidlo Kopírovať.</p>
+<div class="pmcoing">${groups.map((g) => `<div><b class="hint">${esc(g.k)}</b>${g.items.map(box).join('')}</div>`).join('')}</div></fieldset>`;
+  }
   function customForm(req, st, r) {
     const isNew = !r.id;
     const opt = (st.groupChoices || []).map(([k, v]) => `<option value="${esc(k)}"${(r.group || 'keyless') === k ? ' selected' : ''}>${esc(v)}</option>`).join('');
@@ -90,7 +102,7 @@ ${full && x.kind === 'custom' ? `<form method="post" action="${BASE}/zmazat" cla
 <div><label>Postup po kliknutí</label><select name="mode"><option value="btc"${(r.mode || 'btc') === 'btc' ? ' selected' : ''}>BTC adresa + odkaz (ako ChangeNOW / Paybis)</option><option value="link"${r.mode === 'link' ? ' selected' : ''}>Len suma, pokyny a odkaz (bez BTC adresy)</option></select></div></div>
 <label class="ck"><input type="checkbox" name="proofForm" value="1"${r.proofForm !== false ? ' checked' : ''}> Zobraziť formulár „Poslať doklad“ (doklad príde do Telegramu)</label>
 <label class="ck"><input type="checkbox" name="enabled" value="1"${r.enabled !== false ? ' checked' : ''}> Zapnuté (zobrazuje sa zákazníkom)</label>
-${logoFields(r.logo, st, false)}<p class="row"><button>${isNew ? '➕ Pridať spôsob platby' : '💾 Uložiť'}</button>${isNew ? '' : `<a class="btnl g2" href="${BASE}">Späť</a>`}</p></form>`;
+${coinFields(r, st.coinChoices)}${logoFields(r.logo, st, false)}<p class="row"><button>${isNew ? '➕ Pridať spôsob platby' : '💾 Uložiť'}</button>${isNew ? '' : `<a class="btnl g2" href="${BASE}">Späť</a>`}</p></form>`;
   }
   function builtinForm(req, st, d) {
     const r = d.rec || {};
@@ -99,7 +111,7 @@ ${logoFields(r.logo, st, false)}<p class="row"><button>${isNew ? '➕ Pridať sp
 <label>Vlastný názov (prázdne = „${esc(d.label)}“)</label><input name="name" maxlength="60" value="${esc(r.name || '')}">
 <label class="ck"><input type="checkbox" name="enabled" value="1"${r.enabled !== false ? ' checked' : ''}> Zapnuté (zobrazuje sa zákazníkom)</label>
 <label class="ck"><input type="checkbox" name="hideLogo" value="1"${r.hideLogo ? ' checked' : ''}> Skryť logo</label>
-${logoFields(r.logo, st, true)}<p class="row"><button>💾 Uložiť</button><a class="btnl g2" href="${BASE}">Späť</a></p></form>`;
+${coinFields(r, d.coinChoices || st.coinChoices)}${logoFields(r.logo, st, true)}<p class="row"><button>💾 Uložiť</button><a class="btnl g2" href="${BASE}">Späť</a></p></form>`;
   }
   // ↕️ checkout order by usage (auto / manual, pins, usage numbers) — admin only, via the same signed bridge
   function rankCard(req, rs) {
@@ -148,10 +160,10 @@ ${b.keySet ? '<label class="ck"><input type="checkbox" name="clearKey" value="1"
   admin.get('/platobne-metody', needAuth, wrap(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     let st, rs = null;
-    let bl = null;
-    try { [st, rs, bl] = await Promise.all([call('state'), call('rank_state').catch((e) => (e.kind === 'user' ? null : Promise.reject(e))), callBlink('blink_get').catch(() => null)]); } catch (e) { return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`)); }
+    let bl = null, gc = null, ox = null, c2 = null, pg = null;
+    try { [st, rs, bl, gc, ox, c2, pg] = await Promise.all([call('state'), call('rank_state').catch((e) => (e.kind === 'user' ? null : Promise.reject(e))), callBlink('blink_get').catch(() => null), callGc('gc_list').catch(() => null), callOx('ox_get').catch(() => null), callWg('card2crypto_get').catch(() => null), callWg('paygate_get').catch(() => null)]); } catch (e) { return res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${offBox(e)}`)); }
     res.send(shellPage(req, 'Platobné metódy', `<h1>💳 Platobné metódy</h1>${msgOf(req)}<p class="hint">Spôsoby platby na checkoute <a href="${esc(ORIGIN ? ORIGIN + "/" : "/platby")}" target="_blank" rel="noopener noreferrer">${esc(ORIGIN ? ORIGIN.replace(/^https:\/\//, '') : 'lnkbio.onrender.com/platby')}</a>. Vypnuté metódy platobná stránka zákazníkom nezobrazí a ani ich nedovolí použiť.</p>
-${rankCard(req, rs)}${blinkCard(bl, false)}<div class="card pmw" id="platobne-metody">${render(req, st, true)}</div>${customForm(req, st, {})}`));
+${rankCard(req, rs)}${blinkCard(bl, false)}${extrasCard(gc, ox, c2, pg)}<div class="card pmw" id="platobne-metody">${render(req, st, true)}</div>${customForm(req, st, {})}`));
   }));
   // dashboard fragment (loaded by /static/pm.js so a sleeping checkout never blocks /admin)
   admin.get('/platobne-metody/panel', needAuth, wrap(async (req, res) => {
@@ -184,6 +196,139 @@ ${rankCard(req, rs)}${blinkCard(bl, false)}<div class="card pmw" id="platobne-me
       res.redirect(303, BLINK + '?m=saved');
     } catch (e) { fail(req, res, e, BLINK); }
   }));
+
+  // ---- 🎁 Darčekové karty · 🪙 OxaPay · 💳 Card2Crypto / PayGate.to (secrets write-only: never echoed, only „uložený“ + masked hint) ----
+  const GC = BASE + '/darcekove-karty';
+  const OX = BASE + '/oxapay';
+  const WG = { card2crypto: BASE + '/card2crypto', paygate: BASE + '/paygate' };
+  const callGc = (action, extra) => call(action, extra, 30000, '/api/admin-bridge/giftcards');
+  const callOx = (action, extra) => call(action, extra, 30000, '/api/admin-bridge/oxapay');
+  const callWg = (action, extra) => call(action, extra, 45000, '/api/admin-bridge/wallet-gw');
+  const tagOn = (on, a = 'zapnuté', b = 'vypnuté') => `<span class="tag${on ? ' ok' : ''}">${on ? a : b}</span>`;
+  function extrasCard(gc, ox, c2, pg) {
+    const li = (href, title, st, note) => `<li class="pmr"><span class="pmn"><b>${title}</b> ${st}<small>${note}</small></span><span class="pma"><a class="btnl sm g2" href="${href}">⚙️ Nastaviť</a></span></li>`;
+    return `<div class="card pmw" id="pm-extras"><h2>➕ Ďalšie platobné možnosti</h2><ul class="pml0">
+${li(GC, '🎁 Darčekové karty', gc ? tagOn(true, gc.cards.filter((c) => c.enabled).length + '/' + gc.cards.length + ' zapnutých') : tagOn(false, '', 'nedostupné'), 'Amazon, Google Play, Apple, Steam, Xbox, PlayStation, … – pridať, odobrať, poradie.')}
+${li(OX, '🪙 OxaPay (krypto faktúra)', ox ? (ox.configured ? tagOn(true, 'aktívne') : tagOn(false, '', ox.keySet ? 'vypnuté' : 'nenastavené')) : tagOn(false, '', 'nedostupné'), 'Merchant API kľúč, zapnutie, meny, test spojenia.')}
+${li(WG.card2crypto, '💳 Karta / Apple Pay / Google Pay – Card2Crypto', c2 ? (c2.configured ? tagOn(true, 'aktívne') : tagOn(false, '', c2.addressSet ? 'vypnuté' : 'nenastavené')) : tagOn(false, '', 'nedostupné'), 'Výplata v USDC (Polygon) na vašu adresu.')}
+${li(WG.paygate, '💳 Karta / Apple Pay / Google Pay – PayGate.to', pg ? (pg.configured ? tagOn(true, 'aktívne') : tagOn(false, '', pg.addressSet ? 'vypnuté' : 'nenastavené')) : tagOn(false, '', 'nedostupné'), 'Rovnaký systém priamo od PayGate.to (bez prirážky sprostredkovateľa).')}
+</ul></div>`;
+  }
+
+  // 🎁 gift cards
+  function gcPage(req, v, editId) {
+    const tok = hid(req);
+    const n = v.cards.length;
+    const rows = v.cards.map((c, i) => `<li class="pmr${c.enabled ? '' : ' off'}"><span class="pml">${logoTag(c.logo)}</span><span class="pmn"><b>${esc(c.name)}</b> ${tagOn(c.enabled)}<small>${esc(String(c.url).replace(/^https:\/\//, '').slice(0, 70))}</small></span><span class="pma">
+<form method="post" action="${GC}/posun" class="pmf">${tok}<input type="hidden" name="id" value="${esc(c.id)}"><input type="hidden" name="dir" value="up"><button class="sm g2"${i === 0 ? ' disabled' : ''} title="Vyššie">↑</button></form>
+<form method="post" action="${GC}/posun" class="pmf">${tok}<input type="hidden" name="id" value="${esc(c.id)}"><input type="hidden" name="dir" value="down"><button class="sm g2"${i === n - 1 ? ' disabled' : ''} title="Nižšie">↓</button></form>
+<form method="post" action="${GC}/prepnut" class="pmf">${tok}<input type="hidden" name="id" value="${esc(c.id)}"><button class="sm ${c.enabled ? 'd' : 'g'}">${c.enabled ? '⛔ Vypnúť' : '✅ Zapnúť'}</button></form>
+<a class="btnl sm g2" href="${GC}?upravit=${encodeURIComponent(c.id)}#gcform">✏️ Upraviť</a>
+<form method="post" action="${GC}/zmazat" class="pmf" data-confirm="Odstrániť kartu ${esc(c.name)}?">${tok}<input type="hidden" name="id" value="${esc(c.id)}"><button class="sm d">🗑️</button></form></span></li>`).join('');
+    const e = (editId && v.cards.find((c) => c.id === editId)) || null;
+    const cur = e ? e.logo : '';
+    const lib = (v.logos || []).map((l) => `<label class="pmlib"><input type="radio" name="logo" value="${esc(l)}"${l === cur ? ' checked' : ''}>${logoTag(l)}<span>${esc(l.replace(/^\/logos\//, '').replace(/\.(svg|png|webp|jpg)$/, ''))}</span></label>`).join('');
+    const form = `<form method="post" action="${GC}/ulozit" class="card pmw" id="gcform" autocomplete="off">${tok}${e ? `<input type="hidden" name="id" value="${esc(e.id)}">` : ''}
+<h2>${e ? '✏️ Upraviť kartu „' + esc(e.name) + '“' : '➕ Pridať darčekovú kartu'}</h2>
+<label for="gcn">Názov</label><input id="gcn" name="name" maxlength="60" required value="${esc(e ? e.name : '')}" placeholder="napr. Steam">
+<label for="gcu">Odkaz na kúpu (https://)</label><input id="gcu" name="url" type="url" maxlength="500" required value="${esc(e ? e.url : '')}" placeholder="https://dundle.com/sk/steam/">
+<label for="gct">Poznámka pre zákazníka (nepovinné)</label><input id="gct" name="note" maxlength="200" value="${esc(e ? e.note || '' : '')}">
+<fieldset class="pmfs"><legend>Logo</legend><div class="pmlibs">${lib}</div><p class="hint">Vlastné logo nahrajte cez „Upraviť“ pri vlastnom spôsobe platby, alebo použite knižnicu.</p></fieldset>
+<label class="ck"><input type="checkbox" name="enabled" value="1"${!e || e.enabled ? ' checked' : ''}> Zapnutá (zobraziť zákazníkom)</label>
+<p class="row"><button>💾 ${e ? 'Uložiť zmeny' : 'Pridať kartu'}</button>${e ? `<a class="btnl g2" href="${GC}">Zrušiť</a>` : ''}</p></form>`;
+    return `<h1>🎁 Darčekové karty</h1>${msgOf(req)}<p class="hint">Karty, ktoré si zákazník môže kúpiť (SK/CZ) a zaplatiť kódom. Poradie tu = poradie na platobnej stránke v skupine „Poukážky / darčekové karty“.</p>
+<div class="card pmw"><h2>Zoznam (${n})</h2><ul class="pml0">${rows || '<li class="hint">Žiadne karty.</li>'}</ul>
+<form method="post" action="${GC}/obnovit" class="pmf" data-confirm="Obnoviť predvolený zoznam kariet? Vaše zmeny sa stratia.">${tok}<button class="sm g2">♻️ Obnoviť predvolené</button></form></div>${form}`;
+  }
+  admin.get('/platobne-metody/darcekove-karty', needAuth, wrap(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    let v; try { v = await callGc('gc_list'); } catch (e) { return res.send(shellPage(req, 'Darčekové karty', `<h1>🎁 Darčekové karty</h1>${offBox(e)}`)); }
+    res.send(shellPage(req, 'Darčekové karty', gcPage(req, v, String(req.query.upravit || '').slice(0, 60))));
+  }));
+  const gcPost = (sub, action, pick, m) => admin.post('/platobne-metody/darcekove-karty/' + sub, needAuth, csrf, wrap(async (req, res) => {
+    const b = req.body || {};
+    try { await callGc(action, pick(b)); await audit(req, 'giftcards_' + sub, String(b.id || b.name || '').slice(0, 60)); res.redirect(303, GC + '?m=' + m); } catch (e) { fail(req, res, e, GC); }
+  }));
+  const s = (v, n) => String(v == null ? '' : v).slice(0, n);
+  gcPost('ulozit', 'gc_save', (b) => ({ id: s(b.id, 60), name: s(b.name, 60), url: s(b.url, 500), logo: s(b.logo, 120), note: s(b.note, 200), enabled: b.enabled === '1' ? '1' : '' }), 'saved');
+  gcPost('zmazat', 'gc_delete', (b) => ({ id: s(b.id, 60) }), 'ok');
+  gcPost('posun', 'gc_move', (b) => ({ id: s(b.id, 60), dir: b.dir === 'up' ? 'up' : 'down' }), 'moved');
+  gcPost('prepnut', 'gc_toggle', (b) => ({ id: s(b.id, 60) }), 'toggled');
+  gcPost('obnovit', 'gc_reset', () => ({}), 'ok');
+
+  // 🪙 OxaPay
+  function oxForm(req, o) {
+    const coins = (o.allCoins || []).map(([c, n]) => `<label class="pmcoin"><input type="checkbox" name="coins" value="${esc(c)}"${o.coins.includes(c) ? ' checked' : ''}><span><b>${esc(c)}</b> <small>${esc(n)}</small></span></label>`).join('');
+    const t = o.lastTest;
+    return `<form method="post" action="${OX}" class="card pmw" id="oxapay" autocomplete="off">${hid(req)}
+<h2>🪙 OxaPay ${o.configured ? '<span class="tag ok">aktívne</span>' : `<span class="tag">${o.keySet ? 'vypnuté' : 'nenastavené'}</span>`}</h2>
+<p class="hint">Zákazník dostane faktúru na presnú sumu v EUR (platí 30 minút), zaplatí kryptom na stránke OxaPay a objednávka sa po potvrdení (podpis HMAC) označí ako zaplatená + príde Telegram. Bez kľúča a zapnutia sa zákazníkom nezobrazí.</p>
+${o.encAvailable ? '' : '<div class="msg err">⚠️ Chýba DATA_ENC_KEY – kľúč nie je možné bezpečne uložiť.</div>'}
+<label for="oxk">OxaPay Merchant API kľúč <span class="tag${o.keySet ? ' ok' : ''}">${o.keySet ? 'uložený ' + esc(o.keyHint) : 'nenastavený'}</span></label><input id="oxk" name="apiKey" type="password" maxlength="80" value="" autocomplete="new-password" spellcheck="false" placeholder="${o.keySet ? 'nechajte prázdne = ponechať uložený kľúč' : 'vložte Merchant API key'}">
+<p class="hint">OxaPay → <b>Merchant Service</b> → <b>Generate API Key</b> (Merchant API key, nie Payout ani General). Uloží sa šifrovane, nikdy sa nezobrazí.</p>
+${o.keySet ? '<label class="ck"><input type="checkbox" name="clearKey" value="1"> Odstrániť uložený kľúč</label>' : ''}
+<fieldset class="pmfs"><legend>Prijímané kryptomeny (zobrazené zákazníkovi)</legend><div class="pmcoing">${coins}</div><p class="hint">Samotný zoznam mien na platobnej stránke určuje nastavenie API kľúča v OxaPay (Merchant Service → Edit → Accepted currencies). Tu zvolené meny sa zobrazia v popise metódy.</p></fieldset>
+<label class="ck"><input type="checkbox" name="enabled" value="1"${o.enabled ? ' checked' : ''}> Zapnúť OxaPay pre zákazníkov</label>
+<label class="ck"><input type="checkbox" name="sandbox" value="1"${o.sandbox ? ' checked' : ''}> Testovací režim (sandbox – bez skutočných platieb)</label>
+${t ? `<div class="msg${t.ok ? '' : ' err'}">${t.ok ? '✅' : '⚠️'} ${esc(t.msg)} <small>(${esc(String(t.at || '').replace('T', ' ').slice(0, 16))} UTC)</small></div>` : ''}
+<p class="row"><button>💾 Uložiť OxaPay</button><button formaction="${OX}/test" class="g2">🔌 Otestovať kľúč</button><a class="btnl g2" href="${BASE}">Späť</a></p></form>`;
+  }
+  admin.get('/platobne-metody/oxapay', needAuth, wrap(async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    let o; try { o = await callOx('ox_get'); } catch (e) { return res.send(shellPage(req, 'OxaPay', `<h1>🪙 OxaPay</h1>${offBox(e)}`)); }
+    res.send(shellPage(req, 'OxaPay', `<h1>🪙 OxaPay</h1>${msgOf(req)}${oxForm(req, o)}`));
+  }));
+  admin.post('/platobne-metody/oxapay', needAuth, csrf, wrap(async (req, res) => {
+    const b = req.body || {};
+    try {
+      const coins = (Array.isArray(b.coins) ? b.coins : b.coins ? [b.coins] : []).map((c) => s(c, 8)).join(',');
+      const out = await callOx('ox_save', { apiKey: s(b.apiKey, 100), clearKey: b.clearKey === '1' ? '1' : '', coins, enabled: b.enabled === '1' ? '1' : '', sandbox: b.sandbox === '1' ? '1' : '' });
+      await audit(req, 'paymethod_oxapay', `key=${out.keySet ? 'set' : 'none'} enabled=${out.enabled} sandbox=${out.sandbox}`);
+      res.redirect(303, OX + '?m=saved');
+    } catch (e) { fail(req, res, e, OX); }
+  }));
+  admin.post('/platobne-metody/oxapay/test', needAuth, csrf, wrap(async (req, res) => {
+    try { const out = await callOx('ox_test'); await audit(req, 'paymethod_oxapay_test', out.lastTest && out.lastTest.ok ? 'ok' : 'fail'); res.redirect(303, OX); } catch (e) { fail(req, res, e, OX); }
+  }));
+
+  // 💳 Card2Crypto / PayGate.to
+  function wgForm(req, b, w) {
+    const url = WG[b];
+    const provs = (w.providers || []).map((p) => `<option value="${esc(p.id)}"${p.id === w.provider ? ' selected' : ''}>${esc(p.name)} – min. ${esc(p.min)} ${esc(p.minCur)}</option>`).join('');
+    return `<form method="post" action="${url}" class="card pmw" id="wg-${esc(b)}" autocomplete="off">${hid(req)}
+<h2>💳 ${esc(w.name)} ${w.configured ? '<span class="tag ok">aktívne</span>' : `<span class="tag">${w.addressSet ? 'vypnuté' : 'nenastavené'}</span>`}</h2>
+<p class="hint">Zákazník zaplatí kartou / Apple Pay / Google Pay u platobného partnera, peniaze prídu ako USDC na sieti Polygon priamo na vašu adresu (žiadny účet, nič sa nedrží u brány). Zákazník vidí iba „${esc(w.label || w.defaultLabel)}“ – bez poplatkov. Bez adresy, poskytovateľa a zapnutia sa nezobrazí.</p>
+${w.encAvailable ? '' : '<div class="msg err">⚠️ Chýba DATA_ENC_KEY – adresu nie je možné bezpečne uložiť.</div>'}
+<label for="wga">USDC (Polygon) adresa na výplatu <span class="tag${w.addressSet ? ' ok' : ''}">${w.addressSet ? 'uložená ' + esc(w.addressMasked) : 'nenastavená'}</span></label><input id="wga" name="address" maxlength="42" pattern="0x[0-9a-fA-F]{40}" value="" spellcheck="false" autocapitalize="off" placeholder="${w.addressSet ? 'nechajte prázdne = ponechať uloženú adresu' : '0x… (vaša peňaženka, ktorá podporuje Polygon)'}">
+<p class="hint">Adresa vašej vlastnej EVM peňaženky (MetaMask, Trust Wallet, Ledger…) – rovnaká 0x adresa ako na Ethereum, peňaženka musí zobrazovať sieť Polygon. Nie adresa burzy bez podpory Polygon USDC. Uloží sa šifrovane.</p>
+${w.addressSet ? '<label class="ck"><input type="checkbox" name="clearAddress" value="1"> Odstrániť uloženú adresu</label>' : ''}
+<label for="wgp">Poskytovateľ platby kartou</label><select id="wgp" name="provider"><option value="">– vyberte –</option>${provs}</select>
+<p class="hint">${w.providersAt ? 'Zoznam fungujúcich poskytovateľov načítaný ' + esc(String(w.providersAt).replace('T', ' ').slice(0, 16)) + ' UTC.' : 'Najprv načítajte zoznam fungujúcich poskytovateľov.'} Odporúčané pre SK/CZ: Stripe, Revolut alebo Google Pay / Apple Pay.</p>
+<label for="wgl">Názov pre zákazníka</label><input id="wgl" name="label" maxlength="60" value="${esc(w.label)}" placeholder="${esc(w.defaultLabel)}">
+<label for="wgt">Tolerancia sumy (%)</label><input id="wgt" name="tolerance" type="number" min="0" max="50" step="1" value="${esc(w.tolerance)}">
+<p class="hint">Platba sa označí ako zaplatená, ak prijaté USDC ≥ očakávané − tolerancia (poplatky poskytovateľa). Inak príde Telegram „overiť“.</p>
+<label class="ck"><input type="checkbox" name="enabled" value="1"${w.enabled ? ' checked' : ''}> Zapnúť pre zákazníkov</label>
+<p class="row"><button>💾 Uložiť</button><button formaction="${url}/poskytovatelia" class="g2" formnovalidate>🔄 Načítať poskytovateľov</button><a class="btnl g2" href="${BASE}">Späť</a></p></form>`;
+  }
+  for (const b of Object.keys(WG)) {
+    const title = b === 'card2crypto' ? 'Card2Crypto' : 'PayGate.to';
+    admin.get('/platobne-metody/' + b, needAuth, wrap(async (req, res) => {
+      res.setHeader('Cache-Control', 'no-store');
+      let w; try { w = await callWg(b + '_get'); } catch (e) { return res.send(shellPage(req, title, `<h1>💳 ${title}</h1>${offBox(e)}`)); }
+      res.send(shellPage(req, title, `<h1>💳 Karta / Apple Pay / Google Pay – ${title}</h1>${msgOf(req)}${wgForm(req, b, w)}`));
+    }));
+    admin.post('/platobne-metody/' + b, needAuth, csrf, wrap(async (req, res) => {
+      const x = req.body || {};
+      try {
+        const out = await callWg(b + '_save', { address: s(x.address, 60).trim(), clearAddress: x.clearAddress === '1' ? '1' : '', provider: s(x.provider, 40), label: s(x.label, 60), tolerance: s(x.tolerance, 4), enabled: x.enabled === '1' ? '1' : '' });
+        await audit(req, 'paymethod_' + b, `addr=${out.addressSet ? 'set' : 'none'} enabled=${out.enabled} provider=${out.provider || '-'}`);
+        res.redirect(303, WG[b] + '?m=saved');
+      } catch (e) { fail(req, res, e, WG[b]); }
+    }));
+    admin.post('/platobne-metody/' + b + '/poskytovatelia', needAuth, csrf, wrap(async (req, res) => {
+      try { await callWg(b + '_providers'); res.redirect(303, WG[b] + '?m=ok'); } catch (e) { fail(req, res, e, WG[b]); }
+    }));
+  }
 
   // logo proxy (onrender.com is a public suffix → checkout logos are cross-site; serve them same-origin, sandboxed)
   const LC = new Map();
@@ -267,8 +412,8 @@ ${rankCard(req, rs)}${blinkCard(bl, false)}<div class="card pmw" id="platobne-me
     try { await call('rank_recompute'); await audit(req, 'paymethod_rank_recompute', ''); toRank(res); } catch (e) { fail(req, res, e); }
   }));
 
-  const FIELDS = ['name', 'group', 'url', 'description', 'minEur', 'mode', 'proofForm', 'enabled', 'hideLogo', 'logoUrl', 'lib', 'removeLogo'];
-  const up = multer({ storage: multer.memoryStorage(), limits: { fileSize: 512 * 1024, files: 1, fields: 20, fieldSize: 2000 } }).single('logo');
+  const FIELDS = ['name', 'group', 'url', 'description', 'minEur', 'mode', 'proofForm', 'enabled', 'hideLogo', 'logoUrl', 'lib', 'removeLogo', 'coins', 'coinsSent', 'coinsCustom'];
+  const up = multer({ storage: multer.memoryStorage(), limits: { fileSize: 512 * 1024, files: 1, fields: 80, fieldSize: 2000 } }).single('logo');
   const withLogo = (to) => [needAuth, (req, res, next) => up(req, res, (e) => (e ? res.redirect(303, to(req) + '?e=' + encodeURIComponent(e.code === 'LIMIT_FILE_SIZE' ? 'Logo je príliš veľké (max 512 kB).' : 'Neplatný súbor.')) : next())), csrf];
   const fieldsOf = (b) => { const o = {}; for (const k of FIELDS) if (b[k] != null && b[k] !== '') o[k] = String(b[k]).slice(0, 1000); return o; };
   const logoOf = (f) => (f && f.buffer && f.buffer.length ? { b64: f.buffer.toString('base64'), name: String(f.originalname || 'logo').slice(0, 80) } : null);
