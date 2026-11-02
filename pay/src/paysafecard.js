@@ -121,7 +121,6 @@ function status() {
     deadlineMinutes: deadlineMinutes(),
     emailMode: mode,
     smtpConfigured: smtp,
-    notifyEmail: notifyEmail() || null,
     confirmSecretSet: Boolean(confirmSecret()),
     pinShopUrl: PIN_SHOP_URL,
     customerPrompt: 'NEPOSIELAJTE PIN/kód nikomu (len informačný návod)',

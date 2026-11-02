@@ -340,7 +340,7 @@ app.get('/api/site-info', wrap(async (req, res) => {
   res.json({ title: s.title, bio: s.bio, chat_enabled: s.chat_enabled !== '0', pay_link: SHORT_PAY,
     pages: Object.fromEntries(Object.entries(PAGES).map(([k, [n, u]]) => [n, base + u])),
     about: s.about_text, payments: s.pay_text, contact: s.contact_text,
-    contacts: Object.fromEntries(SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n]) => [n, s['soc_' + k]])),
+    contacts: Object.fromEntries(SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n]) => [n, /^\/go\//.test(socUrl(s, k)) ? LNK_PUBLIC + socUrl(s, k) : s['soc_' + k]])),
     pricing: { intro: s.pricing_intro, footnote: s.pricing_note, page: base + '/cennik', plans: (await getList('plans')).filter(p => p.active).map(p => ({ name: p.name, price: fmtEur(p.price), old_price: p.old_price ? fmtEur(p.old_price) : '', period: perLabel(p.period, false), popular: p.popular, badge: p.badge, includes: p.features.split('\n').filter(Boolean), note: p.note, link: p.btn_url || planUrl(p) })) },
     faq: (await getList('faq')).map(x => ({ q: x.q, a: x.a })),
     channels: [...t.entries()].map(([r, m]) => ({ region: r, categories: [...m.entries()].map(([c, l]) => ({ name: c, items: l.slice(0, 40).map(x => x.name) })) })) });
@@ -1046,6 +1046,15 @@ const para = t => esc(t).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')
 const btnHtml = b => `<a class="b${b.brand ? ' br br-' + b.brand : ''}" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`;
 const SOC_BRAND = { telegram: 'telegram', instagram: 'instagram', facebook: 'facebook', x: 'x', tiktok: 'tiktok', email: 'email', whatsapp: 'whatsapp', signal: 'signal', youtube: 'youtube', tg_group: 'telegram', fb_group: 'facebook' };
 const pubBtns = async sec => { const now = Date.now(); return (await getButtons()).filter(b => b.enabled && (b.section || 'home') === sec && inWindow(b, now)); };
+// Social links whose URL contains the internal brand name are served via a server-side redirect, so the handle never appears in HTML/JSON.
+const socUrl = (s, k) => k === 'email' ? 'mailto:' + s['soc_' + k] : (/tokigo/i.test(String(s['soc_' + k] || '')) ? '/go/' + k : s['soc_' + k]);
+app.get('/go/:k', wrap(async (req, res, next) => {
+  const s = await getSettings(), k = String(req.params.k || '');
+  if (k === 'email' || !SOCIALS.some(([x]) => x === k) || !socOn(s, k)) return next();
+  const u = safeUrl(s['soc_' + k]); if (!u) return next();
+  res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Robots-Tag', 'noindex');
+  res.redirect(302, u);
+}));
 const slugOk = async (req) => { const s = await getSettings(); return req.params.slug === s.slug ? s : null; };
 // channel catalogue tree (cached, invalidated with list cache)
 async function chTree() {
@@ -1060,7 +1069,7 @@ const chBase = s => '/' + s.slug + '/kanaly';
 app.get('/:slug', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const bs = await pubBtns('home');
-  const soc = SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n, e]) => `<a href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
+  const soc = SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n, e]) => `<a href="${esc(socUrl(s, k))}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
   const banner = await features.monitorBanner(req.lang).catch(() => '');
   await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}${features.eventsHero ? await features.eventsHero(req, s, 'home') : ''}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
 ${s.layout === 'tv' ? (s.tvbar_on !== '0' ? `<div class="tvbar"><span class="live">${esc(T(req, '● LIVE'))}</span><span>${esc(T(req, '▶ Stream'))}</span><span>${esc(T(req, '📺 TV'))}</span><span>${esc(T(req, '⚙ Software'))}</span></div>` : '') : ''}</section>
@@ -1133,7 +1142,7 @@ ${s.checkout_url ? `<a class="b br br-platby" href="${esc(co)}" rel="noopener no
 }));
 app.get('/:slug/kontakt', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
-  const a = (k, n, e) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(k === 'email' ? 'mailto:' + s['soc_' + k] : s['soc_' + k])}" rel="noopener noreferrer nofollow">${e} ${esc(T(req, n))}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`;
+  const a = (k, n, e) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(socUrl(s, k))}" rel="noopener noreferrer nofollow">${e} ${esc(T(req, n))}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`;
   const on = SOCIALS.filter(([k]) => socOn(s, k)), grp = on.filter(([k]) => socGrp(s, k) === 'g'), dir = on.filter(([k]) => socGrp(s, k) !== 'g');
   const blk = (h, ico, l) => l.length ? `<section class="cgrp"><h2 class="ch2"><span aria-hidden="true">${ico}</span> ${T(req, h)}</h2>${l.map(([k, n, e]) => a(k, n, e)).join('')}</section>` : '';
   const soc = blk('Skupiny', '👥', grp) + blk('Priame kontakty', '💬', dir);

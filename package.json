@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/evrank.test.js && node test/tvch-import.test.js && node test/epgext.test.js && node test/evhero.test.js && node test/evbig.test.js && node test/sections.test.js && node test/blink.test.js && node test/affiliate.test.js && node test/mailer.test.js && node test/sitekb.test.js && node test/xpub.test.js && node test/paymore.test.js && node test/panel.test.js && node pay/scripts/test-sepa-bot-chain.js"
+    "test": "node test/evrank.test.js && node test/tvch-import.test.js && node test/epgext.test.js && node test/evhero.test.js && node test/evbig.test.js && node test/sections.test.js && node test/blink.test.js && node test/affiliate.test.js && node test/mailer.test.js && node test/sitekb.test.js && node test/xpub.test.js && node test/paymore.test.js && node test/brandleak.test.js && node test/panel.test.js && node pay/scripts/test-sepa-bot-chain.js"
   },
   "engines": {
     "node": ">=20.9.0"

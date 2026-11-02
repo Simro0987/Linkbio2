@@ -33,10 +33,11 @@ async function apiFetch(url, options = {}) {
   return data;
 }
 
-function buildCallbackUrl(orderId) {
+function buildCallbackUrl(orderId, token) {
   const base = config.callbackBaseUrl;
   const sep = base.includes('?') ? '&' : '?';
-  return `${base}${sep}orderId=${encodeURIComponent(orderId)}`;
+  // t = per-order random secret (only its sha256 is stored on the order); verified in /callback.
+  return `${base}${sep}orderId=${encodeURIComponent(orderId)}${token ? `&t=${encodeURIComponent(token)}` : ''}`;
 }
 
 /** Chain2Pay payout (USDC on Polygon): admin „Adresy peňaženiek“ (Polygon, else shared EVM) → config fallback until loaded. */
@@ -54,9 +55,9 @@ function payoutWallet() {
  * Step 1: Generate a one-time encrypted receiving address.
  * Fresh wallet token per order — never reuse.
  */
-async function createWallet(orderId) {
+async function createWallet(orderId, opts = {}) {
   if (!orderId) throw new Error('orderId is required');
-  const callback = buildCallbackUrl(orderId);
+  const callback = buildCallbackUrl(orderId, opts.token);
   const url =
     `${config.apiBase}/wallet.php` +
     `?address=${encodeURIComponent(payoutWallet())}` +

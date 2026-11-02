@@ -302,7 +302,6 @@ function status() {
     deadlineMinutes: deadlineMinutes(),
     emailMode: mode,
     smtpConfigured: smtp,
-    notifyEmail: notifyEmail() || null,
     confirmSecretSet: Boolean(confirmSecret()),
     customerPrompt: 'NEPOSIELAJTE PIN/kód nikomu (len informačný návod)',
     denominations: amounts,

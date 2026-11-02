@@ -37,14 +37,12 @@ function isConfigured() {
 }
 
 function status() {
-  const { storeSlug, storePage, url } = getEnv();
+  const { storeSlug, url } = getEnv(); // slug/store page never public (brand name) – checkout goes via /pay/btcpay
   const configured = isConfigured();
   return {
     id: 'btcpay',
     provider_name: 'BTCPay (Bitcoin / Lightning)',
     configured,
-    storeSlug: storeSlug || null,
-    storePage: storePage || null,
     apiHost: url
       ? (() => {
           try {

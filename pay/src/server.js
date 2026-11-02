@@ -43,8 +43,11 @@ const destination = require('./destination');
 const customerPrefill = require('./customerPrefill');
 
 const app = express();
+const sha256Hex = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+// Public JSON brand/secret scrub (safety net): no internal brand name, notify e-mails, store slugs or admin paths in API output.
+app.use(require('./publicScrub').middleware);
 // Compression (brotli/gzip); never buffer Server-Sent Events.
 app.use(require('compression')({
   filter: (req, res) => !/event-stream/i.test(String(res.getHeader('Content-Type') || '')) && !/\/(events|stream|updates)\b/.test(req.path) && require('compression').filter(req, res),
@@ -1462,8 +1465,6 @@ app.get('/api/providers', async (req, res) => {
       bank_sepa_manual: electrocoin.status(),
       sepa_admin: {
         configured: adminSepa.isConfigured(),
-        loginPath: '/admin/login',
-        listPath: '/admin/platby/sepa',
       },
       paysafecard: paysafecard.status(),
       g2a: g2a.status(),
@@ -2125,7 +2126,7 @@ async function handleCreateCheckout(req, res) {
         if (redirect) return res.redirect(302, inv.checkoutLink);
         return res.json({
           orderId,
-          checkoutUrl: inv.checkoutLink,
+          checkoutUrl: `/pay/btcpay?orderId=${encodeURIComponent(orderId)}`, // invoice link stays server-side
           resolution: 'direct',
           providerHost: orders[orderId].providerHost,
           amountEur,
@@ -2411,10 +2412,7 @@ async function handleCreateCheckout(req, res) {
             mode: delivery.mode,
             smtpConfigured: delivery.smtpConfigured,
             sent: delivery.sent,
-            notifyEmail: paysafecard.notifyEmail() || null,
-            temp: delivery.temp
-              ? { jsonPath: delivery.temp.jsonPath, instructionsPath: delivery.temp.instructionsPath }
-              : null,
+            temp: Boolean(delivery.temp),
             errors: delivery.errors,
           },
         });
@@ -2486,10 +2484,7 @@ async function handleCreateCheckout(req, res) {
             mode: delivery.mode,
             smtpConfigured: delivery.smtpConfigured,
             sent: delivery.sent,
-            notifyEmail: g2a.notifyEmail() || null,
-            temp: delivery.temp
-              ? { jsonPath: delivery.temp.jsonPath, instructionsPath: delivery.temp.instructionsPath }
-              : null,
+            temp: Boolean(delivery.temp),
             errors: delivery.errors,
           },
         });
@@ -3004,10 +2999,8 @@ async function handleCreateCheckout(req, res) {
         if (!isProvider) {
           return res.status(400).json({ error: 'Chýba .is provider (is_ramp, is_banxa, …)' });
         }
-        const callbackUrl = chain2payIs.buildCallbackUrl(
-          orderId,
-          config.callbackBaseUrl
-        );
+        const cbTokenIs = crypto.randomBytes(24).toString('hex');
+        const callbackUrl = `${chain2payIs.buildCallbackUrl(orderId, config.callbackBaseUrl)}&t=${cbTokenIs}`;
         const pay = await chain2payIs.createPayment({
           amount: amountEur,
           currency: 'EUR',
@@ -3038,6 +3031,7 @@ async function handleCreateCheckout(req, res) {
           provider: `is_${isProvider}`,
           providerId: isProvider,
           gateway: 'chain2pay_is',
+          cbTokenHash: sha256Hex(cbTokenIs),
           checkoutUrl: localPayUrl,
           providerCheckoutUrl,
           localPayUrl,
@@ -3142,7 +3136,8 @@ async function handleCreateCheckout(req, res) {
     }
 
     // Fresh wallet every time — old tokens may return Bad Request on second_step
-    const wallet = await client.createWallet(orderId);
+    const cbToken = crypto.randomBytes(24).toString('hex');
+    const wallet = await client.createWallet(orderId, { token: cbToken });
     const built = client.buildProcessPaymentUrl({
       addressIn: wallet.address_in,
       amount: resolved.amount,
@@ -3295,6 +3290,7 @@ async function handleCreateCheckout(req, res) {
       polygon_address_in: wallet.polygon_address_in,
       ipn_token: wallet.ipn_token,
       callback_url: wallet.callback_url,
+      cbTokenHash: sha256Hex(cbToken),
       processPaymentUrl,
       checkoutUrl: customerCheckoutUrl,
       providerCheckoutUrl: providerCheckoutUrl || checkoutUrl,
@@ -3349,8 +3345,6 @@ async function handleCreateCheckout(req, res) {
       },
       address_in: wallet.address_in,
       polygon_address_in: wallet.polygon_address_in,
-      ipn_token: wallet.ipn_token,
-      callback_url: wallet.callback_url,
       payoutAddress: payoutEvm.address,
       payoutCoin: 'evm',
       lockedWallet: Boolean(cryptoLock.lockedWallet),
@@ -3475,6 +3469,15 @@ function tagAccount(handler) {
 app.post('/api/checkout', tagMethod(tagAccount(handleCreateCheckout)));
 app.post('/create-checkout', tagMethod(tagAccount(handleCreateCheckout)));
 app.post('/api/create-checkout', tagMethod(tagAccount(handleCreateCheckout)));
+/** BTCPay checkout via server-side redirect – the BTCPay link / store name never appears in client JSON or HTML. */
+app.get('/pay/btcpay', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const id = String(req.query.orderId || '');
+  const o = /^ord_[a-f0-9]{8,40}$/.test(id) ? loadOrders()[id] : null;
+  const u = o && (o.gateway === 'btcpay' || o.provider === 'btcpay') ? String(o.checkoutUrl || '') : '';
+  if (!/^https?:\/\//i.test(u)) return res.status(404).type('text/plain').send('Objednávka nenájdená.');
+  return res.redirect(302, u);
+});
 
 /**
  * Proxy second_step for an existing order (used by /checkout-bridge).
@@ -3661,7 +3664,7 @@ function handleCallback(req, res) {
     value_forwarded_coin: q.value_forwarded_coin,
     provider: q.provider || null,
     source: q.source || null,
-    rawQuery: q,
+    rawQuery: (() => { const { t, ...rest } = q; return rest; })(),
   };
 
   appendLog(`CALLBACK ${JSON.stringify(fields)}`);
@@ -3686,6 +3689,19 @@ function handleCallback(req, res) {
         break;
       }
     }
+  }
+  // Orders created since the callback token was introduced carry cbTokenHash: the callback must present
+  // the matching secret t (constant-time). Older pending orders (no hash) keep the legacy behaviour.
+  const target = orderId ? orders[orderId] : null;
+  if (target && target.cbTokenHash) {
+    const tok = String(q.t || '');
+    const good = /^[a-f0-9]{48}$/.test(tok) && /^[a-f0-9]{64}$/.test(String(target.cbTokenHash)) &&
+      crypto.timingSafeEqual(Buffer.from(sha256Hex(tok), 'hex'), Buffer.from(String(target.cbTokenHash), 'hex'));
+    if (!good) {
+      appendLog(`CALLBACK_TOKEN_REJECT orderId=${orderId}`);
+      return res.status(tok ? 403 : 400).send(tok ? 'forbidden' : 'missing payment fields');
+    }
+    if (target.status === 'paid') return res.status(200).send('OK');
   }
   if (orderId && orders[orderId]) {
     orders[orderId].status = ok ? 'paid' : 'callback_incomplete';
@@ -3712,7 +3728,7 @@ app.get('/api/orders/:orderId', (req, res) => {
   if (!o) return res.status(404).json({ error: 'not found' });
   res.set('Cache-Control', 'no-store');
   // Do not expose PII / customer-submitted codes / internal fields by order id.
-  const { contact, customer, email, phone, ip, proofSubmissions, adminDecision, adminDecisionAt, statusToken, amountLinkUrl, ...pub } = o;
+  const { contact, customer, email, phone, ip, proofSubmissions, adminDecision, adminDecisionAt, statusToken, amountLinkUrl, cbTokenHash, callback_url, ipn_token, callback, wg, ...pub } = o;
   res.json(pub);
 });
 
@@ -5148,8 +5164,6 @@ app.get('/health', (_req, res) => {
     bank_sepa_manual: electrocoin.status(),
     sepa_admin: {
       configured: adminSepa.isConfigured(),
-      loginPath: '/admin/login',
-      listPath: '/admin/platby/sepa',
     },
     paysafecard: paysafecard.status(),
     g2a: g2a.status(),
