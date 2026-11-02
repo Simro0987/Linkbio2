@@ -108,7 +108,7 @@ function classify(slotS, teams, events) {
   }
   return best ? { st: 'replay', ev: best } : { st: 'none', ev: null };
 }
-const tsdbEvent = (e) => ({ ts: (() => { const t = e.strTimestamp ? Date.parse(String(e.strTimestamp).replace(/(\+00:?00|Z)?$/, 'Z')) : e.dateEvent && e.strTime ? Date.parse(e.dateEvent + 'T' + e.strTime + 'Z') : NaN; return t; })(), home: e.strHomeTeam || '', away: e.strAwayTeam || '', league: e.strLeague || '', round: e.intRound || '', hb: e.strHomeTeamBadge || '', ab: e.strAwayTeamBadge || '', status: e.strStatus || '' });
+const tsdbEvent = (e) => ({ venue: e.strVenue || '', city: e.strCity || '', ts: (() => { const t = e.strTimestamp ? Date.parse(String(e.strTimestamp).replace(/(\+00:?00|Z)?$/, 'Z')) : e.dateEvent && e.strTime ? Date.parse(e.dateEvent + 'T' + e.strTime + 'Z') : NaN; return t; })(), home: e.strHomeTeam || '', away: e.strAwayTeam || '', league: e.strLeague || '', round: e.intRound || '', hb: e.strHomeTeamBadge || '', ab: e.strAwayTeamBadge || '', status: e.strStatus || '' });
 
 // ---------- priority, merge, variety ----------
 const SOON = [6, 4, 3, 2, 1, 0, -2, -3];
@@ -174,4 +174,82 @@ function select(list, n, opt = {}) {
   return out.sort((a, b) => list.indexOf(a) - list.indexOf(b));
 }
 
-module.exports = { clubBonus, firstAirings, stemKey, airKey, TZ, dayKey, dayDiff, dateLbl, hmL, whenLbl, badge, isRecording, pairIn, teamsOf, compOf, qName, sameTeam, classify, tsdbEvent, soon, priority, merge, select, isSport, sameEvent, pairKey, fold };
+
+// ---------- card descriptions (facts → 1–2 Slovak sentences; never invented) ----------
+// Matches: competition, round, venue (TheSportsDB fixture), table position/points/form (TheSportsDB table, top 5 only on the
+// free key), rivalry / big-club / final context from the „veľký zápas“ tier labels. Other events: the EPG programme text,
+// cleaned and cut to 1–2 sentences. Template variants rotate per card so no two cards read the same; Gemini may rewrite the
+// same facts into a teaser (accepted only if it names a team for matches and adds no number missing from the facts).
+const FORM = { W: 'V', D: 'R', L: 'P' };
+// table row of a team; words shared by several rows („Prague“ in Slavia/Sparta Prague) do not identify a team
+function tblRow(rows, team) {
+  const R = rows || [], cnt = new Map(); for (const r of R) for (const w of new Set(fold(r.name).split(' '))) cnt.set(w, (cnt.get(w) || 0) + 1);
+  const mine = new Set(fold(qName(team)).split(' ').concat(fold(team).split(' ')).filter((w) => w.length >= 4));
+  let best = null, bn = 0;
+  for (const r of R) { const n = fold(r.name).split(' ').filter((w) => mine.has(w) && cnt.get(w) === 1).length + (fold(r.name) === fold(qName(team)) ? 5 : 0); if (n > bn) { bn = n; best = r; } }
+  return best;
+}
+// big-match labels („Derby d'Italia +40“) → { rival, clubs, stake }
+function bigCtx(big, rivals) {
+  const o = { rival: '', clubs: false, stake: '' };
+  for (const w of big || []) {
+    const l = String(w).replace(/\s*[+−-]\d+\s*$/, '').replace(/\s*½$/, '').trim();
+    if (!o.rival && rivals && rivals.has(l) && /derby|cl[aá]sico|classique|klassi[ek]|old firm/i.test(l)) o.rival = l.replace(/\s*\((?:hokej|S–S)\)$/, '');
+    else if (/top kluby|veľkokluby|top tímy|original six/i.test(l)) o.clubs = true;
+    else if (/^semifinále/i.test(l)) o.stake = o.stake || 'semifinále';
+    else if (/^finále/i.test(l)) o.stake = 'finále';
+    else if (/vyraďovacia fáza|play-off|štvrťfinále/i.test(l)) o.stake = o.stake || 'vyraďovacia fáza';
+  }
+  return o;
+}
+// structured facts for one match card (also fed to Gemini)
+function matchFacts(x, ctx) {
+  const c = ctx || {}, b = bigCtx(x.big, c.rivals), [h, a] = x.teams;
+  const SPORTW = /^(futbal|fotbal|hokej|ľadový hokej|basketbal|hádzaná|házená|tenis|volejbal|florbal)$/i;
+  const seg = String(x.comp || '').split(/\s*·\s*/).map((z) => z.trim()).filter(Boolean), sport = seg.find((z) => SPORTW.test(z)) || '';
+  let comp = seg.filter((z) => !SPORTW.test(z) && !/^reprezent[aá]c/i.test(z)).join(' · ').replace(/\s*\b(19|20)\d\d\/(19|20)?\d\d\b/g, '').trim() || x.league || '';
+  if (sport && !/^f[uo]tbal$/i.test(sport)) comp += ' (' + sport.toLowerCase() + ')';
+  const hasRound = /\bkolo\b|\bkola\b|round|matchday/i.test(comp);
+  const cup = /uefa|liga (majstrov|mistr)|európsk|evropsk|konferen|pohár|pohar|cup|kvalifik/i.test(comp + ' ' + (x.league || ''));
+  const L = !cup && x.official === 'ok' ? (c.tables || []).find((t) => tblRow(t.rows, h) || tblRow(t.rows, a)) : null;
+  const ph = L && tblRow(L.rows, h), pa = L && tblRow(L.rows, a);
+  return { h, a, comp, round: !hasRound && x.official === 'ok' && +x.round > 0 && +x.round < 60 ? +x.round : 0, venue: x.official === 'ok' ? side(x.venue || '') : '', rival: b.rival, clubs: b.clubs, stake: b.stake, ph, pa, cup };
+}
+const formSk = (f) => String(f || '').toUpperCase().replace(/[^WDL]/g, '').slice(-5).split('').map((z) => FORM[z]).join('');
+const hsh = (s) => { let n = 7; for (const ch of String(s)) n = (n * 31 + ch.charCodeAt(0)) >>> 0; return n; };
+function matchDesc(f, v) {
+  const at = f.venue ? [' (' + f.venue + ')', ', dejisko: ' + f.venue, ' – hrá sa v dejisku ' + f.venue, ''][v % 4] : '';
+  const lead = [`${f.h} privíta ${f.a}${at}.`, `${f.h} a ${f.a} sa stretnú${at}.`, `Proti sebe nastúpia ${f.h} a ${f.a}${at}.`, `${f.h} vyzve na domácej pôde tím ${f.a}${at}.`][v % 4];
+  const s1 = f.rival ? `${f.rival}: ${/^Proti/.test(lead) ? lead[0].toLowerCase() + lead.slice(1) : lead}` : lead;
+  const parts = [];
+  if (f.ph && f.pa) parts.push(`V tabuľke je ${f.h} ${f.ph.rank}. (${f.ph.pts} b.), ${f.a} ${f.pa.rank}. (${f.pa.pts} b.)`);
+  else if (f.ph || f.pa) { const p = f.ph || f.pa, n = f.ph ? f.h : f.a, fm = formSk(p.form); parts.push(`${n} je v tabuľke ${p.rank}. s ${p.pts} bodmi${fm ? ', forma ' + fm : ''}`); }
+  const cr = f.comp ? (f.round ? [`${f.round}. kolo – ${f.comp}`, `${f.comp}, ${f.round}. kolo`, `Zápas ${f.round}. kola: ${f.comp}`][v % 3] : [f.comp, `Súťaž: ${f.comp}`, `V hre je ${f.comp}`][v % 3]) : '';
+  if (f.stake) parts.push((cr ? cr + ', ' : '') + f.stake);
+  else if (cr) parts.unshift(cr);
+  if (!f.rival && f.clubs && !(f.ph && f.pa)) parts.push(['súboj veľkých klubov', 'stretnutie dvoch veľkoklubov', 'duel favoritov'][v % 3]);
+  const s2 = parts.map((z) => z.replace(/^./, (c) => c.toUpperCase()) + '.').join(' ');
+  return (s1 + (s2 ? ' ' + s2 : '')).replace(/\.\./g, '.').slice(0, 220);
+}
+// EPG programme text → 1–2 clean sentences (no cast lists, ratings, years-in-brackets boilerplate, „Záznam.“ …)
+function cleanEpg(t, title) {
+  let s = String(t || '').replace(/\s+/g, ' ').replace(/https?:\/\/\S+/g, '').trim();
+  s = s.replace(/^((záznam|priamy prenos|live|premiéra|repríza|reprise|nové|nový diel|r\.)\s*[.:,]?\s*)+/i, '').replace(/\((?:r\.|réž\.|hrajú|hrají|\d{4})[^)]*\)/gi, '');
+  s = s.replace(/\b(hrajú|hrají|réžia|režie|scenár|scénář|moderuje|moderátor)\s*:.*$/i, '').trim();
+  if (title && fold(s).startsWith(fold(title))) s = s.slice(String(title).length).replace(/^[\s:.\-–]+/, '');
+  const sent = s.match(/[^.!?…]+[.!?…]+(\s|$)/g) || (s ? [s] : []);
+  let out = '';
+  for (const z of sent) { if ((out + z).length > 200) break; out += z; if (out.length > 90) break; }
+  if (!out && s) out = s.slice(0, 197).replace(/\s+\S*$/, '') + '…';
+  return out.trim().length >= 25 ? out.trim() : '';
+}
+// Gemini teaser accepted only if: a team named (matches), no digit-group absent from the facts, not generic
+function okTeaser(txt, facts, teams) {
+  const t = String(txt || '').trim(); if (t.length < 25) return false;
+  const src = facts.join(' '), nums = t.match(/\d+/g) || [];
+  if (nums.some((n) => !src.includes(n))) return false;
+  if (teams && !teams.some((n) => fold(qName(n)).split(' ').concat(fold(n).split(' ')).filter((w) => w.length >= 4).some((w) => fold(t).includes(w)))) return false;
+  return !/^(sledujte|pripravte sa|nenechajte si ujsť|príďte|nalaďte)|podrobnosti o|nezabudnuteľn|nenechajte si/i.test(t);
+}
+
+module.exports = { bigCtx, matchFacts, matchDesc, cleanEpg, okTeaser, hsh, formSk, clubBonus, firstAirings, stemKey, airKey, TZ, dayKey, dayDiff, dateLbl, hmL, whenLbl, badge, isRecording, pairIn, teamsOf, compOf, qName, sameTeam, classify, tsdbEvent, soon, priority, merge, select, isSport, sameEvent, pairKey, fold };

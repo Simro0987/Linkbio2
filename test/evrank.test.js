@@ -58,3 +58,17 @@ console.log('evrank recordings ok');
   assert.ok(RK.priority({ title: 'x', score: 80, s: night }, night - H) < RK.priority({ title: 'x', score: 80, s: night + 18 * H }, night - H));
   console.log('evrank ranking ok');
 }
+
+// card descriptions
+{
+  const assert = require('assert'); const RK = require('../evrank');
+  const ctx = { rivals: new Set(['Pražské derby (S–S)']), tables: [{ league: 'Chance liga', rows: [{ name: 'Slavia Prague', rank: 1, pts: 31, form: 'WDDWW' }, { name: 'Sparta Prague', rank: 4, pts: 23, form: 'DWDWW' }] }] };
+  const x = { teams: ['SK Slavia Praha', 'AC Sparta Praha'], comp: 'Chance liga', official: 'ok', round: '11', venue: 'Fortuna Arena', big: ['Pražské derby (S–S) +45'] };
+  const f = RK.matchFacts(x, ctx); assert.strictEqual(f.ph.rank, 1); assert.strictEqual(f.pa.rank, 4); assert.strictEqual(f.rival, 'Pražské derby');
+  const d = [0, 1, 2, 3].map((v) => RK.matchDesc(f, v)); assert.strictEqual(new Set(d).size, 4); assert.ok(d.every((z) => /Slavia/.test(z) && /11/.test(z)));
+  assert.ok(!RK.okTeaser('Sledujte zápas európskej súťaže.', ['Zápas: A – B'], ['Sunderland', 'Dinamo']));
+  assert.ok(!RK.okTeaser('Sunderland hostí Dinamo, ktoré prehralo 5 zápasov v rade.', ['Zápas: Sunderland – Dinamo'], ['Sunderland', 'Dinamo']));
+  assert.ok(RK.okTeaser('Sunderland vyzve chorvátske Dinamo v 4. kole Európskej ligy.', ['Zápas: Sunderland – Dinamo. Kolo: 4'], ['Sunderland AFC', 'GNK Dinamo Záhreb']));
+  assert.strictEqual(RK.cleanEpg('Záznam. Veľké finále speváckej šou prináša súboj dvoch finalistov. Moderuje: X Y', 'SuperStar'), 'Veľké finále speváckej šou prináša súboj dvoch finalistov.');
+  console.log('evrank descriptions ok');
+}
