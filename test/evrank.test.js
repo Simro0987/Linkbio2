@@ -154,5 +154,8 @@ console.log('evrank recordings ok');
   const sel10 = RK.select(L, 10, { spare: 2 }), m10 = sel10.slice(0, 10);
   assert.strictEqual(sel10.length, 12);
   assert.ok(m10.filter((x) => !RK.isSport(x)).length >= 4 && m10.filter(RK.isSport).length <= 6, '10 → 4 non-sport / 6 sport');
+  assert.strictEqual(RK.reason({ teams: ['SK Slavia Praha', 'AC Sparta Praha'], cat: 'football', big: ['pražské derby +20'] }), '🔥 Pražské derby');
+  assert.notStrictEqual(RK.reason({ title: 'Noc v archíve', kind: 'film', cat: 'show', fl: 'p' }), '🎬 Filmová premiéra', 'a TV special is not a film');
+  assert.strictEqual(RK.sk('7. série, 1. epizoda'), '7. séria, 1. epizóda');
   console.log('evrank round3 ok');
 }

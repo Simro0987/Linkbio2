@@ -135,7 +135,7 @@ const tsdbEvent = (e) => ({ venue: e.strVenue || '', city: e.strCity || '', ts: 
 // ---------- Czech → Slovak names (EPG of ČT/Nova Sport is Czech; the site is Slovak) ----------
 // phrase map, longest first; applied to competition lines, team names (countries) and programme titles/subtitles
 const CZSK = [
-  ['Liga mistrů UEFA', 'Liga majstrov UEFA'], ['Liga mistrů', 'Liga majstrov'], ['Evropská liga', 'Európska liga'], ['Evropská konferenční liga', 'Európska konferenčná liga'], ['Konferenční liga', 'Konferenčná liga'],
+  ['série', 'séria'], ['řada', 'séria'], ['epizoda', 'epizóda'], ['díl', 'diel'], ['Liga mistrů UEFA', 'Liga majstrov UEFA'], ['Liga mistrů', 'Liga majstrov'], ['Evropská liga', 'Európska liga'], ['Evropská konferenční liga', 'Európska konferenčná liga'], ['Konferenční liga', 'Konferenčná liga'],
   ['Mistrovství světa', 'Majstrovstvá sveta'], ['Mistrovství Evropy', 'Majstrovstvá Európy'], ['Mistrovství', 'Majstrovstvá'], ['MS v ledním hokeji', 'MS v ľadovom hokeji'], ['v ledním hokeji', 'v ľadovom hokeji'],
   ['lední hokej', 'ľadový hokej'], ['Lední hokej', 'Ľadový hokej'], ['Světový pohár', 'Svetový pohár'], ['Český pohár', 'Český pohár'], ['Velká cena', 'Veľká cena'], ['Formule 1', 'Formula 1'], ['Formule', 'Formula'],
   ['kvalifikace', 'kvalifikácia'], ['Kvalifikace', 'Kvalifikácia'], ['závod', 'pretek'], ['Závod', 'Pretek'], ['sprint', 'šprint'], ['volný trénink', 'voľný tréning'], ['trénink', 'tréning'],
@@ -507,7 +507,7 @@ function reason(x) {
     else if (l.length) push(20, `${FLAG[l[0].nat]} ${l.length > 1 ? 'Hrajú ' + l.slice(0, 2).map((z) => surname(z.who)).join(' a ') : 'Hrá ' + surname(l[0].who)}`);
     if (g && g.slager) push(26, `🔥 Šláger: ${g.names[0]} vs. ${g.names[1]}`);
     const rv = bigCtx(x.big, null), rvl = (x.big || []).map((w) => String(w).replace(/\s*[+−-]\d+\s*$/, '').trim()).find((w) => /derby|cl[aá]sico|classique|klassiker|old firm/i.test(w));
-    if (rvl) push(27, `🔥 ${rvl.replace(/\s*\((?:hokej|S–S)\)$/, '')}`);
+    if (rvl) push(31, '🔥 ' + cap(rvl.replace(/\s*\((?:hokej|S–S)\)$/, '')));
     const st = (g && g.stage) || (STAGE.find(([re]) => re.test(all)) ? { label: STAGE.find(([re]) => re.test(all))[2] } : null);
     if (st) push(st.label === 'Finále' ? 28 : 18, `🏆 ${st.label}`);
     if (g && g.top) push(17, '📈 Súboj špičky tabuľky');
@@ -519,7 +519,7 @@ function reason(x) {
     if (x.live) push(5, '🔴 Naživo');
     push(1, '🏅 Športový tip týždňa');
   } else {
-    const prem = /p/.test(x.fl || '') || (x.why || []).some((w) => /premiéra/.test(w)), t = x.tmdb, k = x.kind || x.cat;
+    const prem = /p/.test(x.fl || '') || (x.why || []).some((w) => /premiéra/.test(w)), t = x.tmdb, k = x.kind === 'film' && x.cat && x.cat !== 'film' ? x.cat : x.kind || x.cat;
     if (/fin[aá]le/i.test(all)) push(26, '🏆 Finále šou');
     if (SEASON.test(all)) push(24, '📺 Premiéra novej série');
     if (k === 'film' && prem) push(25, '🎬 Filmová premiéra');
