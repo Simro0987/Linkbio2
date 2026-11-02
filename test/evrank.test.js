@@ -157,5 +157,16 @@ console.log('evrank recordings ok');
   assert.strictEqual(RK.reason({ teams: ['SK Slavia Praha', 'AC Sparta Praha'], cat: 'football', big: ['pražské derby +20'] }), '🔥 Pražské derby');
   assert.notStrictEqual(RK.reason({ title: 'Noc v archíve', kind: 'film', cat: 'show', fl: 'p' }), '🎬 Filmová premiéra', 'a TV special is not a film');
   assert.strictEqual(RK.sk('7. série, 1. epizoda'), '7. séria, 1. epizóda');
+  // women's derby (ČT „FORTUNA LYGA“): chip says „žien“, comp in Slovak, no men's elite tier, ranked lower
+  const wd = { title: 'FORTUNA LYGA 2026/2027', sub: 'SK Slavia Praha - AC Sparta Praha', teams: ['SK Slavia Praha', 'AC Sparta Praha'], cat: 'football', big: ['pražské derby +20'] };
+  assert.ok(RK.women(wd) && !RK.women({ title: 'Futbal', sub: 'SK Slavia Praha - AC Sparta Praha' }));
+  assert.strictEqual(RK.reason(wd), '🔥 Pražské derby žien');
+  assert.strictEqual(RK.sk('FORTUNA LYGA 2026/2027'), '1. česká futbalová liga žien 2026/2027');
+  assert.ok(RK.minorSport(wd) <= -8);
+  // the chip depends on the final category: computed before catOf (cat empty) a TV special reads as a film
+  const sp = { title: 'Noc v archíve', kind: 'film', fl: 'p' };
+  assert.strictEqual(RK.reason(sp), '🎬 Filmová premiéra');
+  sp.cat = 'show';
+  assert.notStrictEqual(RK.reason(sp), '🎬 Filmová premiéra');
   console.log('evrank round3 ok');
 }

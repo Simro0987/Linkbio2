@@ -135,6 +135,7 @@ const tsdbEvent = (e) => ({ venue: e.strVenue || '', city: e.strCity || '', ts: 
 // ---------- Czech → Slovak names (EPG of ČT/Nova Sport is Czech; the site is Slovak) ----------
 // phrase map, longest first; applied to competition lines, team names (countries) and programme titles/subtitles
 const CZSK = [
+  ['FORTUNA LYGA', '1. česká futbalová liga žien'], ['Fortuna liga žen', '1. česká futbalová liga žien'], ['1. česká fotbalová liga žen', '1. česká futbalová liga žien'],
   ['série', 'séria'], ['řada', 'séria'], ['epizoda', 'epizóda'], ['díl', 'diel'], ['Liga mistrů UEFA', 'Liga majstrov UEFA'], ['Liga mistrů', 'Liga majstrov'], ['Evropská liga', 'Európska liga'], ['Evropská konferenční liga', 'Európska konferenčná liga'], ['Konferenční liga', 'Konferenčná liga'],
   ['Mistrovství světa', 'Majstrovstvá sveta'], ['Mistrovství Evropy', 'Majstrovstvá Európy'], ['Mistrovství', 'Majstrovstvá'], ['MS v ledním hokeji', 'MS v ľadovom hokeji'], ['v ledním hokeji', 'v ľadovom hokeji'],
   ['lední hokej', 'ľadový hokej'], ['Lední hokej', 'Ľadový hokej'], ['Světový pohár', 'Svetový pohár'], ['Český pohár', 'Český pohár'], ['Velká cena', 'Veľká cena'], ['Formule 1', 'Formula 1'], ['Formule', 'Formula'],
@@ -224,9 +225,13 @@ const ELITE = [
 const STAGE = [[/(?<![\p{L}])(fin[aá]le|final)(?![\p{L}])(?!.*(štvrť|čtvrt|semi|osemi))/iu, 12, 'Finále'], [/semifin[aá]l\p{L}*|semi-final/iu, 8, 'Semifinále'],
   [/štvrťfin[aá]l\p{L}*|čtvrtfin[aá]l\p{L}*|quarter-?final|vyraďovac\p{L}*|vyřazovac\p{L}*|play-?off|osemifin[aá]l\p{L}*|knockout/iu, 5, 'Vyraďovacia fáza']];
 // strength of a pairing: { tiers:[h,a], names:[h,a], stage:{pts,label}|null, top: top-of-table clash, slager }
+// WOMEN's matches: ČT airs the Czech women's league as „FORTUNA LYGA“ (Slavia – Sparta žen); the ELITE list is the men's
+// game, so a women's pairing gets no elite/šláger tier, ranks a bit lower (−8) and its chip says „žien“/„ženy“
+const WOMEN = /(?<![\p{L}])(žen|ženy|žien|ženská|ženské|ženský|women|woman|ladies|féminine|frauen)(?![\p{L}])|fortuna\s+lyga|futbalová liga žien/iu;
+const women = (x) => WOMEN.test([x.title, x.sub, x.comp, x.descr, x.url].filter(Boolean).join(' '));
 function strength(x) {
-  const T = x.teams || [], cat = x.cat === 'stadium' ? '' : x.cat;
-  const tier = T.map((t) => { const e = ELITE.find(([re, sp]) => (!cat || sp === cat) && re.test(String(t).trim())); return e ? [e[2], e[3]] : [0, side(t)]; });
+  const T = x.teams || [], cat = x.cat === 'stadium' ? '' : x.cat, wz = women(x);
+  const tier = T.map((t) => { const e = !wz && ELITE.find(([re, sp]) => (!cat || sp === cat) && re.test(String(t).trim())); return e ? [e[2], e[3]] : [0, side(t)]; });
   const txt = (x.title || '') + ' ' + (x.sub || '') + ' ' + (x.comp || '') + ' ' + (x.big || []).join(' ');
   const st = STAGE.find(([re]) => re.test(txt)), top = /špička tabuľky/.test((x.why || []).join(' ') + ' ' + (x.big || []).join(' '));
   const ti = tier.map((z) => z[0]);
@@ -257,7 +262,7 @@ const HEATS = /rozjazd\p{L}*|rozjížď\p{L}*|rozjizd\p{L}*|rozplavb\p{L}*|\bhea
 function minorSport(x) {
   if (!isSport(x)) return 0;
   const all = (x.title || '') + ' ' + (x.sub || '') + ' ' + (x.comp || '');
-  return (YOUTH.test(all) && !skczTeam(x) ? -15 : 0) + (!x.teams && HEATS.test(all) ? -10 : 0);
+  return (YOUTH.test(all) && !skczTeam(x) ? -15 : 0) + (!x.teams && HEATS.test(all) ? -10 : 0) + (x.teams && women(x) ? -8 : 0);
 }
 // NON-SPORT quality (films, series, shows, concerts, documentaries): channel weight, known format, series/season
 // premiere, TMDB popularity + rating (official API, x.tmdb = { pop, vote, n }); capped at +24
@@ -501,13 +506,13 @@ function reason(x) {
   const all = (x.title || '') + ' ' + (x.sub || ''), c = [];
   const push = (w, t) => c.push([w, t]);
   if (isSport(x)) {
-    const T = x.teams || [], g = T.length === 2 ? strength(x) : null, l = legion(x);
+    const T = x.teams || [], g = T.length === 2 ? strength(x) : null, l = legion(x), wz = women(x);
     const sk = T.find((t) => SKTEAM.test(t)), cz = T.find((t) => CZTEAM.test(t));
-    if (sk || cz) push(30, `${sk ? FLAG.SK : FLAG.CZ} Hrá ${side(sk || cz)}`);
+    if (sk || cz) push(30, `${sk ? FLAG.SK : FLAG.CZ} Hrá ${side(sk || cz)}${wz ? ' (ženy)' : ''}`);
     else if (l.length) push(20, `${FLAG[l[0].nat]} ${l.length > 1 ? 'Hrajú ' + l.slice(0, 2).map((z) => surname(z.who)).join(' a ') : 'Hrá ' + surname(l[0].who)}`);
     if (g && g.slager) push(26, `🔥 Šláger: ${g.names[0]} vs. ${g.names[1]}`);
     const rv = bigCtx(x.big, null), rvl = (x.big || []).map((w) => String(w).replace(/\s*[+−-]\d+\s*$/, '').trim()).find((w) => /derby|cl[aá]sico|classique|klassiker|old firm/i.test(w));
-    if (rvl) push(31, '🔥 ' + cap(rvl.replace(/\s*\((?:hokej|S–S)\)$/, '')));
+    if (rvl) push(31, '🔥 ' + cap(rvl.replace(/\s*\((?:hokej|S–S)\)$/, '')) + (wz && !/žien|žen/i.test(rvl) ? ' žien' : ''));
     const st = (g && g.stage) || (STAGE.find(([re]) => re.test(all)) ? { label: STAGE.find(([re]) => re.test(all))[2] } : null);
     if (st) push(st.label === 'Finále' ? 28 : 18, `🏆 ${st.label}`);
     if (g && g.top) push(17, '📈 Súboj špičky tabuľky');
@@ -534,4 +539,4 @@ function reason(x) {
   return c.sort((a, b) => b[0] - a[0])[0][1];
 }
 
-module.exports = { reason, strength, strengthBonus, nobody, ELITE, bonusWhy, tmdbQuery, tmdbMatch, SEASON, legion, legionLine, chTier, nonSport, minorSport, tmdbPts, skczTeam, LEGION, sk, isCzech, catDesc, filler, bigCtx, matchFacts, matchDesc, cleanEpg, okTeaser, hsh, formSk, clubBonus, firstAirings, stemKey, airKey, TZ, dayKey, dayDiff, dateLbl, hmL, whenLbl, badge, isRecording, pairIn, teamsOf, compOf, qName, sameTeam, classify, tsdbEvent, soon, priority, merge, select, isSport, sameEvent, pairKey, fold };
+module.exports = { reason, women, strength, strengthBonus, nobody, ELITE, bonusWhy, tmdbQuery, tmdbMatch, SEASON, legion, legionLine, chTier, nonSport, minorSport, tmdbPts, skczTeam, LEGION, sk, isCzech, catDesc, filler, bigCtx, matchFacts, matchDesc, cleanEpg, okTeaser, hsh, formSk, clubBonus, firstAirings, stemKey, airKey, TZ, dayKey, dayDiff, dateLbl, hmL, whenLbl, badge, isRecording, pairIn, teamsOf, compOf, qName, sameTeam, classify, tsdbEvent, soon, priority, merge, select, isSport, sameEvent, pairKey, fold };

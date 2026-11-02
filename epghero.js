@@ -64,7 +64,7 @@ function diversify(list, n, opt = {}) {
 }
 const catOf = (t, kind) => { if (/^(film|series|doc)$/.test(kind || '')) return KINDCAT[kind]; for (const [k, re] of CATS) if (re.test(t)) return k; return KINDCAT[kind] || 'stadium'; };
 const gmodels = () => [...new Set((process.env.EVH_GEMINI_MODELS || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.8-flash').split(',').map((x) => x.trim()).filter((x) => /^[\w.-]{3,60}$/.test(x)))].slice(0, 4);
-const RV = 4, ALG = 8; // ALG: bump to recompute the cached week after ranking changes
+const RV = 4, ALG = 9; // ALG: bump to recompute the cached week after ranking changes
 const BIG = require('./evbig');
 const RK = require('./evrank'); // ranking algorithm: priority, merge, variety, Slovak date labels (documented there)
 const FX_TTL = 12 * 3600e3, FX_MAX = 16; // official fixture lookups (TheSportsDB): cache per pairing, max new lookups per refresh
@@ -357,7 +357,6 @@ module.exports = function hero(ctx, h, E) {
     // 7) variety: ≤ 3 per sport/genre and per day (8 slides), sport ≤ 60 % → ≥ 40 % best non-sport (evrank.js select),
     //    then 2 spares (best remaining non-sport + sport) for when a card ends; every card gets a visible reason chip
     const picks = RK.select(ranked, N, { spare: 2 });
-    for (const x of picks) x.rs = RK.reason(x);
     // team logos: official fixture badge → persistent logo cache (evbadge.js chain: flags, Wikidata/Commons, TheSportsDB, Wikipedia)
     const tOf = (x) => { const sp = TB.sportOf(x.cat, x.comp), w = /žien|žen|ženy|women/i.test((x.comp || '') + ' ' + (x.sub || '')); return x.teams.map((name) => ({ name, sport: sp, women: w })); };
     try { await TB.ensure(picks.filter((x) => x.teams).flatMap(tOf), 12, now); } catch (e) { console.error('evhero logos', e.message); }
@@ -443,7 +442,8 @@ module.exports = function hero(ctx, h, E) {
     for (const x of picks) {
       const it = items.find((z) => z.tk === x.tk), g = dc[x.tk] && dc[x.tk].h === it.h ? dc[x.tk] : null, k0 = (d) => RK.fold(d).slice(0, 40);
       // Gemini teaser (re-checked on every use) → fact template → its other variants; a card is never left empty
-      const okG = g && g.d && RK.okTeaser(g.d, it.facts.map((z) => z.text).concat(it.title), it.teams);
+      // a women's match whose teaser never says so (Gemini wrote „Pražské derby … Fortuna liga“) falls back to the template
+      const okG = g && g.d && RK.okTeaser(g.d, it.facts.map((z) => z.text).concat(it.title), it.teams) && !(RK.women(x) && !/žien|žen|ženy|žensk/i.test(g.d));
       let d = okG && !used.has(k0(g.d)) ? g.d : '', src = d ? g.src : '';
       if (!d) for (const t of [it.tpl, ...it.alt]) if (t && !used.has(k0(t))) { d = t; src = t === it.tpl ? it.tsrc : 'šablóna (variant)'; break; }
       if (!d) { d = it.tpl || RK.catDesc(x, 0); src = it.tsrc || 'šablóna kategórie'; }
@@ -454,6 +454,9 @@ module.exports = function hero(ctx, h, E) {
     }
     if (dlog.length) console.log('evhero desc:', dlog.join(' | '));
     try { await pool.query(`DELETE FROM ev_imgc WHERE (k LIKE 'u-%' OR k LIKE 'r-%' OR k LIKE 'b-%') AND at < now() - interval '45 days'`); } catch {}
+    // reason chip last: after fixtures (teams/stage), category (catOf) and descriptions are final – a TV special the EPG
+    // marks as „film“ but catOf files as a show must not get „Filmová premiéra“
+    for (const x of picks) x.rs = RK.reason(x);
     const slim = (x) => ({ k: x.k, tk: x.tk, title: x.title, sub: C.clip(x.sub, 90), s: x.s, e: x.e, kind: x.kind, ch: { id: x.ch.id, name: x.ch.name, category: x.ch.category }, chName: x.chName, pred: x.pred ? 1 : 0, score: x.score, kw: x.kw, why: x.why, src: x.src || 'epg', img: x.img || '', imgM: x.imgM || '', img0: x.img0 || '', imgSrc: x.imgSrc || '', credit: x.credit || '', imgPage: x.imgPage || '', imgLog: x.imgLog || [], fbOff: x.fbOff || 0, genre: x.genre || '', desc: x.desc || '', descSrc: x.descSrc || '', cat: x.cat || catOf(x.title, x.kind), place: x.place || '', reason: x.reason || '', rs: x.rs || '', tmdb: x.tmdb || null, startOnly: !!x.startOnly, live: x.live, teams: x.teams || null, comp: x.comp || '', ko: x.ko || 0, hbI: x.hbI || '', abI: x.abI || '', alt: x.alt || [], official: x.official || '', prio: x.prio == null ? x.score : x.prio });
     const chInfo = { ok: chs.ok.length, epg: chs.ok.filter((r) => r.has).length, noEpg: chs.ok.filter((r) => !r.has && !r.shifted).map((r) => ({ id: r.id, name: r.name, category: r.category, mapped: !!r.epg })),
       okNames: chs.ok.filter((r) => r.has && !r.shifted).map((r) => r.name), excl: chs.no.length, exclFeeds: chs.no.filter((r) => /feed|EPG|zozname|admin/.test(r.why) && !/vod|rádi|radi/i.test(r.category)).map((r) => r.name + ' – ' + r.why).slice(0, 200) };
