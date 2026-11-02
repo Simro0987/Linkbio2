@@ -419,6 +419,8 @@ const PROMPTS = {
     'POUŽI VÝHRADNE uvedené fakty (facts). Nič si nevymýšľaj: žiadne mená, výsledky, čísla, miesta ani tvrdenia, ktoré vo faktoch nie sú. ' +
     'Neopakuj kanál ani čas (tie sa zobrazujú zvlášť) ani celý názov, ale využi konkrétne údaje z názvu (napr. ktorá Veľká cena, kvalifikácia, finále, miesto). Žiadne prázdne prívlastky (prestížny, svetový, pútavý…). Pri zápase vždy pomenuj oba tímy a použi najkonkrétnejšie fakty (rivalita, súťaž, kolo, dejisko, ' +
     'miesto v tabuľke, fáza súťaže). Každý popis začni inak; žiadne všeobecné frázy („Sledujte zápas…“, „Nenechajte si ujsť…“). Žiadne odkazy. ' +
+    'Píš spisovnou slovenčinou s úplnými tvarmi slovies (napr. „stretávajú sa“, nie „stretávaj“); žiadne české slová ani názvy – preveď ich do slovenčiny (Liga mistrů → Liga majstrov). ' +
+    'Čísla z faktov (poradie, storočie, kolo) prepisuj presne alebo vôbec, nikdy nevynechaj číslo pred slovom. ' +
     'Ak fakty o udalosti nič nehovoria, vráť prázdny reťazec. ' +
     'Odpovedz iba JSON: {"id":"popis", ...}.',
   rank: 'You are the editor of a Slovak/Czech TV guide homepage. From the candidate TV broadcasts of the next 7 days below, choose the 3 BIGGEST events ' +

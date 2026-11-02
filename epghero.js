@@ -64,7 +64,7 @@ function diversify(list, n, opt = {}) {
 }
 const catOf = (t, kind) => { if (/^(film|series|doc)$/.test(kind || '')) return KINDCAT[kind]; for (const [k, re] of CATS) if (re.test(t)) return k; return KINDCAT[kind] || 'stadium'; };
 const gmodels = () => [...new Set((process.env.EVH_GEMINI_MODELS || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.8-flash').split(',').map((x) => x.trim()).filter((x) => /^[\w.-]{3,60}$/.test(x)))].slice(0, 4);
-const RV = 4, ALG = 5; // ALG: bump to recompute the cached week after ranking changes
+const RV = 4, ALG = 6; // ALG: bump to recompute the cached week after ranking changes
 const BIG = require('./evbig');
 const RK = require('./evrank'); // ranking algorithm: priority, merge, variety, Slovak date labels (documented there)
 const FX_TTL = 12 * 3600e3, FX_MAX = 16; // official fixture lookups (TheSportsDB): cache per pairing, max new lookups per refresh
@@ -131,6 +131,7 @@ module.exports = function hero(ctx, h, E) {
     return r.buf;
   }
   const fetchImage = async (url) => toWebp(await fetchRaw(url));
+  const TB = require('./evbadge')({ kv, get: (u, a, m, x) => get(u, a, m, x) });
   const R = require('./evimg')({ get, pool, kv, clip: C.clip, models: gmodels, staticDir: path.join(__dirname, 'static'), tmdbKey: () => String(process.env.TMDB_API_KEY || tmdbSet || '').trim() });
   // cached copy of an official calendar image (downloaded once, desktop + mobile webp in Postgres, served from /ev-img/…)
   async function cachedImg(url) {
@@ -249,13 +250,14 @@ module.exports = function hero(ctx, h, E) {
   }
   // team badge → small transparent webp in ev_imgc (never hotlinked), served from /ev-img/c/b-…
   async function badgeImg(url) {
-    if (!/^https:\/\/(r2|www)\.thesportsdb\.com\//.test(url || '')) return '';
+    if (!/^https:\/\/((r2|www)\.thesportsdb\.com|commons\.wikimedia\.org|upload\.wikimedia\.org)\//.test(url || '')) return '';
+    const tsdb = /thesportsdb/.test(url);
     const k = 'b-' + sha('b1|' + url).slice(0, 24);
     try {
       const ex = (await pool.query('SELECT extract(epoch from at)::int AS v FROM ev_imgc WHERE k=$1', [k])).rows[0]; if (ex) return '/ev-img/c/' + k + '?v=' + ex.v;
-      let r; try { r = await get(url + '/small', 'image/*', 2e6); } catch { r = await get(url, 'image/*', 3e6); }
+      let r; try { r = await get(tsdb ? url + '/small' : url, 'image/*', 2e6, tsdb ? {} : { 'user-agent': 'lnkbio-tvguide/1.0 (https://lnkbio.onrender.com/tv; TV guide team logos)' }); } catch { r = await get(url, 'image/*', 3e6); }
       const w = await require('sharp')(r.buf, { limitInputPixels: 20e6 }).resize(96, 96, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).webp({ quality: 80, alphaQuality: 90 }).toBuffer();
-      const v = (await pool.query(`INSERT INTO ev_imgc (k,src,img,img_m,credit,meta) VALUES ($1,$2,$3,$3,'© TheSportsDB','') ON CONFLICT (k) DO UPDATE SET img=$3, img_m=$3, at=now() RETURNING extract(epoch from at)::int AS v`, [k, C.clip(url, 400), w])).rows[0].v;
+      const v = (await pool.query(`INSERT INTO ev_imgc (k,src,img,img_m,credit,meta) VALUES ($1,$2,$3,$3,$4,'') ON CONFLICT (k) DO UPDATE SET img=$3, img_m=$3, at=now() RETURNING extract(epoch from at)::int AS v`, [k, C.clip(url, 400), w, tsdb ? '© TheSportsDB' : 'Wikimedia Commons / Wikipedia'])).rows[0].v;
       return '/ev-img/c/' + k + '?v=' + v;
     } catch (e) { console.error('evhero badge', e.message); return ''; }
   }
@@ -304,10 +306,12 @@ module.exports = function hero(ctx, h, E) {
       x.cat = catOf(x.title + ' ' + x.kw.join(' ') + ' ' + (x.sub || ''), x.kind);
       if (x.src !== 'okt' && RK.isRecording(x)) { x.rerun = true; continue; }
       x.teams = /okt/.test(x.src || '') ? null : RK.teamsOf(x, x.cat);
-      x.comp = x.teams ? RK.compOf(x, x.teams) : '';
+      if (x.teams) x.teams = x.teams.map(RK.sk); // Czech EPG names → Slovak (Švýcarsko → Švajčiarsko)
+      x.comp = x.teams ? RK.sk(RK.compOf(x, x.teams)) : '';
       if (x.teams) x.tk = 't:' + tnorm(x.teams.join(' ') + ' ' + RK.dayKey(x.s));
       const floor = RK.isSport(x) ? min : min - 10; // non-sport TV events (premieres, shows, galas) may enter 10 points lower
       if (x.score < floor || x.rerun || hiddenOf(x)) continue;
+      x.title = RK.sk(x.title); x.sub = RK.sk(x.sub || ''); // Czech programme names → Slovak (Velká cena → Veľká cena …)
       pool0.push(x);
     }
     pool0.sort((a, b) => b.score - a.score || a.s - b.s);
@@ -339,7 +343,19 @@ module.exports = function hero(ctx, h, E) {
     }
     // 7) variety: ≤ 3 per sport/genre and per day (8 slides), sport ≤ 75 % → non-sport events get slots (evrank.js select)
     const picks = RK.select(ranked, N + 2); // +2 spares when one ends
-    for (const x of picks) if (x.hb || x.ab) { x.hbI = await badgeImg(x.hb); x.abI = await badgeImg(x.ab); }
+    // team logos: official fixture badge → persistent logo cache (evbadge.js chain: flags, Wikidata/Commons, TheSportsDB, Wikipedia)
+    const tOf = (x) => { const sp = TB.sportOf(x.cat, x.comp), w = /žien|žen|ženy|women/i.test((x.comp || '') + ' ' + (x.sub || '')); return x.teams.map((name) => ({ name, sport: sp, women: w })); };
+    try { await TB.ensure(picks.filter((x) => x.teams).flatMap(tOf), 12, now); } catch (e) { console.error('evhero logos', e.message); }
+    for (const x of picks) if (x.teams) {
+      const [th, ta] = tOf(x), lh = TB.get(th.name, th.sport, th.women), la = TB.get(ta.name, ta.sport, ta.women);
+      if (!x.hb && lh) x.hb = lh.b; if (!x.ab && la) x.ab = la.b;
+      x.hbI = await badgeImg(x.hb); x.abI = await badgeImg(x.ab);
+      if (!x.hbI && lh && lh.b !== x.hb) x.hbI = await badgeImg(lh.b); if (!x.abI && la && la.b !== x.ab) x.abI = await badgeImg(la.b);
+      x.logoSrc = [lh && lh.src, la && la.src].filter(Boolean).join(' / ') || (x.hb ? 'TheSportsDB (zápas)' : '');
+    }
+    // slow background prefetch for the rest of the candidates (next refresh has their logos without waiting)
+    const later = pool0.filter((x) => x.teams && !picks.includes(x)).slice(0, 12).flatMap(tOf);
+    setTimeout(() => TB.ensure(later, 8).catch(() => {}), 5e3).unref();
     // 6) background images + facts: official calendar cover, else the automatic resolver (evimg.js; cached 24 h per title)
     if (st.evh_tmdb != null) tmdbSet = String(st.evh_tmdb || '');
     R.beginRefresh();
@@ -376,41 +392,48 @@ module.exports = function hero(ctx, h, E) {
     //    table and big-match tiers, written by a rotating template; other events → cleaned EPG text. Gemini may rewrite the
     //    same facts into a teaser (cached per event by a hash of its facts); rejected/failed → the template stays.
     const dctx = { rivals: new Set(bigCfg.rival.map((r) => r.name)), tables: bigTop };
-    let mi = 0;
+    let mi = 0, ci = 0;
     const dlog = [], items = picks.map((x, i) => {
-      const f = []; let tpl = '', mf = null;
+      const f = []; let tpl = '', mf = null, tsrc = '', cdesc = '';
       if (x.teams) {
-        mf = RK.matchFacts(x, dctx); tpl = RK.matchDesc(mf, mi++);
+        mf = RK.matchFacts(x, dctx); tpl = RK.matchDesc(mf, mi++); tsrc = 'šablóna z faktov (' + (x.official === 'ok' ? 'TheSportsDB + ' : '') + 'EPG + veľké zápasy)';
         f.push({ src: x.official === 'ok' ? 'thesportsdb' : 'epg', lang: 'sk', text: [`Zápas: ${mf.h} (domáci) – ${mf.a}`, mf.comp && 'Súťaž: ' + mf.comp, mf.round && 'Kolo: ' + mf.round, mf.venue && 'Dejisko: ' + mf.venue, mf.rival && 'Rivalita: ' + mf.rival, mf.stake && 'Fáza: ' + mf.stake, mf.clubs && 'Súboj veľkých klubov',
           mf.ph && `Tabuľka: ${mf.h} ${mf.ph.rank}. miesto, ${mf.ph.pts} bodov${RK.formSk(mf.ph.form) ? ', forma ' + RK.formSk(mf.ph.form) : ''}`, mf.pa && `Tabuľka: ${mf.a} ${mf.pa.rank}. miesto, ${mf.pa.pts} bodov${RK.formSk(mf.pa.form) ? ', forma ' + RK.formSk(mf.pa.form) : ''}`].filter(Boolean).join('. ') });
       } else {
-        tpl = RK.cleanEpg(x.descr, x.title);
-        const sb = String(x.sub || '').replace(/\s+/g, ' ').trim();
-        if (!tpl && sb.length >= 12 && !/^(live|naživo|priamy prenos|přímý přenos)$/i.test(sb) && !RK.fold(x.title).includes(RK.fold(sb))) tpl = `${x.title}: ${sb.replace(/[.\s]+$/, '')}.`;
-        if (x.descr && x.descr.length > 25) f.push({ src: 'epg', lang: 'sk', text: C.clip(x.descr, 400) });
+        // Slovak EPG text first; a Czech one (ČT, Nova Sport) is only a fact for Gemini, never shown verbatim
+        tpl = RK.isCzech(x.descr) ? '' : RK.cleanEpg(x.descr, x.title); if (tpl) tsrc = 'EPG popis (vyčistený)';
+        cdesc = RK.catDesc(x, ci++);
+        f.push({ src: 'epg', lang: 'sk', text: 'Program: ' + RK.sk(x.title) + (x.sub ? ' – ' + RK.sk(x.sub) : '') + '. ' + cdesc });
+        if (x.descr && x.descr.length > 25) f.push({ src: 'epg', lang: RK.isCzech(x.descr) ? 'cs' : 'sk', text: C.clip(x.descr, 400) });
+        if (!tpl && RK.isSport(x)) { tpl = cdesc; tsrc = 'šablóna kategórie (' + (x.cat || 'šport') + ')'; }
       }
-      if (/okt/.test(x.src || '')) { const m = /^(oktagon\s*\d+)\s*:\s*(.+)$/i.exec(x.title); if (m) { f.push({ src: 'oktagon', lang: 'sk', text: `${m[1]} – hlavný zápas večera: ${m[2]}${x.place ? '; miesto: ' + x.place : ''} (oficiálny kalendár OKTAGON MMA)` }); tpl = tpl || `${m[2].replace(/\s+vs\.?\s+/i, ' proti ')} v hlavnom zápase večera${x.place ? ' – ' + x.place : ''}.`; } }
+      if (/okt/.test(x.src || '')) { const m = /^(oktagon\s*\d+)\s*:\s*(.+)$/i.exec(x.title); if (m) { f.push({ src: 'oktagon', lang: 'sk', text: `${m[1]} – hlavný zápas večera: ${m[2]}${x.place ? '; miesto: ' + x.place : ''} (oficiálny kalendár OKTAGON MMA)` }); if (!tpl) { tpl = `${m[2].replace(/\s+vs\.?\s+/i, ' proti ')} v hlavnom zápase večera${x.place ? ' – ' + x.place : ''}.`; tsrc = 'OKTAGON kalendár'; } } }
       const ord = S.DESC_ORDER[x.genre] || S.DESC_ORDER._, ix = (z) => { const n = ord.indexOf(String(z.src).split(' ')[0]); return n < 0 ? 99 : n; };
       if (!x.teams) f.push(...[...x.facts].sort((a, b) => ix(a) - ix(b)));
-      if (!tpl && !x.teams) for (const z of f) { const c = z.lang === 'sk' && RK.cleanEpg(z.text.replace(/^[^:]{0,80}:\s/, ''), x.title); if (c) { tpl = c; break; } }
-      const it = { id: 'e' + (i + 1), tk: x.tk, title: dispTitle(x) + (x.comp ? ' (' + x.comp + ')' : ''), genre: x.genre || x.kind, facts: f.slice(0, 5), tpl, teams: x.teams };
-      it.h = sha('d2|' + it.title + '|' + JSON.stringify(it.facts.map((z) => z.text))).slice(0, 16);
+      if (!tpl && !x.teams) for (const z of f) { if (z.src === 'epg') continue; const c = z.lang === 'sk' && !RK.isCzech(z.text) && RK.cleanEpg(z.text.replace(/^[^:]{0,80}:\s/, ''), x.title); if (c) { tpl = c; tsrc = z.src + ' (zhrnutie)'; break; } }
+      if (!tpl && !x.teams) { tpl = cdesc; tsrc = 'šablóna kategórie (' + (x.cat || x.kind || 'program') + ')'; }
+      const it = { id: 'e' + (i + 1), tk: x.tk, title: dispTitle(x) + (x.comp ? ' (' + x.comp + ')' : ''), genre: x.genre || x.kind, facts: f.slice(0, 5), tpl, tsrc, alt: x.teams ? [1, 2, 3].map((k) => RK.matchDesc(mf, mi + 3 + k)) : [1, 2].map((k) => RK.catDesc(x, ci + k)), teams: x.teams };
+      it.h = sha('d3|' + it.title + '|' + JSON.stringify(it.facts.map((z) => z.text))).slice(0, 16);
       return it;
     });
-    const dc = await jget('evh_desc2'), need = items.filter((it) => it.facts.length && !(dc[it.tk] && dc[it.tk].h === it.h));
+    const dc = await jget('evh_desc3'), need = items.filter((it) => it.facts.length && !(dc[it.tk] && dc[it.tk].h === it.h));
     if (need.length) {
       const o = await R.describe(need, dlog);
       for (const it of need) { const g = o[it.id]; if (g && g.d && /Gemini/.test(g.src || '')) dc[it.tk] = { h: it.h, t: now, d: RK.okTeaser(g.d, it.facts.map((z) => z.text).concat(it.title), it.teams) ? g.d : '', src: g.src }; }
     }
     for (const k of Object.keys(dc)) if (now - dc[k].t > 7 * 86400e3) delete dc[k];
-    await kv.set('evh_desc2', JSON.stringify(dc)).catch(() => {});
+    kv.set('evh_desc2', '{}').catch(() => {}); // the old teaser cache (bad OKTAGON/curling teasers) is dropped
+    await kv.set('evh_desc3', JSON.stringify(dc)).catch(() => {});
     const used = new Set();
     for (const x of picks) {
       const it = items.find((z) => z.tk === x.tk), g = dc[x.tk] && dc[x.tk].h === it.h ? dc[x.tk] : null, k0 = (d) => RK.fold(d).slice(0, 40);
-      let d = g && g.d && !used.has(k0(g.d)) ? g.d : '', src = d ? g.src : '';
-      if (!d && it.tpl && !used.has(k0(it.tpl))) { d = it.tpl; src = x.teams ? 'šablóna z faktov (' + (x.official === 'ok' ? 'TheSportsDB + ' : '') + 'EPG + veľké zápasy)' : x.descr ? 'EPG popis (vyčistený)' : x.sub ? 'EPG podtitul' : 'OKTAGON kalendár'; }
-      if (d) used.add(k0(d));
-      x.desc = d; x.descSrc = d ? src : it.facts.length ? 'fakty: ' + it.facts.map((f) => f.src).join(' + ') + ' → popis prázdny' : 'žiadne overené fakty → bez popisu';
+      // Gemini teaser (re-checked on every use) → fact template → its other variants; a card is never left empty
+      const okG = g && g.d && RK.okTeaser(g.d, it.facts.map((z) => z.text).concat(it.title), it.teams);
+      let d = okG && !used.has(k0(g.d)) ? g.d : '', src = d ? g.src : '';
+      if (!d) for (const t of [it.tpl, ...it.alt]) if (t && !used.has(k0(t))) { d = t; src = t === it.tpl ? it.tsrc : 'šablóna (variant)'; break; }
+      if (!d) { d = it.tpl || RK.catDesc(x, 0); src = it.tsrc || 'šablóna kategórie'; }
+      used.add(k0(d));
+      x.desc = d; x.descSrc = src + (g && g.d && !okG ? ' · Gemini zamietnutý kontrolou' : !g && it.facts.length ? ' · Gemini nedostupný' : '');
     }
     if (dlog.length) console.log('evhero desc:', dlog.join(' | '));
     try { await pool.query(`DELETE FROM ev_imgc WHERE (k LIKE 'u-%' OR k LIKE 'r-%' OR k LIKE 'b-%') AND at < now() - interval '45 days'`); } catch {}

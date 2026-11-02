@@ -72,3 +72,26 @@ console.log('evrank recordings ok');
   assert.strictEqual(RK.cleanEpg('Záznam. Veľké finále speváckej šou prináša súboj dvoch finalistov. Moderuje: X Y', 'SuperStar'), 'Veľké finále speváckej šou prináša súboj dvoch finalistov.');
   console.log('evrank descriptions ok');
 }
+
+// round 2: Slovak names, strict teaser check, filler penalty, never-empty templates
+{
+  const assert = require('assert'); const RK = require('../evrank');
+  assert.strictEqual(RK.sk('Liga mistrů UEFA'), 'Liga majstrov UEFA');
+  assert.strictEqual(RK.sk('Evropská liga'), 'Európska liga');
+  assert.strictEqual(RK.sk('MS v ledním hokeji žen 2026'), 'MS v ľadovom hokeji žien 2026');
+  assert.ok(RK.isCzech('Atletika - rozjížďky žen') && RK.isCzech('Utkání Ligy mistrů') && !RK.isCzech('Zápas Ligy majstrov medzi Slovanom a LASK-om.'));
+  assert.ok(!RK.okTeaser('Hannover hostí OKTAGON 97, kde sa v hlavnom zápase stretávaj Severino a Holzer.', ['OKTAGON 97 Severino Holzer Hannover'], null));
+  assert.ok(!RK.okTeaser('Tímový šport, ktorého začiatky siahajú do storočia na škótskych jazerách.', ['Curling vznikol v 16. storočí v Škótsku.'], null));
+  assert.ok(RK.okTeaser('Tímový šport, ktorého začiatky siahajú do 16. storočia na škótskych jazerách.', ['Curling vznikol v 16. storočí v Škótsku.'], null));
+  assert.ok(!RK.okTeaser('V Lize mistrů se utkají LASK a Slovan.', ['Zápas'], ['LASK Linz']));
+  const now = Date.parse('2026-11-05T10:00:00Z');
+  assert.strictEqual(RK.filler({ title: 'Curling', sub: 'Skupina A' }), -30);
+  assert.strictEqual(RK.filler({ title: 'Hokej', sub: 'MS 2026: finále' }), 0);
+  assert.strictEqual(RK.filler({ title: 'Futbalový magazín' }), -30);
+  assert.ok(RK.priority({ title: 'Curling', score: 70, s: now }, now) < RK.priority({ title: 'Hokej', sub: 'Slovensko - Fínsko', teams: ['Slovensko', 'Fínsko'], score: 70, s: now }, now));
+  const X = [{ title: 'Formule 1 - Velká cena Sao Paula 2026 (kvalifikace)', cat: 'f1' }, { title: 'SuperStar', cat: 'show', kind: 'show' }, { title: 'Pelíšky', kind: 'film' },
+    { title: 'Koncert: Elán', kind: 'music' }, { title: 'OKTAGON 97: Severino vs. Holzer', cat: 'mma' }, { title: 'Turnaj WTA Finals', cat: 'tennis' }, { title: 'Curling', kind: 'sport', cat: 'stadium' }, { title: 'Dokument' }];
+  for (const x of X) for (const v of [0, 1, 2]) { const d = RK.catDesc(Object.assign({ chName: 'JOJ' }, x), v); assert.ok(d.length > 10 && /\.$/.test(d) && !RK.isCzech(d), d); }
+  assert.ok(/Interlagos/.test(RK.catDesc(X[0])) && /kvalifikácia/.test(RK.catDesc(X[0])) && /Idol/.test(RK.catDesc(X[1])));
+  console.log('evrank round2 ok');
+}

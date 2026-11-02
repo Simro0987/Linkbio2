@@ -14,7 +14,8 @@
 //    + EDITOR (optional Gemini order, bounded: at most +10, so it re-orders near-ties but cannot invent an event).
 //    SOON: on air / today +6, tomorrow +4, in 2 days +3, 3 days +2, 4 days +1, 5 days 0, 6 days −2, 7 days −3
 //    (Bratislava calendar days, not 24-hour blocks); CLUBS: a team pairing in a UEFA cup +12, with a Slovak team/
-//    Slovakia +8, a „veľký zápas“ gets its „ráno −10“ refunded; NIGHT −10 for a start 00:00–06:59; PRACTICE −12 (F1/MotoGP trénink).
+//    Slovakia +8, a „veľký zápas“ gets its „ráno −10“ refunded; NIGHT −10 for a start 00:00–06:59; PRACTICE −12 (F1/MotoGP trénink);
+//    FILLER −30 for a generic sport programme without teams (bare „Curling“, magazín, štúdio, góly…) unless it is a major final/MS/olympics.
 //    FIRST AIRING: the same pairing / title+subtitle later in the week is a re-run → only the first airing stays.
 // 4) MERGE: the same event on several SK/CZ channels (same match pairing, or same category + start ±30 min + similar
 //    title) becomes one card listing all channels; the highest-priority airing is kept.
@@ -110,6 +111,28 @@ function classify(slotS, teams, events) {
 }
 const tsdbEvent = (e) => ({ venue: e.strVenue || '', city: e.strCity || '', ts: (() => { const t = e.strTimestamp ? Date.parse(String(e.strTimestamp).replace(/(\+00:?00|Z)?$/, 'Z')) : e.dateEvent && e.strTime ? Date.parse(e.dateEvent + 'T' + e.strTime + 'Z') : NaN; return t; })(), home: e.strHomeTeam || '', away: e.strAwayTeam || '', league: e.strLeague || '', round: e.intRound || '', hb: e.strHomeTeamBadge || '', ab: e.strAwayTeamBadge || '', status: e.strStatus || '' });
 
+// ---------- Czech → Slovak names (EPG of ČT/Nova Sport is Czech; the site is Slovak) ----------
+// phrase map, longest first; applied to competition lines, team names (countries) and programme titles/subtitles
+const CZSK = [
+  ['Liga mistrů UEFA', 'Liga majstrov UEFA'], ['Liga mistrů', 'Liga majstrov'], ['Evropská liga', 'Európska liga'], ['Evropská konferenční liga', 'Európska konferenčná liga'], ['Konferenční liga', 'Konferenčná liga'],
+  ['Mistrovství světa', 'Majstrovstvá sveta'], ['Mistrovství Evropy', 'Majstrovstvá Európy'], ['Mistrovství', 'Majstrovstvá'], ['MS v ledním hokeji', 'MS v ľadovom hokeji'], ['v ledním hokeji', 'v ľadovom hokeji'],
+  ['lední hokej', 'ľadový hokej'], ['Lední hokej', 'Ľadový hokej'], ['Světový pohár', 'Svetový pohár'], ['Český pohár', 'Český pohár'], ['Velká cena', 'Veľká cena'], ['Formule 1', 'Formula 1'], ['Formule', 'Formula'],
+  ['kvalifikace', 'kvalifikácia'], ['Kvalifikace', 'Kvalifikácia'], ['závod', 'pretek'], ['Závod', 'Pretek'], ['sprint', 'šprint'], ['volný trénink', 'voľný tréning'], ['trénink', 'tréning'],
+  ['rozjížďky', 'rozjazdy'], ['rozjížděk', 'rozjazdov'], ['parkouru', 'parkoure'], ['fotbal', 'futbal'], ['Fotbal', 'Futbal'], ['házená', 'hádzaná'], ['Házená', 'Hádzaná'], ['lyžování', 'lyžovanie'], ['Lyžování', 'Lyžovanie'],
+  ['krasobruslení', 'krasokorčuľovanie'], ['Krasobruslení', 'Krasokorčuľovanie'], ['plavání', 'plávanie'], ['Plavání', 'Plávanie'], ['cyklistika', 'cyklistika'], ['skoky na lyžích', 'skoky na lyžiach'],
+  ['Olympijské hry', 'Olympijské hry'], ['utkání', 'zápas'], ['Utkání', 'Zápas'], ['přímý přenos', 'priamy prenos'], ['Přímý přenos', 'Priamy prenos'], ['skupina', 'skupina'], ['čtvrtfinále', 'štvrťfinále'], ['Čtvrtfinále', 'Štvrťfinále'],
+  ['semifinále', 'semifinále'], ['o 3. místo', 'o 3. miesto'], ['kolo', 'kolo'], ['muži', 'muži'], ['mužů', 'mužov'], ['žen', 'žien'], ['ženy', 'ženy'], ['junioři', 'juniori'], ['juniorů', 'juniorov'],
+  ['Švýcarsko', 'Švajčiarsko'], ['Německo', 'Nemecko'], ['Rakousko', 'Rakúsko'], ['Polsko', 'Poľsko'], ['Itálie', 'Taliansko'], ['Francie', 'Francúzsko'], ['Španělsko', 'Španielsko'], ['Anglie', 'Anglicko'],
+  ['Nizozemsko', 'Holandsko'], ['Belgie', 'Belgicko'], ['Finsko', 'Fínsko'], ['Norsko', 'Nórsko'], ['Chorvatsko', 'Chorvátsko'], ['Řecko', 'Grécko'], ['Brazílie', 'Brazília'], ['Japonsko', 'Japonsko'],
+  ['Dánsko', 'Dánsko'], ['Praha', 'Praha'], ['Mnichov', 'Mníchov'], ['Vídeň', 'Viedeň'], ['Sao Paula', 'São Paula'], ['Sao Paulo', 'São Paulo'],
+].filter(([a, b]) => a !== b).sort((x, y) => y[0].length - x[0].length);
+const esc = (v) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const CZRE = CZSK.map(([a, b]) => [new RegExp('(?<![\\p{L}])' + esc(a) + '(?![\\p{L}])', 'gu'), b]);
+const sk = (t) => { let v = String(t || ''); for (const [re, b] of CZRE) v = v.replace(re, b); return v; };
+// Czech-only letters/words – a Slovak teaser must not contain them
+const CZECH = /[ěřůĚŘŮ]|(?<![\p{L}])(který|která|které|kteří|jsou|také|není|nejlepší|utkání|mistrovství|zápasu se|hráčů|mužů|týmu|týmy|tým|letošní|bude hrát|přenos|proti sobě|žen|velká|evropsk\p{L}*|kvalifikace|trénink|závod\p{L}*|fotbal\p{L}*|házen\p{L}*|lední\p{L}*|rozjížď\p{L}*|soutěž\p{L}*)(?![\p{L}])/iu;
+const isCzech = (t) => CZECH.test(String(t || ''));
+
 // ---------- priority, merge, variety ----------
 const SOON = [6, 4, 3, 2, 1, 0, -2, -3];
 const soon = (s, now) => SOON[Math.max(0, Math.min(7, dayDiff(now, Math.max(s, now))))];
@@ -125,11 +148,23 @@ function clubBonus(x) {
 }
 const hourOf = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23' });
 const PRACTICE = /tr[eé]nin[gk]|practice|\bfp[123]\b|voľn[yý] tr|volný tr/i;
+// FILLER −30: a generic sport slot with no specific event or teams – the title is just a sport („Curling“, „Hokej“), a
+// magazine/studio/news show („Góly a body“, „Štúdio“, „Športové noviny“) – unless the title/subtitle names a major final or
+// championship (Olympics, world championship, Champions League final, Grand Slam, Super Bowl, Stanley Cup…)
+const BARE = /^(curling|hokej|ľadový hokej|ladovy hokej|lední hokej|futbal|fotbal|tenis|basketbal|volejbal|hádzaná|házená|hadzana|florbal|futsal|atletika|biatlon|lyžovanie|lyžování|plávanie|plavání|cyklistika|snooker|šípky|sipky|darts|golf|box|mma|motorsport|motoristický šport|motoristický sport|krasokorčuľovanie|krasobruslení|sport|šport|športy|sporty|rally|rallye|jachting|veslovanie|veslování|stolný tenis|stolní tenis|bedminton|badminton|squash|zápasenie|zápas|gymnastika|triatlon|triathlon|motocross|tenis wta|tenis atp)$/i;
+const STUDIO = /(?<![\p{L}])(magazín\p{L}*|magazin\p{L}*|štúdio|studio|športové noviny|sportovní noviny|šport v |sport v |správy|zprávy|noviny|góly a body|gól[y]?|branky|best of|prehľad|přehled|rozhovor\p{L}*|talk|preview|predzápasov\p{L}*|pozápasov\p{L}*|předzápasov\p{L}*|analýz\p{L}*|diskusi\p{L}*|relácia|pořad)(?![\p{L}])/iu;
+const MAJOR = /olympi(?!jské hry mládeže)|majstrovstv\p{L}* sveta|mistrovství světa|\bms\b|world championship|finále (ligy majstrov|ligy mistrů|ms|mistrovství světa|majstrovstiev sveta)|champions league final|super bowl|stanley|wimbledon|roland|us open|australian open|grand slam/iu;
+function filler(x) {
+  if (x.teams || x.src === 'okt' || /okt/.test(x.src || '')) return 0;
+  const t = String(x.title || '').trim(), all = t + ' ' + (x.sub || '');
+  if (!(BARE.test(t) || STUDIO.test(t))) return 0;
+  return MAJOR.test(all) ? 0 : -30;
+}
 function priority(x, now, gemIdx) {
   const g = gemIdx == null || gemIdx < 0 ? 0 : Math.max(0, 10 - gemIdx * 1.5);
   const night = +hourOf.format(x.s) < 7 && x.s > now ? -10 : 0; // 00:00–06:59 start: few viewers (and mostly re-runs)
   const practice = PRACTICE.test(x.title + ' ' + (x.sub || '')) ? -12 : 0; // F1/MotoGP practice is not the event of the weekend
-  return Math.round(x.score + soon(x.s, now) + (x.official === 'ok' ? 6 : 0) + g + night + practice + clubBonus(x));
+  return Math.round(x.score + soon(x.s, now) + (x.official === 'ok' ? 6 : 0) + g + night + practice + clubBonus(x) + filler(x));
 }
 // the same broadcast again later in the week (handball Thu live → Sat/Sun re-runs; „Triatlon“ Thu → Fri 02:25):
 // key = team pairing, or title + subtitle; only the first airing (by start) survives – later ones are re-runs
@@ -243,13 +278,72 @@ function cleanEpg(t, title) {
   if (!out && s) out = s.slice(0, 197).replace(/\s+\S*$/, '') + '…';
   return out.trim().length >= 25 ? out.trim() : '';
 }
-// Gemini teaser accepted only if: a team named (matches), no digit-group absent from the facts, not generic
+// Gemini teaser accepted only if it passes a strict check, else the template stays:
+//  · for matches a team is named; no digit-group absent from the facts; an ordinal fact („16. storočí“, „4. kole“) whose
+//    word appears in the teaser must keep its number (dropped numbers → „do storočia“)
+//  · Slovak only (no ě/ř/ů or Czech-only words), no truncated/imperative verb forms („stretávaj“, „sleduj“),
+//    proper sentence end, no doubled words, balanced brackets, no stock phrases
+const IMPER = /(?<![\p{L}])\p{L}{2,}(áva|ava|ieva|íva|ýva)j(?![\p{L}])|(?<![\p{L}])\p{L}{3,}uj(?![\p{L}])/iu;
 function okTeaser(txt, facts, teams) {
-  const t = String(txt || '').trim(); if (t.length < 25) return false;
+  const t = String(txt || '').trim(); if (t.length < 25 || t.length > 260) return false;
   const src = facts.join(' '), nums = t.match(/\d+/g) || [];
   if (nums.some((n) => !src.includes(n))) return false;
-  if (teams && !teams.some((n) => fold(qName(n)).split(' ').concat(fold(n).split(' ')).filter((w) => w.length >= 4).some((w) => fold(t).includes(w)))) return false;
-  return !/^(sledujte|pripravte sa|nenechajte si ujsť|príďte|nalaďte)|podrobnosti o|nezabudnuteľn|nenechajte si/i.test(t);
+  for (const m of src.matchAll(/(\d{1,3})\.\s+(\p{L}{5,})/gu)) { const st = fold(m[2]).slice(0, 5); if (new RegExp('(^| )' + st).test(fold(t)) && !t.includes(m[1])) return false; }
+  if (teams && !teams.some((n) => fold(qName(n)).split(' ').concat(fold(n).split(' '), fold(sk(n)).split(' ')).filter((w) => w.length >= 4).some((w) => fold(t).includes(w)))) return false;
+  if (isCzech(t) || IMPER.test(t)) return false;
+  if (!/[.!…]$/.test(t) || /\s[,.]|\s{2}|\.\./.test(t) || /(?<![\p{L}])(\p{L}+) \1(?![\p{L}])/iu.test(t) || (t.match(/\(/g) || []).length !== (t.match(/\)/g) || []).length) return false;
+  return !/^(sledujte|pripravte sa|nenechajte si ujsť|príďte|nalaďte|vstúpte|zažite|objavte|pozrite)|podrobnosti o|nezabudnuteľn|nenechajte si|športový prenos|prináša(jú)? (športov|zábav|program)/i.test(t);
 }
 
-module.exports = { bigCtx, matchFacts, matchDesc, cleanEpg, okTeaser, hsh, formSk, clubBonus, firstAirings, stemKey, airKey, TZ, dayKey, dayDiff, dateLbl, hmL, whenLbl, badge, isRecording, pairIn, teamsOf, compOf, qName, sameTeam, classify, tsdbEvent, soon, priority, merge, select, isSport, sameEvent, pairKey, fold };
+// ---------- deterministic category templates (never an empty card) ----------
+// built only from the title, subtitle, competition, channel and the official calendar place; variant v rotates the wording
+const GPINFO = [ // GP name (folded) → circuit, country
+  [/sao paul|brazil|interlagos/, 'Interlagos', 'Brazília'], [/las vegas/, 'Las Vegas Strip Circuit', 'USA'], [/katar|qatar|lusail/, 'Lusail', 'Katar'], [/abu dhab|yas marina/, 'Yas Marina', 'SAE'],
+  [/mexik|mexic/, 'Autódromo Hermanos Rodríguez', 'Mexiko'], [/spojen[yy]ch stat|usa|austin|ameri/, 'Circuit of the Americas', 'USA'], [/singapur/, 'Marina Bay', 'Singapur'], [/japonsk|suzuka/, 'Suzuka', 'Japonsko'],
+  [/monak|monaco|monte carlo/, 'Monte Carlo', 'Monako'], [/britan|silverstone/, 'Silverstone', 'Veľká Británia'], [/talian|ital|monza/, 'Monza', 'Taliansko'], [/belgi|spa/, 'Spa-Francorchamps', 'Belgicko'],
+  [/madars|hungar/, 'Hungaroring', 'Maďarsko'], [/rakus|austri|spielberg/, 'Red Bull Ring', 'Rakúsko'], [/holand|dutch|zandvoort/, 'Zandvoort', 'Holandsko'], [/bahrajn|bahrain/, 'Sachír', 'Bahrajn'],
+  [/saudsk|dzidd|jeddah/, 'Džidda', 'Saudská Arábia'], [/austral|melbourne/, 'Albert Park', 'Austrália'], [/cin|chin|sanghaj/, 'Šanghaj', 'Čína'], [/miami/, 'Miami', 'USA'], [/kanad|canad|montreal/, 'Montreal', 'Kanada'],
+  [/spaniel|spanel|spain|barcelon|madrid/, 'Barcelona', 'Španielsko'], [/azerbajd|baku/, 'Baku', 'Azerbajdžan'], [/emilia|imola/, 'Imola', 'Taliansko'],
+];
+const SHOWS = [ // known entertainment formats → one factual sentence about the format
+  [/superstar/i, 'česko-slovenská spevácka súťaž podľa svetového formátu Idol'], [/let'?s dance/i, 'tanečná šou, v ktorej známe osobnosti tancujú s profesionálmi'],
+  [/tvoja tv[aá]r|tvoje tv[aá][řr]/i, 'šou, v ktorej sa známe osobnosti menia na slávnych spevákov'], [/x factor/i, 'spevácka talentová súťaž'], [/talent/i, 'talentová šou'],
+  [/survivor/i, 'reality šou o prežití na opustenom ostrove'], [/farma/i, 'reality šou zo života na farme'], [/masterchef/i, 'kuchárska súťaž amatérov'], [/love island/i, 'zoznamovacia reality šou'],
+  [/hotel paradise/i, 'zoznamovacia reality šou'], [/ninja/i, 'súťaž na prekážkovej dráhe'], [/inkognito/i, 'zábavná šou s hádaním identity hostí'], [/eurov/i, 'súťaž piesní Eurovision'],
+  [/silvest/i, 'silvestrovský zábavný program'], [/hlas [čc]esko|the voice/i, 'spevácka súťaž The Voice'], [/big brother/i, 'reality šou zo spoločného domu'],
+];
+const lc1 = (v) => v.charAt(0).toLowerCase() + v.slice(1);
+const end = (v) => side(v).replace(/[\s.:;,–-]+$/, '') + '.';
+function catDesc(x, v = 0) {
+  const dash = (z) => z.replace(/\s+-\s+/g, ' – ');
+  const ttl = dash(side(sk(x.title)).replace(/^(tenis|futbal|hokej|atletika|box|mma)\s*[:–-]\s+/i, '')), sub = dash(side(sk(x.sub || '')).replace(/^(live|naživo|priamy prenos)$/i, '')), ch = x.chName || (x.ch && x.ch.name) || 'TV', all = ttl + ' ' + sub;
+  const subOk = sub && !fold(ttl).includes(fold(sub)) && sub.length >= 4 ? sub : '';
+  const live = (x.live ? ['Priamy prenos na ', 'Naživo na ', 'Prenos v priamom vysielaní na '] : ['Prenos na ', 'Vysielanie na ', 'Na obrazovke '])[v % 3] + ch;
+  const c = x.cat || '';
+  if (c === 'f1' || GP.test(all)) {
+    const series = /motogp/i.test(all) ? 'MotoGP' : /formula 2|\bf2\b/i.test(all) ? 'Formula 2' : /rall/i.test(all) ? 'Rally' : /nascar|indycar/i.test(all) ? (/nascar/i.test(all) ? 'NASCAR' : 'IndyCar') : 'Formula 1';
+    const sess = /kvalifik|qualif/i.test(all) ? (/šprint|sprint/i.test(all) ? 'kvalifikácia na šprint' : 'kvalifikácia') : /šprint|sprint/i.test(all) ? 'šprint' : /tréning|trénink|practice/i.test(all) ? 'voľný tréning' : /pretek|závod|race|\bgp\b|veľká cena/i.test(all) ? 'hlavný pretek' : '';
+    const gpm = /(veľk[aá] cen[ay]|grand prix)\s+(.+?)(?:\s+(?:19|20)\d\d|\s*\(|\s*$)/i.exec(ttl + ' ' + sub), gp = gpm ? side(gpm[1].replace(/^grand prix$/i, 'Veľká cena') + ' ' + gpm[2].replace(/^MSC Cruises\s+/i, '')) : '';
+    const gi = GPINFO.find(([re]) => re.test(fold(gp || all))), where = gi ? `${gi[1]}, ${gi[2]}` : '';
+    const what = { 'kvalifikácia': 'rozhodne o štartovom poradí', 'kvalifikácia na šprint': 'určí poradie na štarte šprintu', 'šprint': 'prináša body za kratšie preteky', 'voľný tréning': 'ukáže prvé tempo jazdcov', 'hlavný pretek': 'je vyvrcholením víkendu' }[sess] || '';
+    const head = `${series}${gp ? ' – ' + gp : ''}${where ? ' (' + where + ')' : ''}`;
+    return sess ? [`${head}: ${sess} ${what}.`, `${cap(sess)} ${what} – ${head}.`, `${head}. ${cap(sess)} ${what}.`][v % 3] : end(`${head}. ${live}`);
+  }
+  if (c === 'mma' || c === 'boxing') {
+    const m = /^(.+?):\s*(.+?\s+vs\.?\s+.+)$/i.exec(ttl);
+    if (m) return end(`${[`Hlavný zápas večera ${m[1]}: ${m[2]}`, `${m[1]} – v hlavnom zápase večera ${m[2]}`, `${m[2]} je hlavným zápasom turnaja ${m[1]}`][v % 3]}${x.place ? ' (' + x.place + ')' : ''}`);
+    return end(`${c === 'mma' ? 'Galavečer MMA' : 'Boxerský galavečer'} ${ttl}${subOk ? ' – ' + subOk : ''}${x.place ? ', ' + x.place : ''}`);
+  }
+  if (c === 'tennis') return end([`Tenis – ${ttl}${subOk ? ': ' + lc1(subOk) : ''}. ${live}`, `${ttl}${subOk ? ' (' + subOk + ')' : ''}: tenisový turnaj. ${live}`][v % 2]);
+  if (c === 'film' || x.kind === 'film') return end([`Film ${ttl}${subOk ? ' – ' + subOk : ''} na ${ch}`, `Filmový večer na ${ch}: ${ttl}${subOk ? ' (' + subOk + ')' : ''}`][v % 2]);
+  if (/koncert|concert|festival/i.test(all) || x.kind === 'music') return end(`Koncert: ${ttl}${subOk ? ' – ' + subOk : ''}. Hudobný večer na ${ch}`);
+  const show = SHOWS.find(([re]) => re.test(all));
+  if (show || c === 'show' || c === 'reality' || x.kind === 'show') {
+    const fin = /finále|finale/i.test(all) ? (v % 2 ? 'Finálový večer: ' : 'Finále: ') : '';
+    return end(show ? `${fin}${ttl} – ${show[1]}${subOk && !fin ? '; ' + lc1(subOk) : ''}` : `${fin}${ttl}${subOk ? ' – ' + subOk : ''}: zábavný program na ${ch}`);
+  }
+  if (isSport(x)) return end([`${ttl}${subOk ? ': ' + subOk : ''}. ${live}`, `${live}: ${ttl}${subOk ? ' – ' + lc1(subOk) : ''}`, `${ttl}${subOk ? ' (' + subOk + ')' : ''} – športový prenos na ${ch}`][v % 3]);
+  return end(`${ttl}${subOk ? ' – ' + subOk : ''}${ch ? ' na ' + ch : ''}`);
+}
+
+module.exports = { sk, isCzech, catDesc, filler, bigCtx, matchFacts, matchDesc, cleanEpg, okTeaser, hsh, formSk, clubBonus, firstAirings, stemKey, airKey, TZ, dayKey, dayDiff, dateLbl, hmL, whenLbl, badge, isRecording, pairIn, teamsOf, compOf, qName, sameTeam, classify, tsdbEvent, soon, priority, merge, select, isSport, sameEvent, pairKey, fold };
