@@ -4,8 +4,9 @@
 //  1) national teams → the country flag from Wikimedia Commons (public domain, curated map below)
 //  2) curated map of top SK/CZ and big European clubs → their Wikidata item (P154 logo on Commons)
 //  3) TheSportsDB searchteams (free key 123; on HTTP 429 the source is skipped for this run, never cached as „none“)
-//  4) Wikidata search → the club item's P154 logo (Commons) – filtered to sports clubs/teams of the right sport
-//  5) Wikidata item without P154 → its English Wikipedia lead image (club crest) via the pageimages API
+//  4) ESPN public team lists (site.api.espn.com, no key): UEFA cups, top leagues, NHL, NBA → a.espncdn.com crest
+//  5) Wikidata search → the club item's P154 logo (Commons) – filtered to sports clubs/teams of the right sport
+//  6) Wikidata item without P154 → its English Wikipedia lead image (club crest) via the pageimages API
 // Lookups are throttled (≥ 1.2 s apart, max N per run); positive results are kept 60 days, „not found“ 3 days.
 const RK = require('./evrank');
 const FILE = (f) => 'https://commons.wikimedia.org/wiki/Special:FilePath/' + encodeURIComponent(f.replace(/ /g, '_')) + '?width=128';
@@ -26,7 +27,11 @@ const CLUBS = [
   [/sparta (praha|prague)/, 'Q193481'], [/viktoria plzen/, 'Q206838'], [/banik ostrava/, 'Q329471'], [/lask/, 'Q392310'], [/dinamo (zagreb|zahreb)/, 'Q172803'],
   [/real madrid/, 'Q8682'], [/barcelona/, 'Q7156'], [/bayern/, 'Q15789'], [/dortmund/, 'Q41420'], [/juventus/, 'Q1422'], [/inter\b|internazionale/, 'Q631'], [/\bac milan|^milan/, 'Q1543'],
   [/liverpool/, 'Q1130849'], [/arsenal/, 'Q9617'], [/manchester united/, 'Q18656'], [/manchester city/, 'Q50602'], [/chelsea/, 'Q9616'], [/tottenham/, 'Q18741'], [/paris saint|^psg$/, 'Q483020'],
+  [/sunderland/, 'Q18739'], [/newcastle/, 'Q18716'], [/aston villa/, 'Q18711'], [/ajax/, 'Q81888'], [/celtic/, 'Q19593'], [/atletico madrid/, 'Q8701'], [/napoli/, 'Q2641'], [/leverkusen/, 'Q104761'],
 ];
+const CV = 3; // bump when the source chain / curated map grows
+const ESPN = { football: ['soccer/uefa.champions', 'soccer/uefa.europa', 'soccer/uefa.europa.conf', 'soccer/eng.1', 'soccer/esp.1', 'soccer/ger.1', 'soccer/ita.1', 'soccer/fra.1', 'soccer/ned.1', 'soccer/por.1', 'soccer/aut.1', 'soccer/sco.1'],
+  hockey: ['hockey/nhl'], basketball: ['basketball/nba'] };
 const SPORTDESC = { football: /football|soccer/i, hockey: /ice hockey/i, basketball: /basketball/i, handball: /handball/i, volleyball: /volleyball/i };
 const TSDBSPORT = { football: 'Soccer', hockey: 'Ice Hockey', basketball: 'Basketball', handball: 'Handball', volleyball: 'Volleyball' };
 const sportOf = (cat, comp) => (/h[aá]dzan|h[aá]zen|handball/i.test(comp || '') ? 'handball' : /volejbal|volley/i.test(comp || '') ? 'volleyball' : cat === 'hockey' ? 'hockey' : cat === 'basketball' ? 'basketball' : 'football');
@@ -35,7 +40,7 @@ const keyOf = (name, sport) => RK.fold(RK.qName(name)) + '|' + sport;
 module.exports = function badges({ kv, get }) {
   const UA = { 'user-agent': 'lnkbio-tvguide/1.0 (https://lnkbio.onrender.com/tv; TV guide team logos)' };
   const json = async (u) => JSON.parse((await get(u, 'application/json', 2e6, UA)).buf.toString('utf8'));
-  let cache = null, saving = Promise.resolve(), tsdbOff = 0;
+  let cache = null, saving = Promise.resolve(), tsdbOff = 0; const espn = {};
   const load = async () => { if (!cache) { try { cache = JSON.parse((await kv.get('evh_tb')) || '{}') || {}; } catch { cache = {}; } } return cache; };
   const save = () => (saving = saving.then(() => kv.set('evh_tb', JSON.stringify(cache)).catch(() => {})));
   async function wdLogo(ids, sport) {
@@ -70,6 +75,17 @@ module.exports = function badges({ kv, get }) {
       } catch (e) { if (/429/.test(e.message)) tsdbOff = Date.now() + 20 * 60e3; }
       await new Promise((r) => setTimeout(r, 1200));
     }
+    // ESPN public team lists (no key): UEFA cups + top leagues, NHL, NBA – fetched lazily, kept in memory 12 h
+    if (!women) for (const lg of ESPN[sport] || []) {
+      let L = espn[lg];
+      if (!L || Date.now() - L.t > 12 * 3600e3) {
+        try { const j = JSON.parse((await get(`https://site.api.espn.com/apis/site/v2/sports/${lg}/teams`, 'application/json', 4e6, { 'user-agent': 'lnkbio-tvguide/1.0' })).buf.toString('utf8')); L = espn[lg] = { t: Date.now(), teams: ((((j.sports || [])[0] || {}).leagues || [{}])[0] || {}).teams || [] }; }
+        catch { L = espn[lg] = { t: Date.now(), teams: [] }; }
+      }
+      const t = L.teams.map((z) => z.team || {}).find((z) => z.displayName && RK.sameTeam(name, z.displayName));
+      const href = t && ((t.logos || [])[0] || {}).href;
+      if (href && /^https:\/\/a\.espncdn\.com\//.test(href)) return { b: href, src: 'ESPN (' + lg + ')' };
+    }
     for (const qq of [...new Set([q, String(name).trim() + (women ? ' women' : '')])]) {
       const s = await json(`https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&language=en&uselang=en&type=item&limit=7&search=${encodeURIComponent(qq)}`);
       const ids = ((s && s.search) || []).filter((x) => RK.sameTeam(name, x.label || '')).map((x) => x.id).slice(0, 7);
@@ -82,10 +98,10 @@ module.exports = function badges({ kv, get }) {
     const c = await load(); let n = 0, ch = false;
     for (const t of list) {
       const k = keyOf(t.name, t.sport) + (t.women ? '|w' : ''), h = c[k];
-      if (h && now - h.t < (h.b ? 60 : 3) * 86400e3) continue;
+      if (h && (h.b || h.v === CV) && now - h.t < (h.b ? 60 : 3) * 86400e3) continue; // misses from an older chain version are retried
       if (n >= max) break;
       if (n++) await new Promise((r) => setTimeout(r, 1200));
-      try { const r = await lookup(t.name, t.sport, t.women); c[k] = { t: now, b: r ? r.b : '', src: r ? r.src : '' }; ch = true; }
+      try { const r = await lookup(t.name, t.sport, t.women); c[k] = { t: now, v: CV, b: r ? r.b : '', src: r ? r.src : '' }; ch = true; }
       catch (e) { console.error('evhero logo', RK.qName(t.name), e.message); if (/429|too many/i.test(e.message)) break; }
     }
     if (ch) await save();

@@ -64,7 +64,7 @@ function diversify(list, n, opt = {}) {
 }
 const catOf = (t, kind) => { if (/^(film|series|doc)$/.test(kind || '')) return KINDCAT[kind]; for (const [k, re] of CATS) if (re.test(t)) return k; return KINDCAT[kind] || 'stadium'; };
 const gmodels = () => [...new Set((process.env.EVH_GEMINI_MODELS || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.8-flash').split(',').map((x) => x.trim()).filter((x) => /^[\w.-]{3,60}$/.test(x)))].slice(0, 4);
-const RV = 4, ALG = 6; // ALG: bump to recompute the cached week after ranking changes
+const RV = 4, ALG = 7; // ALG: bump to recompute the cached week after ranking changes
 const BIG = require('./evbig');
 const RK = require('./evrank'); // ranking algorithm: priority, merge, variety, Slovak date labels (documented there)
 const FX_TTL = 12 * 3600e3, FX_MAX = 16; // official fixture lookups (TheSportsDB): cache per pairing, max new lookups per refresh
@@ -250,14 +250,14 @@ module.exports = function hero(ctx, h, E) {
   }
   // team badge → small transparent webp in ev_imgc (never hotlinked), served from /ev-img/c/b-…
   async function badgeImg(url) {
-    if (!/^https:\/\/((r2|www)\.thesportsdb\.com|commons\.wikimedia\.org|upload\.wikimedia\.org)\//.test(url || '')) return '';
+    if (!/^https:\/\/((r2|www)\.thesportsdb\.com|commons\.wikimedia\.org|upload\.wikimedia\.org|a\.espncdn\.com)\//.test(url || '')) return '';
     const tsdb = /thesportsdb/.test(url);
     const k = 'b-' + sha('b1|' + url).slice(0, 24);
     try {
       const ex = (await pool.query('SELECT extract(epoch from at)::int AS v FROM ev_imgc WHERE k=$1', [k])).rows[0]; if (ex) return '/ev-img/c/' + k + '?v=' + ex.v;
       let r; try { r = await get(tsdb ? url + '/small' : url, 'image/*', 2e6, tsdb ? {} : { 'user-agent': 'lnkbio-tvguide/1.0 (https://lnkbio.onrender.com/tv; TV guide team logos)' }); } catch { r = await get(url, 'image/*', 3e6); }
       const w = await require('sharp')(r.buf, { limitInputPixels: 20e6 }).resize(96, 96, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).webp({ quality: 80, alphaQuality: 90 }).toBuffer();
-      const v = (await pool.query(`INSERT INTO ev_imgc (k,src,img,img_m,credit,meta) VALUES ($1,$2,$3,$3,$4,'') ON CONFLICT (k) DO UPDATE SET img=$3, img_m=$3, at=now() RETURNING extract(epoch from at)::int AS v`, [k, C.clip(url, 400), w, tsdb ? '© TheSportsDB' : 'Wikimedia Commons / Wikipedia'])).rows[0].v;
+      const v = (await pool.query(`INSERT INTO ev_imgc (k,src,img,img_m,credit,meta) VALUES ($1,$2,$3,$3,$4,'') ON CONFLICT (k) DO UPDATE SET img=$3, img_m=$3, at=now() RETURNING extract(epoch from at)::int AS v`, [k, C.clip(url, 400), w, tsdb ? '© TheSportsDB' : /espncdn/.test(url) ? 'ESPN' : 'Wikimedia Commons / Wikipedia'])).rows[0].v;
       return '/ev-img/c/' + k + '?v=' + v;
     } catch (e) { console.error('evhero badge', e.message); return ''; }
   }
