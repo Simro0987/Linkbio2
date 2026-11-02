@@ -64,7 +64,7 @@ function diversify(list, n, opt = {}) {
 }
 const catOf = (t, kind) => { if (/^(film|series|doc)$/.test(kind || '')) return KINDCAT[kind]; for (const [k, re] of CATS) if (re.test(t)) return k; return KINDCAT[kind] || 'stadium'; };
 const gmodels = () => [...new Set((process.env.EVH_GEMINI_MODELS || 'gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.8-flash').split(',').map((x) => x.trim()).filter((x) => /^[\w.-]{3,60}$/.test(x)))].slice(0, 4);
-const RV = 4, ALG = 4; // ALG: bump to recompute the cached week after ranking changes
+const RV = 4, ALG = 5; // ALG: bump to recompute the cached week after ranking changes
 const BIG = require('./evbig');
 const RK = require('./evrank'); // ranking algorithm: priority, merge, variety, Slovak date labels (documented there)
 const FX_TTL = 12 * 3600e3, FX_MAX = 16; // official fixture lookups (TheSportsDB): cache per pairing, max new lookups per refresh
