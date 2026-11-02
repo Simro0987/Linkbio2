@@ -40,6 +40,10 @@ function normalizeUrl(url) {
   u = u.replace(/^(https:\/\/i\.imgur\.com\/\w+)\.gifv$/i, '$1.png');
   return u;
 }
+async function toPng(buf) {
+  if (!sharp) throw new Error('sharp chýba');
+  return sharp(buf, { density: 144, limitInputPixels: 40e6, animated: false }).resize(200, 200, { fit: 'inside', withoutEnlargement: false }).png({ compressionLevel: 9 }).toBuffer();
+}
 async function fetchPng(url) {
   url = normalizeUrl(url);
   const { buf, ct } = await get(url);
@@ -51,4 +55,4 @@ async function fetchPng(url) {
     return { png, type: 'image/png' };
   } catch (e) { throw new Error('neplatný obrázok (' + e.message.slice(0, 60) + ')'); }
 }
-module.exports = { normalizeUrl, fetchPng, hasSharp: !!sharp };
+module.exports = { normalizeUrl, fetchPng, toPng, hasSharp: !!sharp };

@@ -14,11 +14,15 @@ const EXTERNAL = require('./epgext');
 
 const TZ = 'Europe/Bratislava';
 const FEED_URL = (f) => `https://epgshare01.online/epgshare01/epg_ripper_${f}.xml.gz`;
-const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1', 'RO1', 'RS1', 'GR1', 'BG1', 'LV1', 'IE1'];
+const FEEDS_ALL = ['SK1', 'CZ1', 'HU1', 'PL1', 'DE1', 'AT1', 'CH1', 'UK1', 'NL1', 'UA1', 'IT1', 'FR1', 'ES1', 'BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1', 'RO1', 'RS1', 'GR1', 'BG1', 'LV1', 'IE1', 'MUSICBOX1', 'DELUXEMUSIC1', 'SPORTKLUB1', ...Object.keys(ALT_URL)];
+// built-in free alternative XMLTV files (fill channels epgshare lacks or has stale): iptv-epg.org per-country files, epg.pw Russia
+const ALT_URL = { IEPGRU1: 'https://iptv-epg.org/files/epg-ru.xml.gz', IEPGUA1: 'https://iptv-epg.org/files/epg-ua.xml.gz', IEPGCZ1: 'https://iptv-epg.org/files/epg-cz.xml.gz', IEPGPL1: 'https://iptv-epg.org/files/epg-pl.xml.gz', IEPGDE1: 'https://iptv-epg.org/files/epg-de.xml.gz', IEPGHU1: 'https://iptv-epg.org/files/epg-hu.xml.gz', IEPGGB1: 'https://iptv-epg.org/files/epg-gb.xml.gz', PWRU1: 'https://epg.pw/xmltv/epg_RU.xml.gz' };
+const isAltFeed = (f) => Object.prototype.hasOwnProperty.call(ALT_URL, f);
+const FEEDS_V3 = ['MUSICBOX1', 'DELUXEMUSIC1', 'SPORTKLUB1', 'IEPGRU1', 'IEPGUA1', 'IEPGCZ1', 'IEPGPL1', 'IEPGDE1', 'PWRU1']; // added 2026-11: music/KHL/Russian/Ukrainian channels with stale or no epgshare data
 const FEEDS_V2 = ['BE2', 'LU1', 'HR1', 'LT1', 'TR1', 'CA2', 'MX1', 'RAKUTEN1']; // added 2026-10: Deluxe/ANIXE+/Red Bull, MDR, Arena Sport 3, My Hits, Россия 24, TSN, Fox Sports; RAKUTEN1: Red Bull TV
-const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', top_move: '1', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV', top_n: '4', top_title: 'Top dnes', top_title_en: 'Top today', week_on: '1', week_n: '4', week_title: 'Top týždňa', week_title_en: 'Top this week', guide_on: '1', guide_genres: 'sport,film,series,show,doc,kids,news,music', guide_def: 'sport', guide_days: '7', guide_scope: 'skcz' };
+const D = { epg_on: '1', epg_feeds: 'SK1,CZ1,HU1,PL1,DE1,AT1,CH1,UK1,NL1,UA1,IT1,FR1,ES1,BE2,LU1,HR1,LT1,TR1,CA2,MX1,RAKUTEN1,MUSICBOX1,DELUXEMUSIC1,SPORTKLUB1,IEPGRU1,IEPGUA1,IEPGCZ1,IEPGPL1,IEPGDE1,PWRU1', epg_hours: '6', epg_ahead: '36', epg_skip: 'VOD\nRádi\nWebkam\n18+\nzápasy', dnes_on: '1', dnes_max: '14', dnes_kinds: 'film,sport,show', dnes_scope: 'skcz', dnes_top: '3', dnes_speed: '3', top_move: '1', sport_on: '1', dnes_title: 'Dnes v TV', dnes_title_en: 'Today on TV', top_n: '4', top_title: 'Top dnes', top_title_en: 'Top today', week_on: '1', week_n: '4', week_title: 'Top týždňa', week_title_en: 'Top this week', guide_on: '1', guide_genres: 'sport,film,series,show,doc,kids,news,music', guide_def: 'sport', guide_days: '7', guide_scope: 'skcz' };
 // custom XMLTV sources added in admin: feed key "src:<id>", their channel ids are prefixed "src<id>:" (no collisions with epgshare ids)
-const SRC_RE = /^src(\d+):/;
+const SRC_RE = /^(?:src\d+|IEPG[A-Z]{2}\d|PW[A-Z]{2}\d):/; // custom sources + built-in alternative feeds (prefixed ids)
 const isSrcFeed = (f) => /^src:\d+$/.test(String(f || ''));
 // IPTV playlists / Xtream panels are never accepted (only schedule files)
 const SRC_MAX = 10;
@@ -43,12 +47,12 @@ function toLocal(ms) { const p = parts(ms); const z = (n) => String(n).padStart(
 module.exports = function install(ctx) {
   const { app, admin, pool, page, esc, hid, csrf, needAuth, wrap, getSettings, setSettings } = ctx;
   const cfg = (s) => { const o = {}; for (const k of Object.keys(D)) o[k] = s[k] == null || s[k] === '' && !/^(epg_skip)$/.test(k) ? D[k] : String(s[k]); return o; };
-  const feedsOf = (c) => [...new Set(String(c.epg_feeds || '').toUpperCase().split(/[\s,;]+/).filter((f) => /^[A-Z]{2,12}\d{1,2}$/.test(f)))].slice(0, 30);
+  const feedsOf = (c) => [...new Set(String(c.epg_feeds || '').toUpperCase().split(/[\s,;]+/).filter((f) => /^[A-Z]{2,12}\d{1,2}$/.test(f)))].slice(0, 40);
   const skipOf = (c) => String(c.epg_skip || '').split(/\r?\n/).map((x) => x.trim().toLowerCase()).filter((x) => x && x !== '-');
   const skipped = (cat, sk) => { const c = String(cat || '').toLowerCase(); return sk.some((x) => c.includes(x)); };
   const kv = { get: async (k) => ((await pool.query('SELECT v FROM epg_kv WHERE k=$1', [k])).rows[0] || {}).v, set: (k, v) => pool.query('INSERT INTO epg_kv (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=$2', [k, String(v)]) };
   const OFF = OFFICIAL.install({ pool, kv, getSettings, C, ADULT, JUNK, onChange: () => dropCaches() }); // official broadcaster schedules (STVR, JOJ, Prima) → days 4–7
-  const DATA_V = '5'; // bump when stored EPG data needs a rebuild after deploy (refresh runs on the first tick)
+  const DATA_V = '6'; // bump when stored EPG data needs a rebuild after deploy (refresh runs on the first tick)
   let mapCache = null, nowCache = null, dnesCache = null, srcCache = null; const dayCache = new Map();
   const sources = async () => srcCache || (srcCache = (await pool.query('SELECT * FROM epg_src ORDER BY id')).rows);
   let sportCache = null;
@@ -82,6 +86,10 @@ module.exports = function install(ctx) {
       const st = await getSettings(); if (st.epg_feeds) { const cur = feedsOf(st); await setSettings({ epg_feeds: [...new Set([...cur, ...FEEDS_V2])].slice(0, 30).join(',') }); }
       await kv.set('feeds_v2', '1');
     }
+    if (await kv.get('feeds_v3') !== '1') {
+      const st = await getSettings(); if (st.epg_feeds) { const cur = feedsOf(st); await setSettings({ epg_feeds: [...new Set([...cur, ...FEEDS_V3])].slice(0, 40).join(',') }); }
+      await kv.set('feeds_v3', '1');
+    }
     schedule();
   };
 
@@ -92,9 +100,9 @@ module.exports = function install(ctx) {
       const src = (await sources()).find((x) => 'src:' + x.id === feed); if (!src) throw new Error('zdroj neexistuje');
       const r = await FETCH.open(src.url, { signal }); return { body: r.stream, gz: r.gz, pre: 'src' + src.id + ':', max: 300 * 1024 * 1024 };
     }
-    const r = await fetch(FEED_URL(feed), { headers: UA, signal, redirect: 'follow' });
+    const r = await fetch(isAltFeed(feed) ? ALT_URL[feed] : FEED_URL(feed), { headers: UA, signal, redirect: 'follow' });
     if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
-    return { body: r.body, gz: true, pre: '', max: 400 * 1024 * 1024 };
+    return { body: r.body, gz: true, pre: isAltFeed(feed) ? feed + ':' : '', max: 400 * 1024 * 1024 };
   }
   async function readChannels(feed) {
     const ac = new AbortController(), t = setTimeout(() => ac.abort(), 120e3);
@@ -155,7 +163,7 @@ module.exports = function install(ctx) {
   // priority: manual → preferred custom sources → built-in mapping → epgshare (fuzzy, +1) → other custom sources (fill gaps)
   async function computeMap(c, chans, epgRows) {
     const pref = new Set((await sources()).filter((x) => x.enabled && x.pref).map((x) => 'src:' + x.id));
-    const T = { p: [], m: [], l: [] }; for (const r of epgRows) (isSrcFeed(r.feed) ? (pref.has(r.feed) ? T.p : T.l) : T.m).push(r);
+    const T = { p: [], m: [], l: [] }; for (const r of epgRows) (isSrcFeed(r.feed) ? (pref.has(r.feed) ? T.p : T.l) : isAltFeed(r.feed) ? T.l : T.m).push(r);
     const ixP = idxOf(T.p), ixM = idxOf(T.m), ixL = idxOf(T.l);
     const sk = skipOf(c), cur = await loadMap(), res = new Map(), want = new Set(), byId = new Map(epgRows.map((r) => [r.id, r]));
     const put = (ch, b, shift) => res.set(ch.id, { epg_id: b.id, score: b.sim, shift });
@@ -166,11 +174,12 @@ module.exports = function install(ctx) {
       const p = fuzzy(ixP, ch, 2, want); if (p.best) { put(ch, p.best, p.shift); continue; }
       // 1) built-in verified mapping
       const kn = C.known(ch.name), kr = kn && byId.get(kn.id);
-      if (kr) { want.add(kn.id); if (kr.n !== 0) { res.set(ch.id, { epg_id: kn.id, score: 1, shift: kn.shift }); continue; } }
-      // 2) fuzzy name match in the epgshare feeds, 3) custom sources for what is still missing
-      const a = fuzzy(ixM, ch, 3, want);
-      if (a.best && a.best.n > 0) { put(ch, a.best, a.shift); continue; }
-      const l = fuzzy(ixL, ch, 2, want);
+      if (kr) want.add(kn.id);
+      // 2) fuzzy name match in the epgshare feeds, 3) custom/alternative sources for what is still missing
+      const a = fuzzy(ixM, ch, 3, want), l = fuzzy(ixL, ch, 2, want);
+      // coverage-aware: a stale id (few programmes in the window) loses to a fresh alternative
+      const opts = []; if (kr && kr.n !== 0) opts.push({ epg_id: kn.id, score: 1, shift: kn.shift, n: kr.n }); if (a.best && a.best.n > 0) opts.push({ epg_id: a.best.id, score: a.best.sim, shift: a.shift, n: a.best.n }); if (l.best && l.best.n > 0) opts.push({ epg_id: l.best.id, score: l.best.sim, shift: l.shift, n: l.best.n });
+      const pick = C.pickCovered(opts); if (pick) { res.set(ch.id, { epg_id: pick.epg_id, score: pick.score, shift: pick.shift || 0 }); continue; }
       const b = a.best && !(a.best.n < 0 && l.best && l.best.n > 0) ? a : l.best ? l : a;
       const top = a.top || p.top || l.top;
       res.set(ch.id, b.best ? { epg_id: b.best.id, score: b.best.sim, shift: b.shift } : { epg_id: '', score: top ? top.sim : 0, shift: 0 });
@@ -677,7 +686,7 @@ ${await srcCard(req, report)}
 ${await offCard(req)}
 <form method="post" action="/admin/epg/settings" class="card" id="nast">${hid(req)}<h2>⚙ Nastavenia TV programu</h2>
 <label class="ck"><input type="checkbox" name="epg_on" value="1"${c.epg_on === '1' ? ' checked' : ''}> Zobraziť TV program pri kanáloch (Teraz / Potom / celý deň)</label>
-<label>Zdroje (krajiny epgshare01, oddelené čiarkou) <span class="hint">dostupné: ${FEEDS_ALL.join(', ')}</span></label><input name="epg_feeds" maxlength="200" value="${esc(c.epg_feeds)}">
+<label>Zdroje (krajiny epgshare01, oddelené čiarkou) <span class="hint">dostupné: ${FEEDS_ALL.join(', ')}</span></label><input name="epg_feeds" maxlength="400" value="${esc(c.epg_feeds)}">
 <label>Obnova každých (hodín)</label><select name="epg_hours">${[2, 3, 4, 6, 8, 12, 24].map((h) => `<option${+c.epg_hours === h ? ' selected' : ''}>${h}</option>`).join('')}</select>
 <label>Program dopredu (hodín)</label><select name="epg_ahead">${[24, 36, 48].map((h) => `<option${+c.epg_ahead === h ? ' selected' : ''}>${h}</option>`).join('')}</select>
 <label>Vynechať kategórie kanálov (časť názvu, jedna na riadok)</label><textarea name="epg_skip" rows="5" maxlength="1000">${esc(c.epg_skip)}</textarea><button>Uložiť</button></form>

@@ -252,10 +252,12 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
     sk: { up: (n) => `✅ ${n} funguje`, slow: (n) => `⚠️ ${n} je pomalé`, down: (n) => `❌ ${n} má výpadok`, '': (n) => `⏳ ${n}: prebieha kontrola` },
     en: { up: (n) => `✅ ${n} is up`, slow: (n) => `⚠️ ${n} is slow`, down: (n) => `❌ ${n} is down`, '': (n) => `⏳ ${n}: checking` },
   };
+  // internal brand names never shown publicly (monitor items are admin-named)
+  const pubName = (n, lang) => (/toki\s*go/i.test(String(n || '')) ? (lang === 'en' ? 'TV service' : 'TV služba') : n);
   function msgFor(m, lang) {
     const st = m.status || '';
     const custom = st === 'up' ? m.msg_up : st === 'slow' ? m.msg_slow : st === 'down' ? m.msg_down : '';
-    return custom || (STXT[lang] || STXT.sk)[st](m.name);
+    return String(custom || (STXT[lang] || STXT.sk)[st](pubName(m.name, lang))).replace(/toki\s*go/gi, lang === 'en' ? 'TV service' : 'TV služba');
   }
   const pubItem = (m, lang) => ({ cls: m.status || '', msg: msgFor(m, lang), at: m.checked_at });
   ctx.monitorBanner = async (lang) => {
@@ -271,7 +273,7 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
   // channel list for the public 'Kanály' section – single source of truth = monitors (Stav služieb)
   ctx.monitorChannels = async (lang) => {
     const L = { up: 'Funguje', slow: 'Pomalé', down: 'Výpadok', '': 'Kontroluje sa' };
-    return (await getMon()).map((m) => ({ name: m.name, cls: m.status || '', label: L[m.status || ''] || L[''] }));
+    return (await getMon()).map((m) => ({ name: pubName(m.name, lang), cls: m.status || '', label: L[m.status || ''] || L[''] }));
   };
   ctx.monitorPage = async (lang) => {
     const ms = await getMon();

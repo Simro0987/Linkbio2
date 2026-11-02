@@ -145,11 +145,12 @@ module.exports = function install(ctx) {
   const nextOrd = async (c) => (await c.query('SELECT COALESCE(MAX(ord),0)+1 AS n FROM tv_channels')).rows[0].n;
   const groups = (rows) => { const m = new Map(); for (const r of rows) { if (!m.has(r.category)) m.set(r.category, []); m.get(r.category).push(r); } return m; };
   const back = (res, m, a = '') => res.redirect(303, '/admin/kanaly-katalog?m=' + m + (a ? '#' + a : ''));
-  const MS = { ok: 'Uložené.', added: 'Kanál pridaný.', trashed: 'Presunuté do koša – obnoviť v Admin › Kôš.', bad: 'Neplatný názov alebo kategória (nesmie obsahovať URL).', badlogo: 'Logo musí byť https odkaz na obrázok (bez portu, nie stream/playlist).', needconfirm: 'Akciu treba potvrdiť zaškrtnutím.', nofile: 'Chýba súbor.', big: 'Súbor je väčší ako 5 MB.', badfile: 'Súbor sa nepodarilo prečítať (CSV alebo .xlsx).', many: 'Príliš veľa riadkov (max 5000).', logos: 'Logá uložené (vrátiť sa dá z Koša).', expired: 'Náhľad vypršal – nahrajte súbor znova.', imported: 'Import dokončený.', dupe: 'Kanál s týmto názvom už v kategórii existuje.', badepg: 'Kanál uložený, ale zadané EPG id v zdroji neexistuje – vyberte ho cez 🔎 vybrať.' };
+  const MS = { ok: 'Uložené.', added: 'Kanál pridaný.', trashed: 'Presunuté do koša – obnoviť v Admin › Kôš.', bad: 'Neplatný názov alebo kategória (nesmie obsahovať URL).', badlogo: 'Logo musí byť https odkaz na obrázok (bez portu, nie stream/playlist).', needconfirm: 'Akciu treba potvrdiť zaškrtnutím.', nofile: 'Chýba súbor.', big: 'Súbor je väčší ako 5 MB.', badfile: 'Súbor sa nepodarilo prečítať (CSV alebo .xlsx).', many: 'Príliš veľa riadkov (max 5000).', logos: 'Logá uložené (vrátiť sa dá z Koša).', expired: 'Náhľad vypršal – nahrajte súbor znova.', imported: 'Import dokončený.', dupe: 'Kanál s týmto názvom už v kategórii existuje.', badimg: 'Súbor nie je platný obrázok (PNG/JPG/WebP/SVG, max 2 MB).', autorun: 'Automatické dopĺňanie log spustené na pozadí.', badepg: 'Kanál uložený, ale zadané EPG id v zdroji neexistuje – vyberte ho cez 🔎 vybrať.' };
 
   ctx.tvchInit = async () => {
     await pool.query(`CREATE TABLE IF NOT EXISTS tv_channel_reports (id SERIAL PRIMARY KEY, channel_id INT, channel_name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', type TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '', resolved BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS tv_logo_cache (channel_id INT PRIMARY KEY, src TEXT NOT NULL, png BYTEA, ok BOOLEAN NOT NULL DEFAULT false, err TEXT NOT NULL DEFAULT '', fetched_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS tv_logo_auto (channel_id INT PRIMARY KEY, url TEXT NOT NULL DEFAULT '', src TEXT NOT NULL DEFAULT '', applied BOOLEAN NOT NULL DEFAULT false, tried_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS tv_channels (id SERIAL PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Ostatné', logo TEXT NOT NULL DEFAULT '', ord INT NOT NULL DEFAULT 0, visible BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
   };
   // restore from l_trash (called by server restore route inside its transaction)
@@ -161,6 +162,7 @@ module.exports = function install(ctx) {
     drop();
   };
   // ---------- logo proxy/cache: /tvlogo/:id → normalized 200px PNG ----------
+  const UPL = /^upload:[a-f0-9]{16}$/;
   const lhash = (u) => crypto.createHash('sha1').update(String(u)).digest('hex').slice(0, 10);
   const lsrc = (r, broken) => `/tvlogo/${r.id}?v=${r.logo && !(broken && broken.has(r.id)) ? lhash(r.logo) : 'b' + lhash(r.name + '|' + r.category)}`;
   const inflight = new Map(); let active = 0; const waiters = [];
@@ -168,6 +170,7 @@ module.exports = function install(ctx) {
   const free = () => { const w = waiters.shift(); if (w) w(); else active--; };
   async function ensureLogo(ch, force) {
     const cur = (await pool.query('SELECT src,ok,err,fetched_at,png FROM tv_logo_cache WHERE channel_id=$1', [ch.id])).rows[0];
+    if (UPL.test(ch.logo)) return cur && cur.src === ch.logo ? cur : { src: ch.logo, ok: false, err: 'nahraté logo chýba v cache', png: null };
     if (!force && cur && cur.src === ch.logo && (cur.ok || Date.now() - new Date(cur.fetched_at) < 6 * 3600e3)) return cur;
     const k = ch.id + '|' + ch.logo; if (inflight.has(k)) return inflight.get(k);
     const p = (async () => {
@@ -203,6 +206,23 @@ module.exports = function install(ctx) {
     const r = await ensureLogo(ch);
     if (!r.ok || !r.png) return sendBadge(res, ch);
     res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" }); res.send(r.png);
+  }));
+  // read-only catalog health (logo/EPG coverage) – names, categories, logo host, EPG id/feed only; no streams, no secrets
+  let auditC = null;
+  const auditRl = new Map();
+  app.get('/api/tv/audit.json', wrap(async (req, res) => {
+    const ip = req.ip || '', now = Date.now(), q = (auditRl.get(ip) || []).filter((x) => now - x < 60e3); q.push(now); auditRl.set(ip, q);
+    if (auditRl.size > 5000) auditRl.clear();
+    if (q.length > 20) return res.status(429).set('Retry-After', '60').json({ error: 'rate_limited' });
+    if (!auditC || Date.now() - auditC.t > 300e3) {
+      const rows = (await all()).filter((r) => r.visible), broken = await brokenIds();
+      const em = new Map((await pool.query(`SELECT m.channel_id, m.epg_id, m.manual, c.feed, c.n FROM epg_map m LEFT JOIN epg_chan c ON c.id=m.epg_id`).catch(() => ({ rows: [] }))).rows.map((r) => [r.channel_id, r]));
+      const au = new Map((await pool.query('SELECT channel_id,src FROM tv_logo_auto WHERE applied').catch(() => ({ rows: [] }))).rows.map((r) => [r.channel_id, r.src]));
+      const host = (u) => { if (UPL.test(u)) return 'upload'; try { return new URL(u).hostname; } catch { return ''; } };
+      const list = rows.map((r) => { const e = em.get(r.id) || {}; return { id: r.id, name: r.name, category: r.category, logo: !!r.logo && !broken.has(r.id), logo_src: r.logo ? host(r.logo) : '', logo_auto: au.get(r.id) || '', epg_id: e.epg_id || '', epg_feed: e.feed || '', epg_n: e.n == null ? null : e.n, epg_manual: !!e.manual }; });
+      auditC = { t: Date.now(), body: JSON.stringify({ at: new Date().toISOString(), total: list.length, logo_missing: list.filter((x) => !x.logo).length, epg_missing: list.filter((x) => !x.epg_id).length, auto: { ...auto }, channels: list }) };
+    }
+    res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=300', 'X-Robots-Tag': 'noindex' }); res.send(auditC.body);
   }));
   ctx.tvchAll = all; ctx.tvchLogoSrc = (r) => lsrc(r);
   const logoImg = (r, sz, broken) => `<img class="tlg" src="${esc(lsrc(r, broken))}" alt="" loading="lazy" decoding="async" width="${sz}" height="${sz}" data-l="${esc([...r.name][0].toUpperCase())}">`;
@@ -311,7 +331,8 @@ ${no.length ? `<details class="card"><summary>Nenájdené (${no.length}) – zob
     const r = (await all()).find((x) => x.id === +req.params.id); if (!r) return back(res, 'ok');
     let sg = [], err = ''; try { sg = await LOGOS.suggest(r.name, r.category); } catch (e) { err = e.message; console.error('tvlogos suggest failed:', e.message); } if (!sg.length && LOGOS.status().lastErr) err = err || LOGOS.status().lastErr;
     res.send(page('Nájsť logo', `<h1>🔎 Logo pre „${esc(r.name)}“</h1><p><a href="/admin/kanaly-katalog">← Späť</a></p>${err ? `<p class="err">Problém so zdrojom log: ${esc(err)}</p>` : ''}
-${r.logo ? `<p>Aktuálne: <img src="${esc(r.logo)}" alt="" width="48" height="48" referrerpolicy="no-referrer"></p>` : ''}
+${r.logo ? `<p>Aktuálne: <img src="${esc(UPL.test(r.logo) ? lsrc(r) : r.logo)}" alt="" width="48" height="48" referrerpolicy="no-referrer"></p>` : ''}
+<form method="post" action="/admin/tvch/${r.id}/upload" enctype="multipart/form-data" class="card">${hid(req)}<h2>⬆ Nahrať vlastné logo</h2><p class="hint">PNG, JPG, WebP alebo SVG, max 2 MB. Uloží sa ako 200px PNG v databáze a zobrazí z /tvlogo/${r.id}.</p><input type="file" name="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" required><button>Nahrať logo</button></form>
 ${sg.map((x) => `<form method="post" action="/admin/tvch/${r.id}/setlogo" class="card">${hid(req)}<input type="hidden" name="logo" value="${esc(x.url)}"><p><img src="${esc(x.url)}" alt="" width="64" height="64" referrerpolicy="no-referrer" style="object-fit:contain;vertical-align:middle"> <span class="hint">${esc(LOGOS.SRC_LABEL[x.src] || x.src)}${x.country ? ' · ' + esc(x.country) : ''} · ${esc(LOGOS.short(x.url))}</span></p><button>Použiť toto logo</button></form>`).join('') || (err ? '' : '<p class="hint">Nenašlo sa žiadne logo. Môžete zadať vlastnú https URL v úprave kanála.</p>')}`, 'adm'));
   }));
   admin.post('/tvch/:id(\\d+)/setlogo', needAuth, csrf, wrap(async (req, res) => {
@@ -325,7 +346,7 @@ ${sg.map((x) => `<form method="post" action="/admin/tvch/${r.id}/setlogo" class=
   admin.post('/tvch/logos/check', needAuth, csrf, wrap(async (req, res) => {
     for (const [k, v] of jobs) if (v.exp < Date.now()) jobs.delete(k);
     const running = [...jobs.entries()].find(([, v]) => !v.done && v.kind === 'check'); if (running) return res.redirect(303, '/admin/tvch/logos/check/' + running[0]);
-    const list = (await all()).filter((r) => r.logo), id = crypto.randomBytes(12).toString('hex');
+    const list = (await all()).filter((r) => r.logo && !UPL.test(r.logo)), id = crypto.randomBytes(12).toString('hex');
     const j = { kind: 'check', done: false, n: 0, total: list.length, exp: Date.now() + 30 * 60e3, bad: [] }; jobs.set(id, j);
     (async () => { let i = 0; await Promise.all(Array.from({ length: 6 }, async () => { while (i < list.length) { const ch = list[i++]; const r = await ensureLogo(ch, true).catch((e) => ({ ok: false, err: e.message })); if (!r.ok) j.bad.push({ id: ch.id, name: ch.name, url: ch.logo, err: r.err }); j.n++; } })); })().catch((e) => console.error('logo check', e.message)).finally(() => { j.done = true; });
     res.redirect(303, '/admin/tvch/logos/check/' + id);
@@ -351,11 +372,47 @@ ${j.bad.length ? `<div class="card"><h2>Nefunkčné</h2>${j.bad.slice(0, 500).ma
     } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); drop(); brokenCache = null; }
     back(res, 'ok');
   }));
+  // ---------- admin logo upload (stored as PNG in tv_logo_cache, channel logo = upload:<hash>) ----------
+  const upImg = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 5, fieldSize: 1024 } }).single('file');
+  admin.post('/tvch/:id(\\d+)/upload', needAuth, (req, res, next) => upImg(req, res, (e) => (e ? back(res, 'badimg') : next())), csrf, wrap(async (req, res) => {
+    const id = +req.params.id, f = req.file; if (!f || !f.buffer.length) return back(res, 'nofile');
+    let png; try { png = await LP.toPng(f.buffer); } catch { return back(res, 'badimg'); }
+    const tag = 'upload:' + crypto.createHash('sha256').update(png).digest('hex').slice(0, 16);
+    const c = await pool.connect();
+    try { await c.query('BEGIN'); const o = (await c.query('SELECT name,logo FROM tv_channels WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      if (o) { await c.query('UPDATE tv_channels SET logo=$1 WHERE id=$2', [tag, id]); await c.query(`INSERT INTO tv_logo_cache (channel_id,src,png,ok,err,fetched_at) VALUES ($1,$2,$3,true,'',now()) ON CONFLICT (channel_id) DO UPDATE SET src=$2,png=$3,ok=true,err='',fetched_at=now()`, [id, tag, png]); await logoTrash(c, [{ id, old: o.logo, url: tag }], `Nahraté logo – ${o.name} (obnoviť = vrátiť späť)`); }
+      await c.query('COMMIT'); } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); drop(); }
+    back(res, 'ok');
+  }));
+  // ---------- slow background resolver: fills only empty/broken logos, once per channel (admin clears are respected) ----------
+  const auto = { running: false, at: 0, n: 0, found: 0, total: 0 };
+  const sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
+  async function autoLogos() {
+    if (auto.running) return; auto.running = true; auto.n = 0; auto.found = 0;
+    try {
+      const broken = await brokenIds(), tried = new Map((await pool.query('SELECT channel_id,url,applied,tried_at FROM tv_logo_auto')).rows.map((r) => [r.channel_id, r]));
+      const list = (await all()).filter((r) => (!r.logo || (broken.has(r.id) && !UPL.test(r.logo))) && (() => { const t = tried.get(r.id); if (!t) return true; if (t.applied) return false; return Date.now() - new Date(t.tried_at) > 7 * 86400e3; })());
+      auto.total = list.length; let idx = null;
+      for (const ch of list) {
+        if (!idx) idx = await LOGOS.getIndex();
+        const r = await LOGOS.resolveOne(ch, idx).catch(() => null); let applied = false;
+        if (r && r.url) {
+          const ok = await LP.fetchPng(r.url).then(() => true, () => false);
+          if (ok && (await pool.query('UPDATE tv_channels SET logo=$1 WHERE id=$2 AND logo=$3', [r.url, ch.id, ch.logo])).rowCount) { applied = true; auto.found++; drop(); }
+        }
+        await pool.query(`INSERT INTO tv_logo_auto (channel_id,url,src,applied,tried_at) VALUES ($1,$2,$3,$4,now()) ON CONFLICT (channel_id) DO UPDATE SET url=$2,src=$3,applied=$4,tried_at=now()`, [ch.id, (r && r.url) || '', (r && r.src) || '', applied]);
+        auto.n++; await sleep(1500);
+      }
+    } catch (e) { console.error('tvlogo auto', e.message); } finally { auto.running = false; auto.at = Date.now(); }
+  }
+  if (process.env.TVLOGO_AUTO !== '0' && process.env.NODE_ENV !== 'test') { setTimeout(() => autoLogos(), 150e3).unref(); setInterval(() => autoLogos(), 12 * 3600e3).unref(); }
+  ctx.tvchLogoAuto = () => ({ ...auto });
+  admin.post('/tvch/logos/auto', needAuth, csrf, wrap(async (req, res) => { autoLogos(); back(res, 'autorun', 'logos'); }));
   const catSel = (cats, cur, nm) => `<select name="${nm}">${cats.map((c) => `<option${c === cur ? ' selected' : ''}>${esc(c)}</option>`).join('')}<option value="">➕ nová kategória…</option></select>`;
   const input = (b) => {
     const name = cleanTxt(b.name, 120), category = cleanTxt(b.newcat, 80) || cleanTxt(b.category, 80) || 'Ostatné';
     if (!txtOk(name) || !txtOk(category)) return { err: 'bad' };
-    const logo = safeLogo(b.logo); if (logo === null) return { err: 'badlogo' };
+    const lv = String(b.logo || '').trim(), logo = /^upload:[a-f0-9]{16}$/.test(lv) ? lv : safeLogo(lv); if (logo === null) return { err: 'badlogo' };
     return { name, category, logo };
   };
   admin.get('/kanaly-katalog', needAuth, wrap(async (req, res) => {
@@ -372,6 +429,7 @@ ${j.bad.length ? `<div class="card"><h2>Nefunkčné</h2>${j.bad.slice(0, 500).ma
 <label>Logo (voliteľné, https URL obrázka)</label><input name="logo" type="url" maxlength="500" placeholder="https://…/logo.png"><button>Pridať</button></form>
 <script src="/static/tvch.js?v=2" defer></script><form method="post" action="/admin/tvch/logos/check" class="card">${hid(req)}<h2>🩺 Skontrolovať logá</h2><p class="hint">Stiahne a overí všetky uložené logá (cez vlastnú cache/proxy, prevod na PNG). Nefunkčné (${broken.size} známych) ukáže a po potvrdení ich vymaže (vrátiť z Koša).</p><button>Skontrolovať logá</button></form>
 <form method="post" action="/admin/tvch/logos/preview" class="card" id="logos">${hid(req)}<h2>🖼 Logá</h2><p class="hint">Vyhľadá logá pre kanály bez loga vo verejnom repozitári GitHub tv-logo/tv-logos (podľa názvu a kategórie). Pred uložením uvidíte náhľad. Načítanie môže trvať do ~1 minúty.</p><button>Doplniť chýbajúce logá</button></form>
+<form method="post" action="/admin/tvch/logos/auto" class="card">${hid(req)}<h2>🤖 Automatické logá</h2><p class="hint">Na pozadí (pomaly, raz za 12 h) doplní logá iba kanálom bez loga alebo s nefunkčným logom – zdroje: tv-logo/tv-logos, iptv-org, Wikidata/Commons, plagáty z Wikipédie (VOD), oficiálny web. Ručne vymazané/zmenené logá neprepisuje. ${auto.running ? `Beží: ${auto.n}/${auto.total}, nájdených ${auto.found}.` : auto.at ? `Posledný beh: ${esc(new Date(auto.at).toLocaleString('sk-SK', { timeZone: 'Europe/Zurich' }))} · nájdených ${auto.found}/${auto.total}.` : ''}</p><button>Spustiť teraz</button></form>
 <form method="post" action="/admin/tvch/import" enctype="multipart/form-data" class="card" id="import">${hid(req)}<h2>⬆ Import z CSV / Excel (.xlsx)</h2>
 <p class="hint">Stĺpce: <b>name/názov</b>, <b>category/kategória</b>, <b>logo</b> (voliteľné). Hlavička a oddeľovač (, ; tab) sa zistia automaticky, UTF-8 s diakritikou. Max 5 MB, 5000 riadkov. Stĺpce s URL streamov/playlistov sa ignorujú. Pred uložením uvidíte náhľad. <a href="/admin/tvch/sablona.csv">⬇ Stiahnuť šablónu CSV</a></p>
 <input type="file" name="file" accept=".csv,.txt,.tsv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required><button>Náhľad importu</button></form>
