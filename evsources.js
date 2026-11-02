@@ -424,7 +424,7 @@ const PROMPTS = {
     'Ak fakty o udalosti nič nehovoria, vráť prázdny reťazec. ' +
     'Odpovedz iba JSON: {"id":"popis", ...}.',
   rank: 'You are the editor of a Slovak/Czech TV guide homepage. From the candidate TV broadcasts of the next 7 days below, choose the 3 BIGGEST events ' +
-    '(fewer only if there are fewer real top events) that the most viewers in Slovakia and Czechia will want to watch – across ALL genres: big sport (finals, ' +
+    '(fewer only if there are fewer real top events) that the most viewers in Slovakia and Czechia will want to watch – across ALL genres. The homepage is for everyone, not only sports fans: about 40 % of your picks (at least 4 of 10) must be non-sport (blockbuster film TV premieres and big titles in prime time, series premieres, big entertainment shows, concerts, documentaries); among matches prefer Slovak/Czech clubs and national teams first, then teams with Slovak/Czech players, then clashes of elite clubs (Real, Barcelona, Bayern, City, Liverpool, Arsenal, PSG, Inter…) and knockout stages/finals; an ordinary match of two mid-table clubs without a Slovak/Czech link is not a top event. Genres: big sport (finals, ' +
     'national teams, Champions League top games, numbered OKTAGON cards, Olympics, F1 deciders), blockbuster film TV premieres, premieres and finales of ' +
     'popular series, finales/premieres of big reality and entertainment shows (Farma, SuperStar, Let\'s Dance, Survivor…), big concerts, Eurovision, Oscars, ' +
     'Grammys and other award galas, elections and big debates, New Year\'s Eve, big documentaries, royal events. Prefer live / first-run broadcasts; avoid reruns, ' +

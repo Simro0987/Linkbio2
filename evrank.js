@@ -13,17 +13,38 @@
 // 3) PRIORITY = base score + SOON (sooner = higher) + OFFICIAL (+6 when the official fixture confirms the kick-off)
 //    + EDITOR (optional Gemini order, bounded: at most +10, so it re-orders near-ties but cannot invent an event).
 //    SOON: on air / today +6, tomorrow +4, in 2 days +3, 3 days +2, 4 days +1, 5 days 0, 6 days −2, 7 days −3
-//    (Bratislava calendar days, not 24-hour blocks); CLUBS: a team pairing in a UEFA cup +12, with a Slovak team/
-//    Slovakia +8, a „veľký zápas“ gets its „ráno −10“ refunded; NIGHT −10 for a start 00:00–06:59; PRACTICE −12 (F1/MotoGP trénink);
+//    (Bratislava calendar days, not 24-hour blocks); NIGHT −10 for a start 00:00–06:59; PRACTICE −12 (F1/MotoGP trénink);
 //    FILLER −30 for a generic sport programme without teams (bare „Curling“, magazín, štúdio, góly…) unless it is a major final/MS/olympics.
+//    SPORT ORDER (clubBonus):
+//    a) a Slovak OR Czech club / national team (Slovensko, Česko) +12 – both countries equal;
+//    b) else a team or tennis player with Slovak/Czech players (curated LEGION list: NHL/football clubs → player, tennis
+//       players by name) +8; the card names the player („V drese tímu Boston hrá David Pastrňák.“);
+//    c) STRENGTH (strength()): curated ELITE tiers (football: Real, Barça, Bayern, City, Liverpool, Arsenal, PSG, Inter = 3;
+//       Milan, Juventus, Dortmund, Atlético, Chelsea, United, Napoli, Tottenham, Leverkusen… = 2; NHL/NBA elites = 2; top
+//       national teams = 2) + top-of-table (evbig „špička tabuľky“, TheSportsDB standings) + STAGE (finále +12, semifinále +8,
+//       vyraďovacia fáza/play-off/štvrťfinále +5 > league phase). Top vs top (both ≥ 2) = „šláger“ +14 (+4 when both are
+//       tier 3), one elite team +4. A UEFA-cup pairing gets +12 only when it has an SK/CZ team, SK/CZ players or an elite
+//       club; a plain pairing without any of these (Sunderland – Dinamo Záhreb) gets NOBODY −14, so it only fills gaps.
+//       A „veľký zápas“ gets its „ráno −10“ refunded.
+//    YOUTH −15 (Youth Olympics, juniors, U15–U19 without a SK/CZ team) and HEATS −10 (rozjazdy/rozplavby/predkolá of
+//    individual sports) – „OH mládeže – rozjazdy“ ranks below big films and shows.
+//    NON-SPORT (nonSport, ≤ +24): channel weight (main SK/CZ channel +6, film/second channel +3), known entertainment
+//    format (SuperStar, Farma, StarDance, Talent… +6), series/season premiere („1. epizoda“, „nová séria“ +8), TMDB
+//    popularity (log scale, ≤ +10) + rating (≥ 7.5 with ≥ 300 votes +6 … weak < 5.5 −4) from the official TMDB API
+//    (epghero tmdbScores, cached 7 days). First airing/premiere +10 and prime time +12 come from the base score;
+//    candidates (epgevents wide mode): premieres in prime time, keyword formats, films ≥ 75 min and shows/concerts/
+//    documentaries ≥ 45 min starting 19:30–22:44 on a weighted channel, series only as a season premiere. Gemini's editor
+//    order (bounded +10) is told the list is for everyone (≈ 40 % non-sport). No IMDb/ČSFD.
+//    REASON CHIP (reason()): every card shows one short Slovak line from its top factor („🔥 Šláger: Real vs. Bayern“,
+//    „🇸🇰 Hrá Slovan Bratislava“, „🇸🇰 Hrá Lobotka“, „🏆 Finále“, „🎬 Filmová premiéra“, „🏎️ Kvalifikácia F1“…).
 //    FIRST AIRING: the same pairing / title+subtitle later in the week is a re-run → only the first airing stays.
 // 4) MERGE: the same event on several SK/CZ channels (same match pairing, or same category + start ±30 min + similar
 //    title) becomes one card listing all channels; the highest-priority airing is kept.
 // 5) VARIETY (select()): walk the list by priority with caps – one card per series (title stem: F1 weekend, Olympics,
-//    a show's episodes, a team pairing), ≤ perCat of one sport/genre (8 slides → 3), ≤ perDay
-//    on one calendar day (8 → 3), sport overall ≤ 75 % (8 → 6) so at least ¼ of the slots go to non-sport TV events
-//    (film premieres, shows, galas, concerts…) when such candidates exist (they may enter 10 points below the sport
-//    threshold); remaining gaps are filled by the best skipped candidates. Final order = priority.
+//    a show's episodes, a team pairing), ≤ perCat of one sport/genre (10 slides → 3), ≤ perDay on one calendar day (10 → 4),
+//    sport overall ≤ 60 % (10 → 6, 8 → 5), so at least 40 % (min 4 of 10; 3 of 8) of the cards are the best non-sport items (they may enter
+//    25 points below the sport threshold). Gaps: first another series keeping the sport cap; the cap is relaxed only when
+//    no non-sport candidate is left. Main cards in priority order, then opt.spare reserves (best remaining non-sport + sport).
 const TZ = 'Europe/Bratislava';
 const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
 const dayKey = (ms) => ymd.format(ms);
@@ -140,11 +161,120 @@ const SPORTCAT = new Set(['football', 'hockey', 'tennis', 'basketball', 'athleti
 const isSport = (x) => SPORTCAT.has(x.cat) || x.kind === 'sport';
 // club matches: the EPG often lacks the „live“ flag on them, so named pairings get a bounded boost
 const EUROCUP = /liga (majstrov|mistr[uů])|champions league|európsk[aá] liga|evropsk[aá] liga|europa league|konferen[cč]n|conference league|\buefa\b/i;
+// SK/CZ clubs and national teams (Slovensko/Česko, also in the EPG's Czech/English forms) – one tier, same bonus
 const SKTEAM = /slovan bratislava|spartak trnava|[žz]ilina|\bdac\b|dunajsk[aá] streda|ko[šs]ice|slovensk|slovakia|ru[žz]omberok|podbrezov|michalovce|zvolen|nitra|bansk[aá] bystrica|poprad/i;
+const CZTEAM = /sparta praha|ac sparta|\bsparta\b|slavia|plze[nň]|ban[ií]k ostrava|sigma olomouc|slov[aá]cko|bohemians|mlad[aá] boleslav|jablonec|liberec|hradec kr[aá]lov|teplice|karvin[aá]|pardubice|kometa|t[řr]inec|v[ií]tkovice|litv[ií]nov|mountfield|karlovy vary|budějovic|budejovic|česk|cesk|czech/i;
+const SKCZ_BONUS = 12, LEGION_BONUS = 8;
+// SK/CZ players abroad – curated, easy to extend: [team pattern, sport (evrank cat) or '' = any, player, nation].
+// Only long-standing, well-known facts (checked 11/2026); remove a line when a player moves. Tennis players are matched
+// by name in the title/subtitle (no team).
+const LEGION = [
+  [/boston bruins|\bbruins\b|\bboston\b/i, 'hockey', 'David Pastrňák', 'CZ'],
+  [/boston bruins|\bbruins\b|\bboston\b/i, 'hockey', 'Pavel Zacha', 'CZ'],
+  [/montr[eé]al|canadiens/i, 'hockey', 'Juraj Slafkovský', 'SK'],
+  [/vegas|golden knights/i, 'hockey', 'Tomáš Hertl', 'CZ'],
+  [/vancouver|canucks/i, 'hockey', 'Filip Hronek', 'CZ'],
+  [/anaheim|\bducks\b/i, 'hockey', 'Lukáš Dostál', 'CZ'],
+  [/napoli|neapol/i, 'football', 'Stanislav Lobotka', 'SK'],
+  [/leverkusen/i, 'football', 'Patrik Schick', 'CZ'],
+  [/west ham/i, 'football', 'Tomáš Souček', 'CZ'],
+  [/atl[eé]tic\p{L}* madrid|atl[eé]tico/iu, 'football', 'Dávid Hancko', 'SK'],
+  [/fenerbah/i, 'football', 'Milan Škriniar', 'SK'],
+  [/men[šs][ií]k/i, 'tennis', 'Jakub Menšík', 'CZ'], [/lehe[čc]k/i, 'tennis', 'Jiří Lehečka', 'CZ'], [/mach[aá][čc]/i, 'tennis', 'Tomáš Macháč', 'CZ'],
+  [/muchov/i, 'tennis', 'Karolína Muchová', 'CZ'], [/krej[čc][ií]kov/i, 'tennis', 'Barbora Krejčíková', 'CZ'], [/vondrou[šs]ov/i, 'tennis', 'Markéta Vondroušová', 'CZ'],
+  [/noskov/i, 'tennis', 'Linda Nosková', 'CZ'], [/siniakov/i, 'tennis', 'Kateřina Siniaková', 'CZ'], [/bouzkov/i, 'tennis', 'Marie Bouzková', 'CZ'],
+  [/schmiedlov/i, 'tennis', 'Anna Karolína Schmiedlová', 'SK'], [/[šs]ramkov/i, 'tennis', 'Rebecca Šramková', 'SK'], [/mol[čc]an/i, 'tennis', 'Alex Molčan', 'SK'],
+];
+const skczTeam = (x) => !!(x.teams && x.teams.some((t) => SKTEAM.test(t) || CZTEAM.test(t)));
+// players named for a card: team-matched for team sports, name-matched (title/subtitle) for tennis
+function legion(x) {
+  const txt = (x.teams || []).join(' | '), all = txt + ' ' + (x.title || '') + ' ' + (x.sub || ''), out = [];
+  for (const [re, sp, who, nat] of LEGION) {
+    if (sp && x.cat && x.cat !== sp) continue;
+    if (sp === 'tennis' ? re.test(all) : txt && x.teams.some((t) => re.test(t))) { const team = sp === 'tennis' ? '' : x.teams.find((t) => re.test(t)); if (!out.some((o) => o.who === who)) out.push({ who, nat, team }); }
+  }
+  return out;
+}
+// one sentence for the card: „Za Boston nastúpi David Pastrňák.“ / „Hrá Jakub Menšík.“
+function legionLine(l) {
+  if (!l || !l.length) return '';
+  const byTeam = new Map(); for (const o of l) { const k = o.team || ''; if (!byTeam.has(k)) byTeam.set(k, []); byTeam.get(k).push(o.who); }
+  const and = (a) => (a.length > 1 ? a.slice(0, -1).join(', ') + ' a ' + a[a.length - 1] : a[0]);
+  return [...byTeam].map(([t, w]) => (t ? `V drese tímu ${t} ${w.length > 1 ? 'hrajú' : 'hrá'} ${and(w)}.` : `Na kurte ${and(w)}.`)).join(' ');
+}
+// ELITE clubs / teams – curated, easy to extend: [pattern, sport, tier (3 = absolute top, 2 = elite), short name]
+const ELITE = [
+  [/real madrid/i, 'football', 3, 'Real'], [/barcelona|barça|barca/i, 'football', 3, 'Barcelona'], [/bayern/i, 'football', 3, 'Bayern'],
+  [/manchester city|man\.? city/i, 'football', 3, 'Man City'], [/liverpool/i, 'football', 3, 'Liverpool'], [/arsenal/i, 'football', 3, 'Arsenal'],
+  [/paris saint|paríž saint|paris sg|paríž sg|\bpsg\b/i, 'football', 3, 'PSG'], [/\binter\b(?!.*miami)|internazionale/i, 'football', 3, 'Inter'],
+  [/\bac mil[aá]n|^mil[aá]n[o]?$|\bmil[aá]n[o]?$(?<!inter mil[aá]n[o]?)/i, 'football', 2, 'AC Miláno'], [/juventus/i, 'football', 2, 'Juventus'],
+  [/dortmund/i, 'football', 2, 'Dortmund'], [/atl[eé]tic\p{L}* madrid|atl[eé]tico/iu, 'football', 2, 'Atlético'], [/chelsea/i, 'football', 2, 'Chelsea'],
+  [/manchester united|man\.? utd|man\.? united/i, 'football', 2, 'Man United'], [/napoli|neapol/i, 'football', 2, 'Neapol'], [/tottenham/i, 'football', 2, 'Tottenham'],
+  [/leverkusen/i, 'football', 2, 'Leverkusen'], [/benfica/i, 'football', 2, 'Benfica'], [/\bporto\b/i, 'football', 2, 'Porto'], [/newcastle/i, 'football', 2, 'Newcastle'],
+  [/^(španielsko|španělsko|spain)$/i, 'football', 2, 'Španielsko'], [/^(francúzsko|francie|france)$/i, 'football', 2, 'Francúzsko'], [/^(anglicko|anglie|england)$/i, 'football', 2, 'Anglicko'],
+  [/^(nemecko|německo|germany)$/i, 'football', 2, 'Nemecko'], [/^(portugalsko|portugal)$/i, 'football', 2, 'Portugalsko'], [/^(brazília|brazílie|brazil)$/i, 'football', 2, 'Brazília'],
+  [/^(argentína|argentina)$/i, 'football', 2, 'Argentína'], [/^(taliansko|itálie|italy)$/i, 'football', 2, 'Taliansko'], [/^(holandsko|nizozemsko|netherlands)$/i, 'football', 2, 'Holandsko'],
+  [/edmonton|oilers/i, 'hockey', 2, 'Edmonton'], [/florida panthers|\bpanthers\b/i, 'hockey', 2, 'Florida'], [/colorado|avalanche/i, 'hockey', 2, 'Colorado'],
+  [/dallas stars/i, 'hockey', 2, 'Dallas'], [/vegas|golden knights/i, 'hockey', 2, 'Vegas'], [/carolina|hurricanes/i, 'hockey', 2, 'Carolina'],
+  [/toronto|maple leafs/i, 'hockey', 2, 'Toronto'], [/tampa/i, 'hockey', 2, 'Tampa Bay'], [/winnipeg/i, 'hockey', 2, 'Winnipeg'],
+  [/^(kanada|canada)$/i, 'hockey', 2, 'Kanada'], [/^(usa|spojené štáty|spojené státy)$/i, 'hockey', 2, 'USA'], [/^(švédsko|švédsko|sweden)$/i, 'hockey', 2, 'Švédsko'], [/^(fínsko|finsko|finland)$/i, 'hockey', 2, 'Fínsko'],
+  [/celtics/i, 'basketball', 2, 'Boston Celtics'], [/lakers/i, 'basketball', 2, 'Lakers'], [/warriors/i, 'basketball', 2, 'Golden State'], [/nuggets/i, 'basketball', 2, 'Denver'],
+  [/thunder/i, 'basketball', 2, 'Oklahoma City'], [/knicks/i, 'basketball', 2, 'Knicks'], [/cavaliers/i, 'basketball', 2, 'Cleveland'], [/real madrid/i, 'basketball', 2, 'Real'],
+];
+const STAGE = [[/(?<![\p{L}])(fin[aá]le|final)(?![\p{L}])(?!.*(štvrť|čtvrt|semi|osemi))/iu, 12, 'Finále'], [/semifin[aá]l\p{L}*|semi-final/iu, 8, 'Semifinále'],
+  [/štvrťfin[aá]l\p{L}*|čtvrtfin[aá]l\p{L}*|quarter-?final|vyraďovac\p{L}*|vyřazovac\p{L}*|play-?off|osemifin[aá]l\p{L}*|knockout/iu, 5, 'Vyraďovacia fáza']];
+// strength of a pairing: { tiers:[h,a], names:[h,a], stage:{pts,label}|null, top: top-of-table clash, slager }
+function strength(x) {
+  const T = x.teams || [], cat = x.cat === 'stadium' ? '' : x.cat;
+  const tier = T.map((t) => { const e = ELITE.find(([re, sp]) => (!cat || sp === cat) && re.test(String(t).trim())); return e ? [e[2], e[3]] : [0, side(t)]; });
+  const txt = (x.title || '') + ' ' + (x.sub || '') + ' ' + (x.comp || '') + ' ' + (x.big || []).join(' ');
+  const st = STAGE.find(([re]) => re.test(txt)), top = /špička tabuľky/.test((x.why || []).join(' ') + ' ' + (x.big || []).join(' '));
+  const ti = tier.map((z) => z[0]);
+  return { tiers: ti, names: tier.map((z) => z[1]), stage: st ? { pts: st[1], label: st[2] } : null, top, slager: T.length === 2 && ti[0] >= 2 && ti[1] >= 2 };
+}
+function strengthBonus(x) {
+  if (!x.teams || x.teams.length < 2) return 0;
+  const g = strength(x), elite = g.tiers.some((t) => t >= 2);
+  return (g.slager ? 14 + (g.tiers[0] === 3 && g.tiers[1] === 3 ? 4 : 0) : elite ? 4 : 0) + (g.top ? 6 : 0) + (g.stage ? g.stage.pts : 0);
+}
+// a pairing with nothing for the SK/CZ viewer: no SK/CZ team or player, no elite club, no stage, no big-match label
+function nobody(x) {
+  if (!x.teams || x.teams.length < 2 || !isSport(x)) return false;
+  const g = strength(x);
+  return !skczTeam(x) && !legion(x).length && !g.tiers.some((t) => t >= 2) && !g.stage && !g.top && !(x.big || []).length && !/veľký zápas/.test((x.why || []).join(' '));
+}
 function clubBonus(x) {
-  if (!x.teams) return 0;
-  const w = (x.why || []).join(' '), big = /veľký zápas/.test(w);
-  return (EUROCUP.test(x.comp || x.sub || '') ? 12 : 0) + (SKTEAM.test(x.teams.join(' ')) ? 8 : 0) + (big && /ráno -10/.test(w) ? 10 : 0); // a big derby at 11:45 is not a „morning“ filler
+  const l = legion(x);
+  if (!x.teams) return l.length ? LEGION_BONUS : 0; // tennis: a Czech/Slovak player named in the title
+  const w = (x.why || []).join(' '), big = /veľký zápas/.test(w), nb = nobody(x);
+  return (EUROCUP.test(x.comp || x.sub || '') && !nb ? 12 : 0) + (skczTeam(x) ? SKCZ_BONUS : l.length ? LEGION_BONUS : 0) + strengthBonus(x) + (nb ? -14 : 0)
+    + (big && /ráno -10/.test(w) ? 10 : 0); // a big derby at 11:45 is not a „morning“ filler
+}
+// YOUTH −15 (youth/junior events without a SK/CZ team: Youth Olympics, U18…) and HEATS −10 (heats/qualifying rounds of
+// individual sports): „Olympijské hry mládeže – rozjazdy“ must rank below a prime-time film or show
+const YOUTH = /olympijsk\p{L}* hr\p{L}* mládeže|olympijsk\p{L}* hr\p{L}* mladeze|youth olympic|\beyof\b|juniorsk\p{L}*|junior\p{L}*|dorast\p{L}*|\bU ?1[5-9]\b|mládež|mladez/iu;
+const HEATS = /rozjazd\p{L}*|rozjížď\p{L}*|rozjizd\p{L}*|rozplavb\p{L}*|\bheats?\b|predkol\p{L}*|předkol\p{L}*/iu;
+function minorSport(x) {
+  if (!isSport(x)) return 0;
+  const all = (x.title || '') + ' ' + (x.sub || '') + ' ' + (x.comp || '');
+  return (YOUTH.test(all) && !skczTeam(x) ? -15 : 0) + (!x.teams && HEATS.test(all) ? -10 : 0);
+}
+// NON-SPORT quality (films, series, shows, concerts, documentaries): channel weight, known format, series/season
+// premiere, TMDB popularity + rating (official API, x.tmdb = { pop, vote, n }); capped at +24
+const CH1 = /^(markíza|markiza|joj|jednotka|čt ?1|ct ?1|nova|prima|tv nova|tv markíza|tv joj)(\s+(fhd|hd|sk|cz))*$/i;
+const CH2 = /dvojka|čt ?2|ct ?2|čt art|ct art|joj plus|joj cinema|jojko|wau|dajto|doma|nova cinema|nova action|nova fun|prima max|prima cool|prima love|prima show|prima krimi|markíza klasik|markiza klasik|hbo|cinemax|film europe|filmbox|amc|axn|óčko|ocko|voyo|ta3|čt24|ct24/i;
+const chTier = (name) => { const n = String(name || '').replace(/\s+(fhd|hd|uhd|sd)\b/gi, '').trim(); return CH1.test(n) ? 2 : CH2.test(n) ? 1 : 0; };
+const SEASON = /(?<![\p{L}\d])(1\. (epizoda|epizóda|díl|diel|časť|část|séria|série|řada)|epizoda 1|diel 1|premiéra seriálu|nová séria|nová série|nová řada|\d+\. (série|séria|řada), 1\. (epizoda|epizóda|díl|diel))(?![\p{L}\d])/iu;
+function tmdbPts(t) {
+  if (!t || !(t.pop >= 0)) return 0;
+  const pop = Math.min(10, Math.round(Math.log10(t.pop + 1) * 5)), v = t.vote || 0, n = t.n || 0;
+  return pop + (n >= 300 && v >= 7.5 ? 6 : n >= 200 && v >= 7 ? 4 : n >= 100 && v >= 6.5 ? 2 : n >= 100 && v < 5.5 ? -4 : 0);
+}
+function nonSport(x) {
+  if (isSport(x)) return 0;
+  const all = (x.title || '') + ' ' + (x.sub || ''), tier = chTier(x.chName || (x.ch && x.ch.name));
+  const fmt = SHOWS.some(([re]) => re.test(all)) ? 6 : 0, prem = SEASON.test(all) ? 8 : 0;
+  return Math.min(24, (tier === 2 ? 6 : tier === 1 ? 3 : 0) + fmt + prem + tmdbPts(x.tmdb));
 }
 const hourOf = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23' });
 const PRACTICE = /tr[eé]nin[gk]|practice|\bfp[123]\b|voľn[yý] tr|volný tr/i;
@@ -164,7 +294,7 @@ function priority(x, now, gemIdx) {
   const g = gemIdx == null || gemIdx < 0 ? 0 : Math.max(0, 10 - gemIdx * 1.5);
   const night = +hourOf.format(x.s) < 7 && x.s > now ? -10 : 0; // 00:00–06:59 start: few viewers (and mostly re-runs)
   const practice = PRACTICE.test(x.title + ' ' + (x.sub || '')) ? -12 : 0; // F1/MotoGP practice is not the event of the weekend
-  return Math.round(x.score + soon(x.s, now) + (x.official === 'ok' ? 6 : 0) + g + night + practice + clubBonus(x) + filler(x));
+  return Math.round(x.score + soon(x.s, now) + (x.official === 'ok' ? 6 : 0) + g + night + practice + clubBonus(x) + filler(x) + minorSport(x) + nonSport(x));
 }
 // the same broadcast again later in the week (handball Thu live → Sat/Sun re-runs; „Triatlon“ Thu → Fri 02:25):
 // key = team pairing, or title + subtitle; only the first airing (by start) survives – later ones are re-runs
@@ -195,20 +325,22 @@ function merge(list) {
   return out;
 }
 function select(list, n, opt = {}) {
-  const perCat = opt.perCat || Math.max(2, Math.ceil(n * 0.3)), perDay = opt.perDay || Math.max(2, Math.ceil(n * 0.35)), maxSport = opt.maxSport || Math.max(1, Math.ceil(n * 0.75));
-  const out = [], rest = [], cc = new Map(), dc = new Map(), sk = new Set(); let sp = 0;
-  for (const x of list) {
-    if (out.length >= n) break;
-    const c = x.cat || 'x', d = dayKey(x.s), s = isSport(x), k = stemKey(x);
-    if (sk.has(k) || (cc.get(c) || 0) >= perCat || (dc.get(d) || 0) >= perDay || (s && sp >= maxSport)) { rest.push(x); continue; }
-    out.push(x); sk.add(k); cc.set(c, (cc.get(c) || 0) + 1); dc.set(d, (dc.get(d) || 0) + 1); if (s) sp++;
-  }
-  // gaps: best skipped candidates – first a different series, only then repeats
-  for (const x of list) { if (out.length >= n) break; if (!out.includes(x) && !sk.has(stemKey(x))) { out.push(x); sk.add(stemKey(x)); } }
-  for (const x of list) { if (out.length >= n) break; if (!out.includes(x)) out.push(x); }
-  return out.sort((a, b) => list.indexOf(a) - list.indexOf(b));
+  const perCat = opt.perCat || Math.max(2, Math.ceil(n * 0.3)), perDay = opt.perDay || Math.max(2, Math.ceil(n * 0.35)), maxSport = opt.maxSport || Math.max(1, Math.round(n * 0.6));
+  const out = [], cc = new Map(), dc = new Map(), sk = new Set(); let sp = 0;
+  const add = (x) => { const c = x.cat || 'x', d = dayKey(x.s); out.push(x); sk.add(stemKey(x)); cc.set(c, (cc.get(c) || 0) + 1); dc.set(d, (dc.get(d) || 0) + 1); if (isSport(x)) sp++; };
+  // 1) all caps; 2) another series keeping the sport cap (≥ 40 % non-sport); 3) sport cap relaxed (no non-sport left); 4) repeats
+  for (const x of list) { if (out.length >= n) break; const c = x.cat || 'x', d = dayKey(x.s); if (sk.has(stemKey(x)) || (cc.get(c) || 0) >= perCat || (dc.get(d) || 0) >= perDay || (isSport(x) && sp >= maxSport)) continue; add(x); }
+  for (const x of list) { if (out.length >= n) break; if (!out.includes(x) && !sk.has(stemKey(x)) && !(isSport(x) && sp >= maxSport)) add(x); }
+  for (const x of list) { if (out.length >= n) break; if (!out.includes(x) && !sk.has(stemKey(x))) add(x); }
+  for (const x of list) { if (out.length >= n) break; if (!out.includes(x)) add(x); }
+  const main = out.sort((a, b) => list.indexOf(a) - list.indexOf(b));
+  if (!opt.spare) return main;
+  // reserves (shown when a main card ends): best remaining non-sport first, then best remaining sport
+  const left = list.filter((x) => !main.includes(x) && !main.some((y) => stemKey(y) === stemKey(x)));
+  const sp1 = [left.find((x) => !isSport(x)), left.find(isSport)].filter(Boolean);
+  for (const x of left) { if (sp1.length >= opt.spare) break; if (!sp1.includes(x)) sp1.push(x); }
+  return main.concat(sp1.slice(0, opt.spare));
 }
-
 
 // ---------- card descriptions (facts → 1–2 Slovak sentences; never invented) ----------
 // Matches: competition, round, venue (TheSportsDB fixture), table position/points/form (TheSportsDB table, top 5 only on the
@@ -248,7 +380,7 @@ function matchFacts(x, ctx) {
   const cup = /uefa|liga (majstrov|mistr)|európsk|evropsk|konferen|pohár|pohar|cup|kvalifik/i.test(comp + ' ' + (x.league || ''));
   const L = !cup && x.official === 'ok' ? (c.tables || []).find((t) => tblRow(t.rows, h) || tblRow(t.rows, a)) : null;
   const ph = L && tblRow(L.rows, h), pa = L && tblRow(L.rows, a);
-  return { h, a, comp, round: !hasRound && x.official === 'ok' && +x.round > 0 && +x.round < 60 ? +x.round : 0, venue: x.official === 'ok' ? side(x.venue || '') : '', rival: b.rival, clubs: b.clubs, stake: b.stake, ph, pa, cup };
+  return { h, a, comp, round: !hasRound && x.official === 'ok' && +x.round > 0 && +x.round < 60 ? +x.round : 0, venue: x.official === 'ok' ? side(x.venue || '') : '', rival: b.rival, clubs: b.clubs, stake: b.stake, ph, pa, cup, players: legionLine(legion(x)) };
 }
 const formSk = (f) => String(f || '').toUpperCase().replace(/[^WDL]/g, '').slice(-5).split('').map((z) => FORM[z]).join('');
 const hsh = (s) => { let n = 7; for (const ch of String(s)) n = (n * 31 + ch.charCodeAt(0)) >>> 0; return n; };
@@ -264,7 +396,8 @@ function matchDesc(f, v) {
   else if (cr) parts.unshift(cr);
   if (!f.rival && f.clubs && !(f.ph && f.pa)) parts.push(['súboj veľkých klubov', 'stretnutie dvoch veľkoklubov', 'duel favoritov'][v % 3]);
   const s2 = parts.map((z) => z.replace(/^./, (c) => c.toUpperCase()) + '.').join(' ');
-  return (s1 + (s2 ? ' ' + s2 : '')).replace(/\.\./g, '.').slice(0, 220);
+  const base = (s1 + (s2 ? ' ' + s2 : '')).replace(/\.\./g, '.').slice(0, 220);
+  return f.players ? base + ' ' + f.players : base;
 }
 // EPG programme text → 1–2 clean sentences (no cast lists, ratings, years-in-brackets boilerplate, „Záznam.“ …)
 function cleanEpg(t, title) {
@@ -310,6 +443,7 @@ const SHOWS = [ // known entertainment formats → one factual sentence about th
   [/tvoja tv[aá]r|tvoje tv[aá][řr]/i, 'šou, v ktorej sa známe osobnosti menia na slávnych spevákov'], [/x factor/i, 'spevácka talentová súťaž'], [/talent/i, 'talentová šou'],
   [/survivor/i, 'reality šou o prežití na opustenom ostrove'], [/farma/i, 'reality šou zo života na farme'], [/masterchef/i, 'kuchárska súťaž amatérov'], [/love island/i, 'zoznamovacia reality šou'],
   [/hotel paradise/i, 'zoznamovacia reality šou'], [/ninja/i, 'súťaž na prekážkovej dráhe'], [/inkognito/i, 'zábavná šou s hádaním identity hostí'], [/eurov/i, 'súťaž piesní Eurovision'],
+  [/stardance/i, 'tanečná šou Českej televízie, v ktorej známe osobnosti tancujú s profesionálmi'], [/všechnopárty|vsechnoparty/i, 'talkshow Karla Šípa'],
   [/silvest/i, 'silvestrovský zábavný program'], [/hlas [čc]esko|the voice/i, 'spevácka súťaž The Voice'], [/big brother/i, 'reality šou zo spoločného domu'],
 ];
 const lc1 = (v) => v.charAt(0).toLowerCase() + v.slice(1);
@@ -334,7 +468,7 @@ function catDesc(x, v = 0) {
     if (m) return end(`${[`Hlavný zápas večera ${m[1]}: ${m[2]}`, `${m[1]} – v hlavnom zápase večera ${m[2]}`, `${m[2]} je hlavným zápasom turnaja ${m[1]}`][v % 3]}${x.place ? ' (' + x.place + ')' : ''}`);
     return end(`${c === 'mma' ? 'Galavečer MMA' : 'Boxerský galavečer'} ${ttl}${subOk ? ' – ' + subOk : ''}${x.place ? ', ' + x.place : ''}`);
   }
-  if (c === 'tennis') return end([`Tenis – ${ttl}${subOk ? ': ' + lc1(subOk) : ''}. ${live}`, `${ttl}${subOk ? ' (' + subOk + ')' : ''}: tenisový turnaj. ${live}`][v % 2]);
+  if (c === 'tennis') { const pl = legionLine(legion(x)); return end([`Tenis – ${ttl}${subOk ? ': ' + lc1(subOk) : ''}. ${live}`, `${ttl}${subOk ? ' (' + subOk + ')' : ''}: tenisový turnaj. ${live}`][v % 2]) + (pl ? ' ' + pl : ''); }
   if (c === 'film' || x.kind === 'film') return end([`Film ${ttl}${subOk ? ' – ' + subOk : ''} na ${ch}`, `Filmový večer na ${ch}: ${ttl}${subOk ? ' (' + subOk + ')' : ''}`][v % 2]);
   if (/koncert|concert|festival/i.test(all) || x.kind === 'music') return end(`Koncert: ${ttl}${subOk ? ' – ' + subOk : ''}. Hudobný večer na ${ch}`);
   const show = SHOWS.find(([re]) => re.test(all));
@@ -346,4 +480,58 @@ function catDesc(x, v = 0) {
   return end(`${ttl}${subOk ? ' – ' + subOk : ''}${ch ? ' na ' + ch : ''}`);
 }
 
-module.exports = { sk, isCzech, catDesc, filler, bigCtx, matchFacts, matchDesc, cleanEpg, okTeaser, hsh, formSk, clubBonus, firstAirings, stemKey, airKey, TZ, dayKey, dayDiff, dateLbl, hmL, whenLbl, badge, isRecording, pairIn, teamsOf, compOf, qName, sameTeam, classify, tsdbEvent, soon, priority, merge, select, isSport, sameEvent, pairKey, fold };
+// TMDB (official API): query title (no „(r.)“/episode suffix) and a strict match of the result title
+const tmdbQuery = (t) => side(String(t || '').replace(/\(.*?\)/g, '').replace(/[:–-]\s*(\d+\.\s*)?(diel|díl|časť|část|epizoda|epizóda|séria|série|řada)\b.*$/i, '').replace(/\s+[IVX]+\.?$/, ''));
+function tmdbMatch(q, r) {
+  const a = fold(q); if (!a || !r) return false;
+  return [r.title, r.name, r.original_title, r.original_name].some((z) => z && (fold(z) === a || (a.length >= 8 && (fold(z).startsWith(a) || a.startsWith(fold(z)) && fold(z).length >= 8))));
+}
+// admin „prečo“ lines for the bonuses above
+function bonusWhy(x) {
+  const o = [], l = legion(x), m = minorSport(x), ns = nonSport(x), sb = strengthBonus(x);
+  if (skczTeam(x)) o.push('SK/CZ tím +' + SKCZ_BONUS); else if (l.length) o.push('SK/CZ hráči (' + l.map((z) => z.who).join(', ') + ') +' + LEGION_BONUS);
+  if (sb) o.push('sila zápasu (elita/tabuľka/fáza) +' + sb); if (nobody(x)) o.push('bez SK/CZ väzby a elity −14');
+  if (m) o.push('mládež/rozjazdy ' + m); if (ns) o.push('nešport (kanál, formát, premiéra série, TMDB) +' + ns);
+  return o;
+}
+// one-line visible reason for a card (Slovak, emoji + short text) from the strongest factor
+const FLAG = { SK: '🇸🇰', CZ: '🇨🇿' };
+const surname = (n) => String(n).split(' ').slice(-1)[0];
+function reason(x) {
+  const all = (x.title || '') + ' ' + (x.sub || ''), c = [];
+  const push = (w, t) => c.push([w, t]);
+  if (isSport(x)) {
+    const T = x.teams || [], g = T.length === 2 ? strength(x) : null, l = legion(x);
+    const sk = T.find((t) => SKTEAM.test(t)), cz = T.find((t) => CZTEAM.test(t));
+    if (sk || cz) push(30, `${sk ? FLAG.SK : FLAG.CZ} Hrá ${side(sk || cz)}`);
+    else if (l.length) push(20, `${FLAG[l[0].nat]} ${l.length > 1 ? 'Hrajú ' + l.slice(0, 2).map((z) => surname(z.who)).join(' a ') : 'Hrá ' + surname(l[0].who)}`);
+    if (g && g.slager) push(26, `🔥 Šláger: ${g.names[0]} vs. ${g.names[1]}`);
+    const rv = bigCtx(x.big, null), rvl = (x.big || []).map((w) => String(w).replace(/\s*[+−-]\d+\s*$/, '').trim()).find((w) => /derby|cl[aá]sico|classique|klassiker|old firm/i.test(w));
+    if (rvl) push(27, `🔥 ${rvl.replace(/\s*\((?:hokej|S–S)\)$/, '')}`);
+    const st = (g && g.stage) || (STAGE.find(([re]) => re.test(all)) ? { label: STAGE.find(([re]) => re.test(all))[2] } : null);
+    if (st) push(st.label === 'Finále' ? 28 : 18, `🏆 ${st.label}`);
+    if (g && g.top) push(17, '📈 Súboj špičky tabuľky');
+    if (g && !g.slager && g.tiers.some((t) => t >= 2)) { const i = g.tiers[0] >= g.tiers[1] ? 0 : 1; push(12, `⭐ Hrá ${g.names[i]}`); }
+    if (x.cat === 'f1' || GP.test(all)) { const f = /motogp/i.test(all) ? 'MotoGP' : 'F1'; push(22, `🏎️ ${/kvalifik|qualif/i.test(all) ? 'Kvalifikácia ' + f : /šprint|sprint/i.test(all) ? 'Šprint ' + f : /tréning|trénink|practice/i.test(all) ? 'Tréning ' + f : 'Veľká cena ' + f}`); }
+    if (x.cat === 'mma' || x.cat === 'boxing') push(16, /oktagon/i.test(all) ? '🥊 Galavečer OKTAGON' : '🥊 Galavečer');
+    if (/ms |majstrovstv|mistrovstv|olymp|world cup|svetov/i.test(all + ' ' + (x.comp || '')) && !YOUTH.test(all)) push(14, '🌍 Veľký turnaj');
+    if (EUROCUP.test((x.comp || '') + ' ' + (x.sub || ''))) push(8, '⚽ Európsky pohár');
+    if (x.live) push(5, '🔴 Naživo');
+    push(1, '🏅 Športový tip týždňa');
+  } else {
+    const prem = /p/.test(x.fl || '') || (x.why || []).some((w) => /premiéra/.test(w)), t = x.tmdb, k = x.kind || x.cat;
+    if (/fin[aá]le/i.test(all)) push(26, '🏆 Finále šou');
+    if (SEASON.test(all)) push(24, '📺 Premiéra novej série');
+    if (k === 'film' && prem) push(25, '🎬 Filmová premiéra');
+    if (t && t.vote >= 7 && t.n >= 200) push(20, `🎬 Hodnotenie ${String(t.vote.toFixed(1)).replace('.', ',')}/10 (TMDB)`);
+    if (SHOWS.some(([re]) => re.test(all))) push(19, '⭐ Obľúbená veľká šou');
+    if (k === 'music' || /koncert|concert/i.test(all)) push(18, '🎤 Koncert');
+    if (k === 'doc') push(15, prem ? '🎥 Dokument v premiére' : '🎥 Dokument');
+    if (k === 'film') push(12, '🎬 Film v hlavnom čase');
+    if (prem) push(10, '✨ Premiéra');
+    push(1, '📺 Tip na večer');
+  }
+  return c.sort((a, b) => b[0] - a[0])[0][1];
+}
+
+module.exports = { reason, strength, strengthBonus, nobody, ELITE, bonusWhy, tmdbQuery, tmdbMatch, SEASON, legion, legionLine, chTier, nonSport, minorSport, tmdbPts, skczTeam, LEGION, sk, isCzech, catDesc, filler, bigCtx, matchFacts, matchDesc, cleanEpg, okTeaser, hsh, formSk, clubBonus, firstAirings, stemKey, airKey, TZ, dayKey, dayDiff, dateLbl, hmL, whenLbl, badge, isRecording, pairIn, teamsOf, compOf, qName, sameTeam, classify, tsdbEvent, soon, priority, merge, select, isSport, sameEvent, pairKey, fold };

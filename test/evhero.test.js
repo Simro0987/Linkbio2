@@ -2,7 +2,7 @@
 const assert = require('assert');
 const H = require('../epghero');
 let n = 0, bad = 0; const t = (name, fn) => { n++; try { fn(); console.log('  ✓', name); } catch (e) { bad++; console.log('  ✗', name, e.message); } };
-t('evh_max: default 8, clamp 1–12', () => { assert.strictEqual(H.maxOf({}), 8); assert.strictEqual(H.maxOf({ evh_max: '12' }), 12); assert.strictEqual(H.maxOf({ evh_max: '40' }), 12); assert.strictEqual(H.maxOf({ evh_max: '0' }), 8); assert.strictEqual(H.maxOf({ evh_max: '-3' }), 1); assert.strictEqual(H.maxOf({ evh_max: 'x' }), 8); });
+t('evh_max: default 10, clamp 1–10', () => { assert.strictEqual(H.maxOf({}), 10); assert.strictEqual(H.maxOf({ evh_max: '12' }), 10); assert.strictEqual(H.maxOf({ evh_max: '40' }), 10); assert.strictEqual(H.maxOf({ evh_max: '0' }), 10); assert.strictEqual(H.maxOf({ evh_max: '-3' }), 1); assert.strictEqual(H.maxOf({ evh_max: 'x' }), 10); assert.strictEqual(H.maxOf({ evh_max: '8' }), 8); });
 const D = Date.UTC(2026, 10, 2, 18), day = 86400e3;
 const mk = (id, cat, d) => ({ id, cat, s: D + d * day });
 t('diversify: ≤3 of one sport for 8 slides, order kept', () => {

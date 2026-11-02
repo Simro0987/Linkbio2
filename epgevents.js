@@ -119,6 +119,7 @@ module.exports = function events(ctx, h) {
   const setOkt = (nums) => { oktNums = nums && nums.size ? nums : null; };
   // „veľký zápas“ detector context (hero only: parsed evh_big config + league top-4 standings)
   let bigCtx = null; const setBig = (x) => { bigCtx = x || null; };
+  const RK = require('./evrank');
   const BIG = require('./evbig'), SPORTCAT = /sport|šport|futbal|hokej|tenis|mma|box|formula|motogp|basketbal|cykl|atlet|lyž|biatlon|hádzan|volejbal|šípk|snooker|olymp/i;
   const kwOf = (c) => { if (!kwCache || kwCache.src !== c.ev_kw) kwCache = { src: c.ev_kw, l: parseKw(c.ev_kw) }; return kwCache.l; };
 
@@ -139,15 +140,25 @@ module.exports = function events(ctx, h) {
     const hr0 = localHour(s), prem = (p.fl || '').includes('p') && !(p.fl || '').includes('r');
     // first-run film/series/show/documentary in prime time on a major SK/CZ channel = a candidate even without keywords
     const primeP = !!wide && prem && /^(film|series|show|doc|music)$/.test(p.kind || '') && hr0 >= 19.5 && hr0 < 23 && MAJOR.test(ch.name) && dur >= 40;
+    // hero (wide): the best of the evening for non-sport viewers even without the premiere flag – a film (≥ 75 min) or a
+    // show/concert/documentary (≥ 45 min) starting 19:30–22:44 on a weighted SK/CZ channel (evrank.chTier: main 2, film/second 1),
+    // or a series/season premiere („1. epizoda“, „nová séria“); daily soaps/series episodes stay out
+    let pfl = 0;
+    if (wide && !primeP && /^(film|series|show|doc|music)$/.test(p.kind || '') && hr0 >= 19.5 && hr0 < 22.75 && !(p.fl || '').includes('r') && !RERUN.test(p.title + ' ' + (p.sub || ''))) {
+      const tier = RK.chTier(ch.name);
+      if (tier && p.kind === 'film' && dur >= 75) pfl = tier === 2 ? 36 : 30;
+      else if (tier && p.kind === 'series' && RK.SEASON.test(p.title + ' ' + (p.sub || ''))) pfl = 36;
+      else if (tier && /^(show|music|doc)$/.test(p.kind) && dur >= 45) pfl = tier === 2 ? 34 : 28;
+    }
     const bg = bigCtx && (p.kind === 'sport' || SPORTCH.test(ch.name + ' ' + ch.category) || SPORTCAT.test((p.cat || '') + ' ' + p.title)) ? BIG.detect(bigCtx, p) : { pts: 0, why: [] };
-    if (!ht.length && !hd.length && !primeP && !bg.pts) return null;
+    if (!ht.length && !hd.length && !primeP && !pfl && !bg.pts) return null;
     // title: best keyword + half of a second, different one (final/finále count once); description/category: only strong
     // keywords (weight ≥ 45, e.g. Ballon d'Or, Liga majstrov, olympiáda) at 60 % – generic words there (finále, derby…) are noise
     const ov = (a, b) => a.k.startsWith(b.k) || b.k.startsWith(a.k);
     const t2 = ht.find((x) => x !== ht[0] && !ov(x, ht[0]));
     let kw = ht.length ? ht[0].w + (t2 ? Math.round(t2.w * 0.5) : 0) : 0;
     const dBest = hd.find((x) => x.w >= 45 && !ht.some((y) => ov(x, y))); if (dBest) kw += Math.round(dBest.w * (ht.length ? 0.3 : 0.6));
-    let pk = false; if (primeP && kw < 33) { kw = 33; pk = true; }
+    let pk = false, pn = false; if (primeP && kw < 33) { kw = 33; pk = true; } else if (pfl && kw < pfl) { kw = pfl; pk = pn = true; }
     if (!kw && !bg.pts) return null;
     kw = Math.min(kw, 95);
     // big match: keyword score and detector overlap (both see „finále“) → detector adds 70 % on top of keywords, full when no keyword
@@ -157,7 +168,7 @@ module.exports = function events(ctx, h) {
     // OKTAGON <n> where n is not an upcoming card in the official calendar = archive fight night (Premier Sport reruns)
     const on = /\boktagon\s*(\d{1,3})\b/i.exec(p.title), arch = !!(on && oktNums && oktNums.size && !oktNums.has(+on[1]));
     const live = (p.fl || '').includes('l') || LIVEW.test(head), rerun = (p.fl || '').includes('r') || RERUN.test(head) || arch;
-    const why = [...(kw ? [(pk ? 'premiéra v hlavnom čase +' : 'kľúč. slová +') + kw] : []), ...(bp ? ['veľký zápas +' + bp + ' (' + bg.why.join(', ') + ')'] : [])], spb = wide ? 3 : 8, prb = wide ? 10 : 5;
+    const why = [...(kw ? [(pn ? 'večer na hlavnom kanáli +' : pk ? 'premiéra v hlavnom čase +' : 'kľúč. slová +') + kw] : []), ...(bp ? ['veľký zápas +' + bp + ' (' + bg.why.join(', ') + ')'] : [])], spb = wide ? 3 : 8, prb = wide ? 10 : 5;
     if (SPORTCH.test(ch.name + ' ' + ch.category) || p.kind === 'sport') { sc += spb; why.push('šport +' + spb); }
     if (live && !rerun) { sc += 15; why.push('naživo +15'); } if (rerun) { sc -= 30; why.push((arch ? 'archív' : 'záznam') + ' −30'); } else if ((p.fl || '').includes('p')) { sc += prb; why.push('premiéra +' + prb); }
     // documentary / personal story about a big event or star („Ballon d'Or – Osobný príbeh“): the keyword is not the event itself
@@ -186,11 +197,11 @@ module.exports = function events(ctx, h) {
     const cand = [];
     if (!byEpg.size || !kws.length) return cand;
     // only kinds where events live (no films/series/kids/news/docs) → small result
-    const q = await pool.query(`SELECT epg_id,s,e,title,sub,cat,kind,fl,left(descr,240) AS descr FROM epg_prog WHERE epg_id = ANY($1) AND e > $2 AND s < $3 AND (kind IN ('sport','show','music','')${wide ? ` OR (kind IN ('film','series','doc','news') AND (COALESCE(fl,'') LIKE '%p%' OR title ~* '(vo[lľ]by|volby|debat|silvest|eurov|oscar|grammy|fin[aá]le|premi[eé]r|korunov)'))` : ''}) AND e - s >= interval '25 minutes'`, [[...byEpg.keys()], new Date(from), new Date(to)]);
+    const q = await pool.query(`SELECT epg_id,s,e,title,sub,cat,kind,fl,left(descr,240) AS descr FROM epg_prog WHERE epg_id = ANY($1) AND e > $2 AND s < $3 AND (kind IN ('sport','show','music','')${wide ? ` OR (kind IN ('film','series','doc','news') AND (COALESCE(fl,'') LIKE '%p%' OR title ~* '(vo[lľ]by|volby|debat|silvest|eurov|oscar|grammy|fin[aá]le|premi[eé]r|korunov)' OR extract(hour from s AT TIME ZONE 'Europe/Bratislava') BETWEEN 19 AND 22))` : ''}) AND e - s >= interval '25 minutes'`, [[...byEpg.keys()], new Date(from), new Date(to)]);
     for (const p of q.rows) {
       const chs = byEpg.get(p.epg_id); const ch = chs.find((x) => skcz(x)) || chs[0];
       const r = score(p, ch, c, kws, wide); if (!r) continue;
-      cand.push({ k: 'p:' + p.epg_id + '|' + +p.s, tk: 't:' + tnorm(p.title), title: p.title, sub: p.sub || '', descr: wide ? p.descr || '' : '', s: +p.s, e: +p.e, kind: p.kind, ch, chName: ch.name, pred: /q/.test(p.fl || ''), ext: /x/.test(p.fl || ''), score: r.score, kw: r.kw, big: r.big, bigStrong: r.bigStrong, why: r.why, live: r.live, rerun: r.rerun });
+      cand.push({ k: 'p:' + p.epg_id + '|' + +p.s, tk: 't:' + tnorm(p.title), title: p.title, sub: p.sub || '', descr: wide ? p.descr || '' : '', s: +p.s, e: +p.e, kind: p.kind, ch, chName: ch.name, pred: /q/.test(p.fl || ''), ext: /x/.test(p.fl || ''), fl: p.fl || '', score: r.score, kw: r.kw, big: r.big, bigStrong: r.bigStrong, why: r.why, live: r.live, rerun: r.rerun });
     }
     return cand;
   }
