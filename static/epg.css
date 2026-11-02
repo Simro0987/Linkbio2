@@ -200,3 +200,11 @@
 .tevq{border-color:currentColor;margin-left:4px;font-size:.66rem;flex:none}
 .extadm .row{align-items:center}.extadm select{max-width:220px}.extadm .hint b{font-weight:600}
 .txq{margin:-2px 0 2px}.txq .tpq{margin-left:0}
+/* hero: match cards „Home – Away“ with team badges, competition line, kick-off and extra channels */
+.evh-cp{margin:0;font-size:.8rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#e9e9f1;opacity:.9}
+.evh-t.evh-vs{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;-webkit-line-clamp:unset;overflow:visible}
+.evh-tm{display:inline-flex;align-items:center;gap:10px;min-width:0}
+.evh-tm img{width:clamp(34px,6vw,48px);height:clamp(34px,6vw,48px);object-fit:contain;flex:none;filter:drop-shadow(0 2px 6px rgba(0,0,0,.6))}
+.evh-x{opacity:.7;font-weight:700}
+.evh-ko,.evh-alt{font-weight:500;color:#d8d8e2}
+@media (max-width:699px){.evh-t.evh-vs{font-size:clamp(1.3rem,6.4vw,1.9rem);gap:4px 10px}.evh-cp{font-size:.72rem}}
