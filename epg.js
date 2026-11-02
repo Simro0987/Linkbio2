@@ -167,7 +167,9 @@ module.exports = function install(ctx) {
     const ixP = idxOf(T.p), ixM = idxOf(T.m), ixL = idxOf(T.l);
     const sk = skipOf(c), cur = await loadMap(), res = new Map(), want = new Set(), byId = new Map(epgRows.map((r) => [r.id, r]));
     const put = (ch, b, shift) => res.set(ch.id, { epg_id: b.id, score: b.sim, shift });
+    let i = 0;
     for (const ch of chans) {
+      if (++i % 10 === 0) await new Promise((r) => setImmediate(r)); // fuzzy matching is CPU heavy: yield so health checks / requests are served (a blocked loop got the instance restarted mid-refresh)
       const m = cur.get(ch.id);
       if (m && m.manual) { if (m.epg_id) want.add(m.epg_id); continue; }
       if (skipped(ch.category, sk)) { res.set(ch.id, { epg_id: '', score: 0, shift: 0 }); continue; }

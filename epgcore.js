@@ -130,6 +130,9 @@ function candidates(ix, name, category, limit = 5) {
       for (const [kk, dd] of keys) {
         if (dd !== k.digits) continue;
         if (shortT.some((t) => !kk.includes(t))) continue;
+        // dice upper bound from the lengths alone: skip the bigram work when it cannot reach the threshold (no prefix match either)
+        const pre = (kk.startsWith(k.key) || k.key.startsWith(kk)) && Math.min(kk.length, k.key.length) >= 4;
+        if (!pre && kk !== k.key && 2 * Math.min(kk.length, k.key.length) - 2 < 0.84 * (kk.length + k.key.length - 2)) continue;
         let d = dice(k.key, kk);
         if (d < 1 && (kk.startsWith(k.key) || k.key.startsWith(kk)) && Math.min(kk.length, k.key.length) >= 4) d = Math.max(d, 0.88 - Math.abs(kk.length - k.key.length) * 0.015);
         if (d > best) best = d;
