@@ -33,4 +33,44 @@ t('direct files: https .mp4/.webm only, no IP/localhost/credentials/ports', () =
     assert.strictEqual(parseVideo(u), null, u);
 });
 t('slugify', () => assert.strictEqual(slugify('Videonávody – Ako začať!'), 'videonavody-ako-zacat'));
+
+// ---- section manager helpers (sections/types.js) ----
+const ST = require('../sections/types');
+const { safeHref } = require('../sanitize');
+t('orderKeys keeps saved order, appends new keys after their natural predecessor', () => {
+  assert.deepStrictEqual(ST.orderKeys(['a', 'b', 'c', 'd'], ['c', 'a']), ['c', 'd', 'a', 'b']);
+  assert.deepStrictEqual(ST.orderKeys(['a', 'b'], []), ['a', 'b']);
+  assert.deepStrictEqual(ST.orderKeys(['a', 'b'], ['x', 'b', 'a']), ['b', 'a']);
+});
+t('move up/down clamps at the ends', () => {
+  assert.deepStrictEqual(ST.move(['a', 'b', 'c'], 'b', 'up'), ['b', 'a', 'c']);
+  assert.deepStrictEqual(ST.move(['a', 'b', 'c'], 'c', 'down'), ['a', 'b', 'c']);
+});
+t('cleanCfg: colours hex only, anchors validated, reserved ids refused', () => {
+  const c = ST.cleanCfg('text', { bg_on: '1', bg: 'red;}body{x', fg_on: '1', fg: '#ABCDEF', anchor: 'cennik', vis: 'evil', showTitle: '1' }, {});
+  assert(!c.bg); assert.strictEqual(c.fg.toLowerCase(), '#abcdef'); assert(!c.anchor); assert(!c.vis || c.vis === 'all'); assert(c.showTitle);
+  assert.strictEqual(ST.cleanCfg('text', { anchor: 'akcia-2' }, {}).anchor, 'akcia-2');
+  assert(!ST.cleanCfg('text', { anchor: '"><script>' }, {}).anchor);
+});
+t('cssFor emits only validated colours', () => {
+  const css = ST.cssFor([{ id: 7, cfg: { bg: '#112233', fg: '#ffffff' } }, { id: 8, cfg: { bg: 'url(x)' } }]);
+  assert(/\.xs-7\{background:#112233;color:#ffffff;?\}/.test(css), css); assert(!/xs-8|url\(/.test(css), css);
+});
+t('parseLinks: only safe hrefs, emoji optional', () => {
+  const l = ST.parseLinks('Web | https://example.com | 🌐\nZlé | javascript:alert(1)\nKotva | #akcia\n | https://x.test', safeHref);
+  assert.deepStrictEqual(l.map((x) => x.u), ['https://example.com/', '#akcia'].map((u) => u === '#akcia' ? u : l[0].u));
+  assert.strictEqual(l[0].e, '🌐'); assert(!l.some((x) => /javascript/i.test(x.u)));
+});
+t('parseFaq splits blocks on blank lines', () => {
+  const f = ST.parseFaq('Q1?\nA1\nA1b\n\n\nQ2?\nA2'); assert.strictEqual(f.length, 2); assert.strictEqual(f[0].q, 'Q1?'); assert(/A1b/.test(f[0].a));
+});
+t('countdown time zone Europe/Bratislava round-trips', () => {
+  const e = ST.zonedToEpoch('2027-01-01T00:00'); assert.strictEqual(new Date(e).toISOString(), '2026-12-31T23:00:00.000Z'); assert.strictEqual(ST.epochToZoned(e), '2027-01-01T00:00');
+  const s = ST.zonedToEpoch('2027-07-01T12:30'); assert.strictEqual(new Date(s).toISOString(), '2027-07-01T10:30:00.000Z');
+  assert(!ST.zonedToEpoch('nonsense'));
+});
+t('every kind has label + icon; one-only kinds are the page-wide built-ins', () => {
+  for (const [k, v] of Object.entries(ST.KINDS)) assert(v.l && v.i, k);
+  assert(ST.KINDS.hero.one && ST.KINDS.chat.one && !ST.KINDS.pricing.one && !ST.KINDS.payments.one && !ST.KINDS.channels.one);
+});
 console.log(`\n${n} tests, ${f} failed`); if (f) process.exit(1);

@@ -19,7 +19,7 @@ if (!ENV_HASH || SECRET.length < 32 || !process.env.DATABASE_URL) { console.erro
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: PROD || process.env.PGSSL !== '0' ? { rejectUnauthorized: true } : false, max: 5, keepAlive: true, idleTimeoutMillis: 300000 });
 pool.on('error', e => console.error('pg pool', e.message));
-const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets', 'platby', 'navody-img', 'sekcia-img', 'ucet', 'prihlasenie', 'registracia', 'odhlasenie', 'overit-predplatne', 'zabudnute-heslo']);
+const RESERVED = new Set(['admin', 'api', 'static', 'healthz', 'favicon.ico', 'robots.txt', 'theme.css', 'img', 's', 'qr', 'login', 'logout', 'www', 'static', 'assets', 'platby', 'navody-img', 'sekcia-img', 'sekcia-gal', 'sekcie.css', 'ucet', 'prihlasenie', 'registracia', 'odhlasenie', 'overit-predplatne', 'zabudnute-heslo']);
 const CODE_RE = /^[a-z0-9-]{1,40}$/;
 const B62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 const rndCode = () => Array.from(crypto.randomBytes(7), b => B62[b % 62]).join('');
@@ -408,7 +408,7 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/sekcie">🧩 Sekcie (text / video)</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a><a class="btnl" href="/admin/platobne-metody/darcekove-karty">🎁 Darčekové karty</a>${walletsAdmin.links()}<a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/sekcie">🧩 Sekcie a poradie stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a><a class="btnl" href="/admin/platobne-metody/darcekove-karty">🎁 Darčekové karty</a>${walletsAdmin.links()}<a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 ${payMethods.dashCard()}
 ${walletsAdmin.dashCard()}
 ${features.accountsAdminCard ? features.accountsAdminCard() : ''}
@@ -928,7 +928,7 @@ admin.get('/texty', needAuth, wrap(async (req, res) => {
   const m = req.query.m === 'ok' ? '<p class="ok">Uložené.</p>' : '';
   res.send(page('Texty stránky', `<h1>✏️ Texty stránky</h1>${m}<p><a href="/admin">← Admin</a></p><p class="hint">Všetky nadpisy, popisy a tlačidlá verejnej stránky. Ľavý stĺpec je predvolený text; vyplňte vlastný SK/EN text (prázdne = predvolené). Názvy sekcií v menu sa menia v Navigácii, ceny a balíky v Cenníku, kanály v Stave služieb.</p>
 <form method="post" action="/admin/texty" class="card">${hid(req)}
-<label class="ck"><input type="checkbox" name="cen_home" value="1"${s.cen_home !== '0' ? ' checked' : ''}> Zobraziť Cenník aj na hlavnej stránke</label>
+<p class="hint">🧩 Cenník na hlavnej stránke, jeho poradie a všetky ostatné bloky (kanály, kontakty, prihlásenie, platobné metódy…) nastavíte v <a href="/admin/sekcie">admin › Sekcie</a>.</p>
 <label class="ck"><input type="checkbox" name="tvbar_on" value="1"${s.tvbar_on !== '0' ? ' checked' : ''}> Zobraziť TV pás (● LIVE …) na hlavnej stránke</label>
 ${rows.map((r, i) => `<details><summary>${esc(r.sk)}${r.osk || r.oen ? ' ✏️' : ''}</summary><input type="hidden" name="k${i}" value="${esc(r.sk)}"><label>SK (predvolené: ${esc(r.sk)})</label><input name="s${i}" maxlength="500" value="${esc(r.osk)}"><label>EN (predvolené: ${esc(r.en)})</label><input name="e${i}" maxlength="500" value="${esc(r.oen)}"></details>`).join('')}
 <button>Uložiť texty</button></form>`));
@@ -940,7 +940,7 @@ admin.post('/texty', needAuth, csrf, wrap(async (req, res) => {
     const sk = clean(req.body['s' + i], 500), en = clean(req.body['e' + i], 500);
     if (sk || en) o[k] = { ...(sk ? { sk } : {}), ...(en ? { en } : {}) };
   }
-  await setSettings({ ui_texts: JSON.stringify(o), cen_home: req.body.cen_home ? '1' : '0', tvbar_on: req.body.tvbar_on ? '1' : '0' }); res.redirect(303, '/admin/texty?m=ok');
+  await setSettings({ ui_texts: JSON.stringify(o), tvbar_on: req.body.tvbar_on ? '1' : '0' }); res.redirect(303, '/admin/texty?m=ok');
 }));
 admin.post('/kanaly', needAuth, csrf, wrap(async (req, res) => {
   const t = k => clean(String(req.body[k] || '').replace(/\r/g, ''), 1000);
@@ -989,7 +989,7 @@ const payMethods = require('./paymethods')(features);
 const walletsAdmin = require('./wallets')(features);
 require('./xpubadmin')(features);
 require('./mailer').install(features);
-require('./sitekb').install(Object.assign(features, { getList, SOCIALS, socOn, socGrp, PAGES, LNK_PUBLIC, chTree }));
+require('./sitekb').install(Object.assign(features, { getList, SOCIALS, socOn, socGrp, PAGES, LNK_PUBLIC, chTree, NAV_ICONS }));
 require('./accounts').install(Object.assign(features, { encrypt, decrypt, getList }));
 app.use('/admin', admin);
 
@@ -1009,14 +1009,14 @@ const PER_PAGE = 24;
 const enc = encodeURIComponent;
 const ARROW = '<span class="chev">›</span>';
 async function shell(req, res, s, active, title, content, sub = '') {
-  const nav = (await getList('nav')).filter(n => n.visible);
-  const items = nav.map(n => {
-    const href = n.url || ('/' + s.slug + PAGES[n.page][1]);
+  // Menu: keyed items (n<id> nav list, s<id> own pages, stav, acc) – order/rename/hide from admin › Sekcie › Menu.
+  const raw = (await getList('nav')).filter(n => n.visible).map(n => {
     const on = !n.url && n.page === active;
-    const label = !n.url && PAGES[n.page] && n.label === PAGES[n.page][0] ? T(req, n.label) : n.label;
-    return `<li><a href="${esc(href)}"${on ? ' class="on" aria-current="page"' : ''}${n.url ? ' rel="noopener noreferrer nofollow"' + (n.newtab ? ' target="_blank"' : '') : ''}><span class="ni">${n.url ? '🔗' : NAV_ICONS[n.page]}</span>${esc(label)}</a>${on && sub ? sub : ''}</li>`;
-  }).join('') + (await features.sectionsNav(req, s.slug, active)) + (s.stav_nav === '1' ? `<li><a href="/${esc(s.slug)}/stav"${active === 'stav' ? ' class="on" aria-current="page"' : ''}><span class="ni">📡</span>${esc(T(req, 'Stav služieb'))}</a></li>` : '')
-    + await (async () => { const a = features.accNavItem ? await features.accNavItem(req) : null; return a ? `<li><a href="${esc(a[0])}"${active === 'ucet' ? ' class="on" aria-current="page"' : ''}><span class="ni">${a[1]}</span>${esc(a[2])}</a></li>` : ''; })();
+    return { k: 'n' + n.id, href: n.url || ('/' + s.slug + PAGES[n.page][1]), on, attrs: n.url ? ' rel="noopener noreferrer nofollow"' + (n.newtab ? ' target="_blank"' : '') : '', icon: n.url ? '🔗' : NAV_ICONS[n.page], label: !n.url && PAGES[n.page] && n.label === PAGES[n.page][0] ? T(req, n.label) : n.label, sub: on && sub ? sub : '' };
+  }).concat(features.sectionsNavItems ? await features.sectionsNavItems(req, s.slug, active) : [])
+    .concat(s.stav_nav === '1' ? [{ k: 'stav', href: `/${s.slug}/stav`, on: active === 'stav', icon: '📡', label: T(req, 'Stav služieb') }] : [])
+    .concat(await (async () => { const a = features.accNavItem ? await features.accNavItem(req) : null; return a ? [{ k: 'acc', href: a[0], on: active === 'ucet', icon: a[1], label: a[2] }] : []; })());
+  const items = (features.navArrange ? features.navArrange(s, raw) : raw).map(i => `<li><a href="${/^s\d+$/.test(i.k) ? i.href : esc(i.href)}"${i.on ? ' class="on" aria-current="page"' : ''}${i.attrs || ''}><span class="ni">${esc(i.icon)}</span>${esc(req.lang === 'en' && i.label2 ? i.label2 : i.label)}</a>${i.sub || ''}</li>`).join('');
   const chat = s.chat_enabled !== '0';
   const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${chat ? `<link rel="stylesheet" href="/static/chat.css?v=${CHAT_V}"><script src="/static/chat.js?v=${CHAT_V}" defer></script>` : ''}${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
   const brand = `<a class="brand" href="/${esc(s.slug)}">${s.img.logo ? `<img src="/img/logo?v=${esc(s.img.logo)}" alt="" width="32" height="32">` : '<span class="bl">▶</span>'}${esc(loc(req, s, 'title'))}</a>`;
@@ -1032,15 +1032,17 @@ const DEF_PLAN_URL = SHORT_PAY;
 const planUrl = p => DEF_PLAN_URL + '?plan=' + p.id;
 function fmtEur(v) { const n = Number(v); return (isFinite(n) ? n : 0).toLocaleString('sk-SK', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '\u00a0€'; }
 function perLabel(p, en) { const n = +p || 1; return en ? `${n} ${n === 1 ? 'month' : 'months'}` : `${n} ${n === 1 ? 'mesiac' : n < 5 ? 'mesiace' : 'mesiacov'}`; }
-async function pricingHtml(req, s, h = 'h2') {
-  const en = req.lang === 'en', L = (o, k) => (en && o[k + '_en']) || o[k];
-  const ps = (await getList('plans')).filter(p => p.active); if (!ps.length) return '';
+async function pricingHtml(req, s, h = 'h2', o = {}) {
+  const en = req.lang === 'en', L = (o, k) => (en && o[k + '_en']) || o[k], on = k => o[k] === undefined || !!o[k];
+  const pick = Array.isArray(o.plans) && o.plans.length ? o.plans.map(String) : null;
+  const ps = (await getList('plans')).filter(p => p.active && (!pick || pick.includes(String(p.id)))); if (!ps.length) return '';
   const bon = features.accBonusForReq ? await features.accBonusForReq(req).catch(() => null) : null;
   const cards = ps.map(p => { const f = L(p, 'features').split('\n').map(x => x.trim()).filter(Boolean), mo = (+p.period || 1);
     return `<div class="plan${p.popular ? ' pop' : ''}">${p.popular ? `<span class="pbadge">⭐ ${tx(en, 'Najobľúbenejší', 'Most popular')}</span>` : ''}${L(p, 'badge') ? `<span class="pdisc">${esc(L(p, 'badge'))}</span>` : ''}
 <h3>${esc(L(p, 'name'))}</h3><p class="pprice">${p.old_price ? `<s>${esc(fmtEur(p.old_price))}</s> ` : ''}<b>${esc(fmtEur(p.price))}</b><span> / ${esc(perLabel(p.period, en))}</span></p>${bon && bon(mo) ? `<p class="accbon">🎁 ${esc(bon(mo))}</p>` : ''}${mo > 1 && +p.price > 0 ? `<p class="hint">≈ ${esc(fmtEur(p.price / mo))} / ${tx(en, 'mesiac', 'month')}</p>` : ''}
 ${f.length ? `<ul class="pfeat">${f.map(x => `<li>${esc(x).replace(/(Návod na inštaláciu prehrávača|Player installation guide)/, `<a href="/${esc(s.slug)}/navody">$1</a>`)}</li>`).join('')}</ul>` : ''}${L(p, 'note') ? `<p class="hint">${esc(L(p, 'note'))}</p>` : ''}<a class="btn pbtn" href="${esc(p.btn_url || planUrl(p))}" rel="noopener">${esc(L(p, 'btn') || (tx(en, 'Vybrať platbu', 'Choose payment')))}</a></div>`; }).join('');
-  return `<section class="pricing" id="cennik"><${h} class="ph">${T(req, 'Cenník')}</${h}>${loc(req, s, 'pricing_intro') ? `<div class="prose">${para(loc(req, s, 'pricing_intro'))}</div>` : ''}<div class="plans">${cards}</div>${features.accWhyForReq ? await features.accWhyForReq(req).catch(() => '') : ''}${loc(req, s, 'pricing_note') ? `<div class="prose hint pnote">${para(loc(req, s, 'pricing_note'))}</div>` : ''}</section>`;
+  const pid = o.id === undefined ? 'cennik' : o.id;
+  return `<section class="pricing"${pid ? ` id="${esc(pid)}"` : ''}><${h} class="ph">${o.title ? esc(o.title) : T(req, 'Cenník')}</${h}>${on('intro') && loc(req, s, 'pricing_intro') ? `<div class="prose">${para(loc(req, s, 'pricing_intro'))}</div>` : ''}<div class="plans">${cards}</div>${on('why') && features.accWhyForReq ? await features.accWhyForReq(req).catch(() => '') : ''}${on('notes') && loc(req, s, 'pricing_note') ? `<div class="prose hint pnote">${para(loc(req, s, 'pricing_note'))}</div>` : ''}</section>`;
 }
 const para = t => esc(t).split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 const btnHtml = b => `<a class="b${b.brand ? ' br br-' + b.brand : ''}" href="${esc(b.url)}" rel="noopener noreferrer nofollow"${b.newtab ? ' target="_blank"' : ''}>${b.emoji ? esc(b.emoji) + ' ' : ''}${esc(b.label)}</a>`;
@@ -1066,14 +1068,30 @@ async function chTree() {
 }
 const chBase = s => '/' + s.slug + '/kanaly';
 
+// Home blocks rendered by the section manager (sections/render.js); markup identical to the legacy home page.
+const heroHtml = (req, s) => `<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
+${s.layout === 'tv' ? (s.tvbar_on !== '0' ? `<div class="tvbar"><span class="live">${esc(T(req, '● LIVE'))}</span><span>${esc(T(req, '▶ Stream'))}</span><span>${esc(T(req, '📺 TV'))}</span><span>${esc(T(req, '⚙ Software'))}</span></div>` : '') : ''}</section>
+`;
+function socialHtml(req, s, c = {}) {
+  const on = SOCIALS.filter(([k]) => socOn(s, k)).filter(([k]) => !c.grp || c.grp === 'all' || (c.grp === 'g') === (socGrp(s, k) === 'g'));
+  if (!on.length) return '';
+  const a = (k, n, e) => `<a class="b br br-${SOC_BRAND[k]}" href="${esc(socUrl(s, k))}" rel="noopener noreferrer nofollow">${e} ${esc(T(req, n))}${k === 'email' ? ': ' + esc(s.soc_email) : ''}</a>`;
+  if (c.style === 'buttons') return on.map(([k, n, e]) => a(k, n, e)).join('');
+  if (c.style === 'groups') {
+    const blk = (h, ico, l) => l.length ? `<section class="cgrp"><h2 class="ch2"><span aria-hidden="true">${ico}</span> ${T(req, h)}</h2>${l.map(([k, n, e]) => a(k, n, e)).join('')}</section>` : '';
+    return blk('Skupiny', '👥', on.filter(([k]) => socGrp(s, k) === 'g')) + blk('Priame kontakty', '💬', on.filter(([k]) => socGrp(s, k) !== 'g'));
+  }
+  return `<nav class="soc">${on.map(([k, n, e]) => `<a href="${esc(socUrl(s, k))}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('')}</nav>`;
+}
+features.homeBuiltins = { hero: heroHtml, buttons: async () => (await pubBtns('home')).map(btnHtml).join('\n'), social: socialHtml, pricing: (req, s, o) => pricingHtml(req, s, 'h2', o) };
 app.get('/:slug', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
+  const title = s.meta_title || loc(req, s, 'title');
+  const blocks = features.homeRender ? await features.homeRender(req, s) : null;
+  if (blocks !== null) return shell(req, res, s, 'home', title, blocks);
   const bs = await pubBtns('home');
-  const soc = SOCIALS.filter(([k]) => socOn(s, k)).map(([k, n, e]) => `<a href="${esc(socUrl(s, k))}" rel="noopener noreferrer nofollow" title="${esc(n)}" aria-label="${esc(n)}">${e}<span> ${esc(n)}</span></a>`).join('');
   const banner = await features.monitorBanner(req.lang).catch(() => '');
-  await shell(req, res, s, 'home', s.meta_title || loc(req, s, 'title'), `${banner}${features.eventsHero ? await features.eventsHero(req, s, 'home') : ''}<section class="hero">${s.img.logo ? `<img class="logo" src="/img/logo?v=${esc(s.img.logo)}" alt="${esc(s.title)}" width="96" height="96">` : ''}<h1>${esc(loc(req, s, 'title'))}</h1>${loc(req, s, 'bio') ? `<p class="bio">${esc(loc(req, s, 'bio'))}</p>` : ''}
-${s.layout === 'tv' ? (s.tvbar_on !== '0' ? `<div class="tvbar"><span class="live">${esc(T(req, '● LIVE'))}</span><span>${esc(T(req, '▶ Stream'))}</span><span>${esc(T(req, '📺 TV'))}</span><span>${esc(T(req, '⚙ Software'))}</span></div>` : '') : ''}</section>
-${features.eventsBlock ? await features.eventsBlock(req, s, 'home') : ''}${features.dnesBlock ? await features.dnesBlock(req, s) : ''}${bs.map(btnHtml).join('\n')}${soc ? `<nav class="soc">${soc}</nav>` : ''}${s.cen_home !== '0' ? await pricingHtml(req, s) : ''}`);
+  await shell(req, res, s, 'home', title, `${banner}${features.eventsHero ? await features.eventsHero(req, s, 'home') : ''}${heroHtml(req, s)}${features.eventsBlock ? await features.eventsBlock(req, s, 'home') : ''}${features.dnesBlock ? await features.dnesBlock(req, s) : ''}${bs.map(btnHtml).join('\n')}${socialHtml(req, s)}${s.cen_home !== '0' ? await pricingHtml(req, s) : ''}`);
 }));
 app.get('/:slug/cennik', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();

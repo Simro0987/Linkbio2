@@ -83,7 +83,7 @@ function build(d) {
   // sections + videos
   const sec = d.sections || [];
   if (sec.length) {
-    L.push('## Ďalšie sekcie webu (texty a video návody)');
+    L.push('## Ďalšie sekcie webu (vlastné stránky a bloky na hlavnej stránke)');
     for (const x of sec) {
       L.push(`### ${x.title} – ${x.url}`);
       if (x.text) L.push(scrub(x.text).slice(0, 2500));
@@ -117,8 +117,21 @@ function install(ctx) {
     const st = AFF.settings(s), pk = (acc && acc.packages) || AFF.DEF_PACKAGES, mx = AFF.matrix(st.tiers, pk);
     let sections = [];
     try {
-      sections = (await pool.query(`SELECT slug,title,kind,body,body_raw,videos FROM site_sections WHERE visible ORDER BY pos,id`)).rows
-        .map((x) => ({ title: x.title, url: base + '/' + x.slug, text: strip(x.body_raw || x.body), videos: x.kind === 'video' ? (x.videos || []).map((v) => String(v.title || '').slice(0, 120)) : [] }));
+      const ST = require('./sections/types');
+      sections = (await pool.query(`SELECT slug,title,kind,body,body_raw,videos,place,cfg FROM site_sections WHERE visible ORDER BY place DESC,pos,id`)).rows
+        .filter((x) => x.place !== 'home' || ['text', 'video', 'faq', 'links', 'countdown', 'gallery', 'pricing', 'payments', 'channels', 'auth', 'affiliate', 'subcheck'].includes(x.kind))
+        .map((x) => {
+          const c = x.cfg || {}, home = x.place === 'home', url = home ? base + (c.anchor ? '#' + c.anchor : '') : base + '/' + x.slug;
+          let text = strip(x.body_raw || x.body);
+          if (x.kind === 'faq' && c.src !== 'list') text = ST.parseFaq(c.faq).map((q) => `Otázka: ${q.q} – Odpoveď: ${strip(q.a)}`).join('\n');
+          if (x.kind === 'links') text = ST.parseLinks(c.links, (u) => u).map((l) => `${l.t}: ${/^https?:/i.test(l.u) ? l.u : '(odkaz na stránke)'}`).join('\n');
+          if (x.kind === 'countdown' && c.t) text = `Odpočítavanie do ${ST.epochToZoned(c.t).replace('T', ' ')} (čas SR)${c.done ? ' – potom: ' + c.done : ''}`;
+          if (x.kind === 'gallery') text = 'Galéria obrázkov' + (c.note ? ': ' + c.note : '');
+          if (['pricing', 'payments', 'channels', 'auth', 'affiliate', 'subcheck'].includes(x.kind)) text = ({ pricing: 'Blok s balíkmi a cenami (rovnaké ceny ako v Cenníku).', payments: 'Prehľad dostupných spôsobov platby s tlačidlom na všetky spôsoby platby.', channels: 'Zoznam TV kanálov' + (c.epg ? ' s programom (Teraz / Potom)' : '') + '.', auth: 'Tlačidlá Registrácia a Prihlásenie do zákazníckeho účtu.', affiliate: 'Tabuľka affiliate výhod (mesiace zadarmo za odporúčaných ľudí).', subcheck: 'Tlačidlo Overiť predplatné.' })[x.kind] + (c.note ? ' ' + c.note : '');
+          if (c.vis === 'in') text += ' (viditeľné len prihláseným zákazníkom)';
+          if (c.vis === 'out') text += ' (viditeľné len neprihláseným)';
+          return { title: (home ? 'Na hlavnej stránke: ' : '') + x.title, url, text, videos: x.kind === 'video' ? (x.videos || []).map((v) => String(v.title || '').slice(0, 120)) : [] };
+        });
     } catch { /* table not yet created */ }
     const on = SOCIALS.filter(([k]) => socOn(s, k));
     let blink = false, sepaRecipient = '';
