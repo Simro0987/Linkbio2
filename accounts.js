@@ -83,6 +83,7 @@ function install(ctx) {
     await pool.query(`CREATE INDEX IF NOT EXISTS acc_software_user ON acc_software (user_id)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_panel_cfg (k text PRIMARY KEY, v text NOT NULL)`);
+    await pool.query(`DELETE FROM acc_panel_cfg WHERE k='key'`).catch(() => {});
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_panel_lines (id serial PRIMARY KEY, username text NOT NULL, pass_enc text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS acc_panel_lines_user ON acc_panel_lines (lower(username))`);
     await pool.query(`DELETE FROM acc_sessions WHERE expires_at < now()`);
@@ -92,7 +93,7 @@ function install(ctx) {
   };
 
   // panel config – credentials encrypted at rest (AES-256-GCM via DATA_ENC_KEY)
-  const SECRET_K = new Set(['user', 'pass', 'key', 'm3u_url', 'xmltv_url']);
+  const SECRET_K = new Set(['user', 'pass', 'm3u_url', 'xmltv_url']);
   let pcfg = null;
   async function panelCfg() {
     if (pcfg && pcfg.t > Date.now() - 60000) return pcfg.v;
@@ -106,7 +107,7 @@ function install(ctx) {
     pcfg = null; panelApi.clear();
   }
   const panelReady = (c) => !!(c && c.base && c.type);
-  const pcConf = (c) => ({ base: c.base, type: c.type, user: c.user || '', pass: c.pass || '', key: c.key || '', tpl: c.tpl || '', datePath: c.datepath || '' });
+  const pcConf = (c) => ({ base: c.base, type: c.type, user: c.user || '', pass: c.pass || '', tpl: c.tpl || '', datePath: c.datepath || '' });
   const canLookup = (c) => panelReady(c) && !!(panelApi.ADAPTERS[c.type] && panelApi.ADAPTERS[c.type].lookup);
   const selfCheck = (c) => panelReady(c) && c.type !== 'stalker' && c.type !== 'custom';
   const hasLines = async () => !!(await pool.query('SELECT 1 FROM acc_panel_lines LIMIT 1')).rowCount;
@@ -752,6 +753,7 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
     const [sk, eng] = lab[kind] || lab.unknown;
     const unlimited = !r.expiry || r.expiry >= PANEL.UNLIMITED;
     const until = unlimited ? tx(en, 'bez obmedzenia', 'unlimited') : LINES.fmtDateTime(r.expiry);
+    const known = r.source === 'known' ? ` <span class="hint">(${tx(en, 'posledný známy dátum', 'last known date')})</span>` : '';
     const days = unlimited ? null : LINES.daysLeft(r.expiry);
     const daysTxt = days == null ? '' : `<li>${tx(en, 'Zostáva', 'Remaining')}: <b>${days} ${LINES.daysWord(days, en)}</b></li>`;
     const conn = r.connections && (r.connections.max > 0 || r.connections.active > 0)
@@ -762,7 +764,7 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
       : kind === 'disabled' ? tx(en, 'Účet je vypnutý. Kontaktujte podporu.', 'The account is disabled. Contact support.')
       : tx(en, 'Stav účtu sa nepodarilo určiť.', 'Account status could not be determined.');
     return `<div class="card accard"><p class="accst ${cls}"><span class="accbadge ${cls}">${esc(tx(en, sk, eng))}</span> ${lead}</p>
-<ul class="accmeta"><li>${tx(en, 'Platí do', 'Valid until')}: <b>${esc(until)}</b></li>${daysTxt}${conn}</ul>
+<ul class="accmeta"><li>${tx(en, 'Platí do', 'Valid until')}: <b>${esc(until)}</b>${known}</li>${daysTxt}${conn}</ul>
 ${kind !== 'active' ? `<p><a class="b" href="/platby">🔁 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : ''}</div>`;
   }
   async function checkPage(req, res, r) {
@@ -805,11 +807,12 @@ ${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField
       const rec = await softwareByName(pu);
       if (rec && rec.until_at) {
         const exp = new Date(rec.until_at);
-        return checkPage(req, res, { found: true, active: exp > new Date(), expiry: exp, status: exp > new Date() ? 'active' : 'expired' });
+        return checkPage(req, res, { found: true, active: exp > new Date(), expiry: exp, status: exp > new Date() ? 'Active' : 'Expired', source: 'known' });
       }
     }
     if (!r || r.error) return fail('paneloff');
-    return checkPage(req, res, { found: r.found, active: r.active, expiry: r.expiry, status: r.status, connections: r.connections });
+    const view = panelApi.publicView ? panelApi.publicView(r) : { found: r.found, active: r.active, expiry: r.expiry, status: r.status, connections: r.connections };
+    return checkPage(req, res, view);
   }));
 
   // ---------- bonus info for checkout (/platby) + pricing ----------
@@ -978,21 +981,20 @@ ${devs.length ? `<div class="card"><h2>2. zariadenia</h2>${devs.map((d) => `<for
     let chRep = null; try { chRep = c.last_chsync_report ? JSON.parse(c.last_chsync_report) : null; } catch { chRep = null; }
     const t = req.query.t === '1' && lastTest && Date.now() - lastTest.at < 600e3 ? lastTest : null;
     const types = [['', 'Automaticky zistiť (odporúčané)'], ...Object.values(panelApi.ADAPTERS).map((a) => [a.id, a.label])];
-    const testBox = t ? `<div class="msg${t.ok ? '' : ' err'}">${t.ok ? `✅ Rozpoznaný adaptér: <b>${esc(t.label)}</b>${t.note ? ' – ' + esc(t.note) : ''}` : `❌ Server sa nepodarilo rozpoznať (skúšané: ${esc((t.tried || []).join(', ') || '–')}). Skontrolujte adresu, meno, heslo / API kľúč.`}${t.lookup ? `<br>Vyhľadanie „${esc(t.lookup.u)}“: ${t.lookup.error ? esc(t.lookup.error) : t.lookup.found ? `${t.lookup.active ? '✅ aktívne' : '⛔ neaktívne'} – do ${t.lookup.expiry && t.lookup.expiry < PANEL.UNLIMITED ? esc(fmtDate(t.lookup.expiry)) : 'bez obmedzenia'}` : 'používateľ sa nenašiel'}` : ''}</div>` : '';
+    const testBox = t ? `<div class="msg${t.ok ? '' : ' err'}">${t.ok ? `✅ Rozpoznaný adaptér: <b>${esc(t.label)}</b>${t.note ? ' – ' + esc(t.note) : ''}` : `❌ Server sa nepodarilo rozpoznať (skúšané: ${esc((t.tried || []).join(', ') || '–')}). Skontrolujte adresu servera a admin meno a heslo.`}${t.lookup ? `<br>Vyhľadanie „${esc(t.lookup.u)}“: ${t.lookup.error ? esc(t.lookup.error) : t.lookup.found ? `${t.lookup.active ? '✅ aktívne' : '⛔ neaktívne'} – do ${t.lookup.expiry && t.lookup.expiry < PANEL.UNLIMITED ? esc(fmtDate(t.lookup.expiry)) : 'bez obmedzenia'}` : 'používateľ sa nenašiel'}` : ''}</div>` : '';
     res.send(apage('Server predplatného', `<h1>🖥️ Server predplatného</h1>${amsg(req)}${testBox}
 ${c.base && /^http:/i.test(c.base) ? '<div class="msg err">⚠️ Server používa nešifrované HTTP – meno a heslo idú sieťou čitateľne. Ak to panel podporuje, použite https://.</div>' : ''}
-<form method="post" action="${PB}" class="card">${hid(req)}<p class="hint">Načítava sa stav a dátum expirácie predplatného. Streamy sa nikdy neukladajú ani neposielajú na verejnú stránku. Adresa servera ani prihlasovacie údaje sa zákazníkom nikdy neukážu. Meno, heslo, API kľúč, M3U a XMLTV odkazy sú uložené šifrovane (AES-256-GCM, DATA_ENC_KEY). Prázdne pole = ponechať uložené.</p>
-<label for="pu">Adresa servera (host:port, http alebo https)</label><input id="pu" name="url" value="${esc(c.url || '')}" maxlength="300" placeholder="https://panel.example.com:8443" autocomplete="off">
+<form method="post" action="${PB}" class="card">${hid(req)}<p class="hint">Pripojenie na panel ide výhradne cez adresu servera a admin meno a heslo (uložené šifrovane, AES-256-GCM, DATA_ENC_KEY). Stav a dátum expirácie predplatného sa na verejnej stránke overujú na serveri – zákazník zadá len svoje meno (heslo je voliteľné). Adresa, heslá ani odpovede panela sa do prehliadača neposielajú. Streamy sa nikdy neukladajú. Záložné M3U/XMLTV odkazy sú tiež šifrované. Prázdne pole = ponechať uložené.</p>
+<label for="pu">Adresa servera (admin panel, host:port, http alebo https)</label><input id="pu" name="url" value="${esc(c.url || '')}" maxlength="300" placeholder="https://panel.example.com:8443" autocomplete="off">
 <label for="pn">Admin / reseller meno ${st('user')}</label><input id="pn" name="user" maxlength="200" autocomplete="off">
-<label for="pp">Heslo ${st('pass')}</label><input id="pp" name="pass" type="password" maxlength="200" autocomplete="new-password">
-<label for="pk">API kľúč – len XUI.one (nepovinné) ${st('key')}</label><input id="pk" name="key" type="password" maxlength="300" autocomplete="off">
-<label class="chk"><input type="checkbox" name="clear" value="1"> Vymazať uložené meno, heslo a API kľúč</label>
+<label for="pp">Admin heslo ${st('pass')}</label><input id="pp" name="pass" type="password" maxlength="200" autocomplete="new-password">
+<label class="chk"><input type="checkbox" name="clear" value="1"> Vymazať uložené meno a heslo</label>
 <label for="pt">Typ servera</label><select id="pt" name="type">${types.map(([v, l]) => `<option value="${esc(v)}"${(c.type_set || '') === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
 <details${c.tpl ? ' open' : ''}><summary>Vlastné API (URL šablóna + JSON pole s dátumom)</summary><label for="tp">URL šablóna – {username} sa nahradí menom zákazníka</label><input id="tp" name="tpl" value="${esc(c.tpl || '')}" maxlength="400" placeholder="https://api.example.com/users/{username}">
 <label for="dp">JSON pole s dátumom expirácie</label><input id="dp" name="datepath" value="${esc(c.datepath || '')}" maxlength="100" placeholder="data.exp_date"><p class="hint">Uložené meno a heslo sa pošlú ako HTTP Basic auth.</p></details>
 <p class="row"><button>💾 Uložiť</button></p></form>
 <form method="post" action="${PB}/test" class="card">${hid(req)}<h2>Otestovať pripojenie</h2><p class="hint">Zistí typ servera (ukáže, ktorý adaptér sedí) a voliteľne vyhľadá jedného používateľa – iba stav a expirácia.</p><label for="tu">Meno používateľa na skúšku (nepovinné)</label><input id="tu" name="u" maxlength="64" autocomplete="off"><p class="row"><button>🔌 Otestovať pripojenie</button></p></form>
-<form method="post" action="${PB}/sync" class="card">${hid(req)}<h2>Synchronizácia</h2><p>Aktívny adaptér: <b>${c.type ? esc((panelApi.ADAPTERS[c.type] || {}).label || c.type) : 'zatiaľ nezistený – spustite test'}</b> · Posledná synchronizácia: ${c.last_sync ? esc(fmtDT(c.last_sync)) : '–'}</p><p class="hint">Automaticky raz denne (po 4:00). Funguje s adaptérom, ktorý vie vyhľadať používateľa bez jeho hesla (XUI.one API, panel_api.php, Ministra, vlastné API). Pri čistom Xtream API (player_api.php) sa expirácia aktualizuje, keď zákazník prepojí účet svojím menom a heslom, alebo podľa účtov v zozname nižšie.</p><p class="row"><button>🔄 Synchronizovať expirácie teraz</button></p></form>
+<form method="post" action="${PB}/sync" class="card">${hid(req)}<h2>Synchronizácia</h2><p>Aktívny adaptér: <b>${c.type ? esc((panelApi.ADAPTERS[c.type] || {}).label || c.type) : 'zatiaľ nezistený – spustite test'}</b> · Posledná synchronizácia: ${c.last_sync ? esc(fmtDT(c.last_sync)) : '–'}</p><p class="hint">Automaticky raz denne (po 4:00). Funguje s adaptérom, ktorý vie vyhľadať používateľa cez admin meno a heslo (Xtream UI / XUI.one admin API, panel_api.php, Ministra, vlastné API). Pri čistom player_api.php sa expirácia aktualizuje, keď zákazník overí heslo, alebo podľa účtov v zozname nižšie.</p><p class="row"><button>🔄 Synchronizovať expirácie teraz</button></p></form>
 <form method="post" action="${PB}/katalog" class="card" id="katalog">${hid(req)}<h2>📺 Synchronizovať kanály a program</h2>
 <p class="hint">Primárne sa kanály a kategórie načítajú cez <code>player_api.php?action=get_live_categories</code> a <code>get_live_streams</code> z adresy servera a admin mena/hesla vyššie (adresa panela sa upraví automaticky). Program „Teraz / Potom“ sa ťahá na požiadanie cez <code>get_short_epg&amp;stream_id=…</code> (len pre viditeľné kanály, s krátkou cache). <b>URL streamov a heslá sa nikdy neuložia ani neodošlú do prehliadača</b> – stream_id ostáva len na serveri. M3U a XMLTV sú záloha, ak player_api zlyhá alebo nie je nastavené. Existujúce kanály ostávajú, nové sa doplnia, prázdne logá sa doplnia. Prázdne pole = ponechať uloženú adresu.</p>
 <label for="m3u">Záložný M3U playlist URL ${st('m3u_url')}</label><input id="m3u" name="m3u_url" type="url" maxlength="600" placeholder="https://…/get.php?…&amp;type=m3u_plus" autocomplete="off">
@@ -1004,15 +1006,16 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
 <p class="hint">Uložte dvojice meno + heslo k predplatnému (šifrovane). Zákazník na stránke Overiť predplatné zadá len meno a stav sa overí na pozadí. Heslá sa v admine nikdy znova nezobrazia. Hromadne: jeden účet na riadok v tvare <code>meno:heslo</code> (alebo bodkočiarka / medzera).</p>
 <form method="post" action="${PB}/linky" class="row">${hid(req)}<label for="lu">Meno</label><input id="lu" name="u" maxlength="64" required autocomplete="off" autocapitalize="none"><label for="lp">Heslo</label><input id="lp" name="p" type="password" maxlength="128" required autocomplete="new-password"><button class="sm">➕ Pridať</button></form>
 <form method="post" action="${PB}/linky/bulk">${hid(req)}<label for="lb">Hromadne vložiť</label><textarea id="lb" name="bulk" rows="6" maxlength="20000" placeholder="jan:heslo1&#10;eva:heslo2"></textarea><p class="row"><button class="sm">💾 Uložiť zoznam</button></p></form>
-<div class="tblw"><table class="tbl"><thead><tr><th>Meno</th><th>Aktualizované</th><th></th></tr></thead><tbody>${lines.map((x) => `<tr><td><code>${esc(x.username)}</code></td><td>${esc(fmtDT(x.updated_at))}</td><td><form method="post" action="${PB}/linky/${x.id}/delete" class="inl">${hid(req)}<button class="sm">🗑️ Odstrániť</button></form></td></tr>`).join('') || '<tr><td colspan="3">Zatiaľ žiadne účty. Bez nich (a bez XUI / panel_api) musí zákazník zadať aj heslo.</td></tr>'}</tbody></table></div></div>`));
+<div class="tblw"><table class="tbl"><thead><tr><th>Meno</th><th>Aktualizované</th><th></th></tr></thead><tbody>${lines.map((x) => `<tr><td><code>${esc(x.username)}</code></td><td>${esc(fmtDT(x.updated_at))}</td><td><form method="post" action="${PB}/linky/${x.id}/delete" class="inl">${hid(req)}<button class="sm">🗑️ Odstrániť</button></form></td></tr>`).join('') || '<tr><td colspan="3">Zatiaľ žiadne účty. Bez nich (a keď panel nevie vyhľadať účet podľa mena) musí zákazník zadať aj heslo.</td></tr>'}</tbody></table></div></div>`));
   }));
   admin.post('/predplatne-server', needAuth, adminCsrf, wrap(async (req, res) => {
     const b = req.body, url = String(b.url || '').trim();
     if (url && !PANEL.normBase(url)) return res.redirect(303, PB + '?m=bad');
     const prev = await panelCfg();
     await setPanel('url', url || null);
-    if (b.clear === '1') { for (const k of SECRET_K) await setPanel(k, null); }
-    else for (const k of SECRET_K) { const v = String(b[k] || ''); if (v) await setPanel(k, v.slice(0, 300)); }
+    await setPanel('key', null);
+    if (b.clear === '1') { await setPanel('user', null); await setPanel('pass', null); }
+    else for (const k of ['user', 'pass']) { const v = String(b[k] || ''); if (v) await setPanel(k, v.slice(0, 300)); }
     const ty = String(b.type || ''), okTy = ty && panelApi.ADAPTERS[ty];
     await setPanel('type_set', okTy ? ty : null);
     if (okTy) await setPanel('type', ty); else if (PANEL.normBase(url) !== prev.base) await setPanel('type', null);
@@ -1037,7 +1040,7 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
     const tu = String(req.body.u || '').trim();
     if (tu && d.ok) {
       if (!panelUserOk(tu)) out.lookup = { u: tu.slice(0, 64), error: 'neplatné meno' };
-      else if (!d.canLookup) out.lookup = { u: tu, error: 'tento typ servera nevie vyhľadať používateľa bez jeho hesla (zadajte API kľúč XUI.one alebo nechajte zákazníkov overiť sa heslom)' };
+      else if (!d.canLookup) out.lookup = { u: tu, error: 'tento typ servera nevie vyhľadať používateľa len podľa mena (uložte účty do zoznamu nižšie, alebo nechajte zákazníkov overiť sa aj heslom)' };
       else { const r = await panelApi.ADAPTERS[d.type].lookup({ ...cc, type: d.type }, tu).catch(() => ({ error: 'server neodpovedal' })); out.lookup = { u: tu, ...r }; }
     }
     lastTest = out;

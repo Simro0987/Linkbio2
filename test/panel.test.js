@@ -26,14 +26,41 @@ t('normBase / parseDate', () => {
   assert.strictEqual(P.parseDate('unlimited'), 'unlimited');
   assert.strictEqual(P.parseDate(''), null); assert.strictEqual(P.parseDate('nonsense'), null);
 });
-t('auto-detect XUI.one + lookup', async () => {
-  const f = mock([[/action=get_lines/, () => ({ body: [{ username: 'jan', exp_date: EXP, enabled: 1 }, { username: 'eva', exp_date: 1000000000, enabled: 1 }] }) ], [/action=get_line&/, () => ({ body: { data: { username: 'jan', exp_date: EXP, enabled: 1 } } })]]);
+t('auto-detect Xtream UI / XUI.one + lookup uses admin user/pass, never api_key', async () => {
+  const f = mock([[/action=get_lines/, () => ({ body: [{ username: 'jan', exp_date: EXP, enabled: 1, max_connections: 2, active_cons: 1 }, { username: 'eva', exp_date: 1000000000, enabled: 1 }] }) ], [/action=get_line/, () => ({ body: { data: { username: 'jan', exp_date: EXP, enabled: 1, status: 'Active', max_connections: 2, active_cons: 1 } } })]]);
   const p = P.create({ fetchImpl: f });
-  const c = { base: 'https://p.example', key: 'K', user: 'admin', pass: 'secret' };
+  const c = { base: 'https://p.example', user: 'admin', pass: 'secret' };
   const d = await p.detect(c); assert.strictEqual(d.type, 'xui'); assert.ok(d.canLookup);
   const r = await p.lookup({ ...c, type: 'xui' }, 'JAN'); assert.ok(r.found); assert.ok(r.active); assert.strictEqual(r.expiry, '2030-01-01T00:00:00.000Z');
+  assert.strictEqual(r.status, 'Active');
+  assert.deepStrictEqual(r.connections, { active: 1, max: 2 });
   const e = await p.lookup({ ...c, type: 'xui' }, 'eva'); assert.ok(e.found); assert.ok(!e.active);
   const x = await p.lookup({ ...c, type: 'xui' }, 'nobody'); assert.ok(!x.found);
+  assert.ok(f.calls.every((k) => !/api_key=/i.test(k.url) && !String(k.opt && k.opt.body || '').includes('api_key')));
+  assert.ok(f.calls.every((k) => !/[?&]password=/.test(k.url)), 'password stays in POST body, not in the URL');
+  assert.ok(f.calls.every((k) => /username=admin/.test(String(k.opt && k.opt.body || ''))));
+  const view = p.publicView(r);
+  const dump = JSON.stringify(view);
+  assert.ok(!/secret|api_key|p\.example|password|direct_source/i.test(dump));
+  assert.strictEqual(view.found, true);
+});
+t('Xtream UI api.php user info with admin body (no api_key)', async () => {
+  const f = mock([[/api\.php\?action=user&sub=info/, (url, opt) => {
+    const body = String(opt.body || '');
+    assert.ok(/username=admin/.test(body) && /password=secret/.test(body));
+    assert.ok((opt.method || 'GET') === 'POST');
+    let data = {};
+    try { data = JSON.parse(new URLSearchParams(body).get('data') || '{}'); } catch { data = {}; }
+    if (data.username === 'jan') return { body: { result: true, data: { username: 'jan', password: 'line-secret', exp_date: EXP, status: 'Active', max_connections: 1, active_cons: 0 } } };
+    return { body: { result: false } };
+  }]]);
+  const p = P.create({ fetchImpl: f });
+  const c = { base: 'https://p.example', user: 'admin', pass: 'secret' };
+  const d = await p.detect(c); assert.strictEqual(d.type, 'xui');
+  const r = await p.lookup({ ...c, type: 'xui' }, 'jan');
+  assert.ok(r.found && r.active);
+  assert.ok(!JSON.stringify(r).includes('line-secret'));
+  assert.ok(f.calls.every((k) => !/api_key=/i.test(k.url) && !String(k.opt.body || '').includes('api_key')));
 });
 t('Stalker / Ministra', async () => {
   const f = mock([[/api\/accounts\/__lnkbio_probe__/, () => ({ body: { status: 'ERROR', error: 'not found' } })], [/api\/accounts\/peter/, () => ({ body: { status: 'OK', results: [{ login: 'peter', tariff_expired_date: '2030-01-01 00:00:00', status: 1 }] } })], [/api\/accounts\//, () => ({ body: { status: 'ERROR', error: 'x' } })]]);
@@ -41,13 +68,18 @@ t('Stalker / Ministra', async () => {
   assert.strictEqual((await p.detect(c)).type, 'stalker');
   const r = await p.lookup({ ...c, type: 'stalker' }, 'peter'); assert.ok(r.found && r.active);
   assert.ok(!(await p.lookup({ ...c, type: 'stalker' }, 'ghost')).found);
-  assert.ok(f.calls.every((k) => /^Basic /.test(k.opt.headers.authorization) && !k.url.includes('pw')));
+  const st = f.calls.filter((k) => /api\/accounts/.test(k.url));
+  assert.ok(st.length);
+  assert.ok(st.every((k) => /^Basic /.test(k.opt.headers.authorization) && !k.url.includes('pw')));
+  assert.ok(f.calls.every((k) => !k.url.includes('pw') && !/api_key=/i.test(k.url)));
 });
 t('panel_api.php reseller list + Xtream line check', async () => {
-  const f = mock([[/panel_api\.php/, () => ({ body: { users: { 1: { username: 'ana', exp_date: EXP, enabled: '1' } } } })], [/player_api\.php\?username=ana&password=ok/, () => ({ body: { user_info: { auth: 1, status: 'Active', exp_date: String(EXP) } } })], [/player_api\.php/, () => ({ body: { user_info: { auth: 0 } } })]]);
+  const f = mock([[/panel_api\.php/, () => ({ body: { users: { 1: { username: 'ana', password: 'hidden-line', exp_date: EXP, enabled: '1', status: 'Active', max_connections: 2, active_cons: 1 } } } })], [/player_api\.php\?username=ana&password=ok/, () => ({ body: { user_info: { auth: 1, status: 'Active', exp_date: String(EXP) } } })], [/player_api\.php/, () => ({ body: { user_info: { auth: 0 } } })]]);
   const p = P.create({ fetchImpl: f }); const c = { base: 'https://x.example', user: 'res', pass: 'rp' };
   assert.strictEqual((await p.detect(c)).type, 'panel_api');
-  assert.ok((await p.lookup({ ...c, type: 'panel_api' }, 'ana')).active);
+  const lr = await p.lookup({ ...c, type: 'panel_api' }, 'ana'); assert.ok(lr.active);
+  assert.deepStrictEqual(lr.connections, { active: 1, max: 2 });
+  assert.ok(!JSON.stringify(lr).includes('hidden-line'));
   const own = await p.checkOwn({ ...c, type: 'xtream' }, 'ana', 'ok'); assert.ok(own.found && own.active);
   const bad = await p.checkOwn({ ...c, type: 'xtream' }, 'ana', 'wrong'); assert.ok(!bad.found);
 });
@@ -64,8 +96,8 @@ t('custom template + JSON path', async () => {
   const r = await p.lookup({ ...c, type: 'custom' }, 'zuzka'); assert.ok(r.found); assert.strictEqual(r.expiry, '2030-01-01T23:59:59.000Z');
 });
 t('15-minute cache', async () => {
-  let clock = 0; const f = mock([[/get_line&/, () => ({ body: { username: 'jan', exp_date: EXP } })]]);
-  const p = P.create({ fetchImpl: f, now: () => clock }); const c = { base: 'https://p.example', key: 'K', type: 'xui' };
+  let clock = 0; const f = mock([[/get_line/, () => ({ body: { username: 'jan', exp_date: EXP } })]]);
+  const p = P.create({ fetchImpl: f, now: () => clock }); const c = { base: 'https://p.example', user: 'admin', pass: 'secret', type: 'xui' };
   await p.lookup(c, 'jan'); await p.lookup(c, 'jan'); assert.strictEqual(f.calls.length, 1);
   clock = 14 * 60e3; await p.lookup(c, 'jan'); assert.strictEqual(f.calls.length, 1);
   clock = 16 * 60e3; await p.lookup(c, 'jan'); assert.strictEqual(f.calls.length, 2);
@@ -96,11 +128,12 @@ t('http panel URL: tries https first and follows same-host http→https redirect
     return { status: 404, headers: new Map(), text: async () => 'no' };
   };
   const p = P.create({ fetchImpl: f });
-  const c = { base: 'http://p.example', key: 'K' };
+  const c = { base: 'http://p.example', user: 'admin', pass: 'secret' };
   const d = await p.detect(c); assert.strictEqual(d.type, 'xui');
   const r = await p.lookup({ ...c, type: 'xui' }, 'jan'); assert.ok(r.found);
   assert.ok(calls.some((k) => k.url.startsWith('https://p.example/')));
   assert.ok(calls.every((k) => k.opt.redirect === 'manual'));
+  assert.ok(calls.every((k) => !/api_key=/i.test(k.url)));
 });
 
 (async () => {

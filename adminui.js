@@ -20,7 +20,7 @@ const GROUPS = [
   { id: 'predplatne', title: 'Predplatné / Zákazníci', tiles: [
     { href: '/admin/zakaznici', icon: '👥', title: 'Zákazníci', hint: 'Účty, predplatné a prehľad', k: 'zákazníci účty predplatné username expirácia' },
     { href: '/admin/cennik', icon: '🏷️', title: 'Cenník', hint: 'Balíky a ceny predplatného', k: 'cenník plány cena balík mesiace' },
-    { href: '/admin/predplatne-server', icon: '🖥️', title: 'Server predplatného', hint: 'Panel, player_api synchronizácia kanálov, záložné M3U/XMLTV, účty na overenie podľa mena', k: 'server predplatného panel http https overenie m3u xmltv player_api get_live_streams get_short_epg synchronizácia kanály účty username' },
+    { href: '/admin/predplatne-server', icon: '🖥️', title: 'Server predplatného', hint: 'Panel (adresa + admin meno a heslo), player_api synchronizácia kanálov, záložné M3U/XMLTV, overenie predplatného', k: 'server predplatného panel http https overenie m3u xmltv player_api get_live_streams get_short_epg synchronizácia kanály účty username' },
     { href: '/admin/xpub', icon: '🔑', title: 'xpub adresy', hint: 'Automatické adresy pre každú objednávku', k: 'xpub derivácia adresa' },
   ]},
   { id: 'sekcie', title: 'Sekcie', tiles: [

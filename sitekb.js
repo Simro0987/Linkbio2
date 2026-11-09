@@ -58,7 +58,7 @@ function build(d) {
 - Môj účet: ${O}/ucet – ukazuje „Licencia platí do“ (dátum konca predplatného), zoznam objednávok, affiliate odkaz + QR kód na zdieľanie, počet odporučených (aktívnych), aktuálnu úroveň bonusu a čo chýba do ďalšej, voľbu bonusu (mesiace navyše alebo 2. zariadenie), prepojenie s menom predplatného v TV, zmenu e-mailu a hesla, zrušenie účtu.
 - Pripomienka konca predplatného: 7 dní pred koncom sa na účte zobrazí upozornenie s tlačidlom Predĺžiť${d.acc.mail ? ' a príde aj e-mail' : ''}.
 - Objednávky urobené po prihlásení sa pripíšu k účtu automaticky (aj bonusy).`);
-    if (d.acc.panel) L.push(`- Overiť predplatné bez účtu: ${O}/overit-predplatne (Kontrola platnosti predplatného) – zadá meno k predplatnému z aplikácie v TV (heslo je podľa nastavenia voliteľné). Ukáže stav účtu, dátum platnosti, zostávajúce dni a počet zariadení. Heslo zadané zákazníkom sa nikde neukladá. Po prepojení mena v ${O}/ucet sa koniec predplatného zobrazuje priamo na účte.`);
+    if (d.acc.panel) L.push(`- Overiť predplatné bez účtu: ${O}/overit-predplatne (Kontrola platnosti predplatného) – zadá meno k predplatnému z aplikácie v TV (heslo je voliteľné). Overenie ide na serveri cez uložené admin údaje. Ukáže stav účtu, dátum platnosti, zostávajúce dni a počet zariadení. Heslo zadané zákazníkom sa nikde neukladá. Ak panel práve neodpovedá, môže sa zobraziť posledný známy dátum z plnenia. Po prepojení mena v ${O}/ucet sa koniec predplatného zobrazuje priamo na účte.`);
     else L.push(`- ${O}/overit-predplatne: overenie stavu predplatného podľa mena a hesla z TV aplikácie (ak je dočasne nedostupné, ponúkni operátora).`);
   }
   // affiliate

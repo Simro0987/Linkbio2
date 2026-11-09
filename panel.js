@@ -73,6 +73,42 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
   const q = (o) => new URLSearchParams(o).toString();
   const basic = (u, p) => 'Basic ' + Buffer.from(`${u}:${p}`).toString('base64');
 
+  function asList(json) {
+    if (Array.isArray(json)) return json;
+    if (!json || typeof json !== 'object') return null;
+    const a = json.data || json.lines || json.users || json.results;
+    if (Array.isArray(a)) return a;
+    if (a && typeof a === 'object' && !Array.isArray(a)) return Object.values(a);
+    if (json.users && typeof json.users === 'object') return Object.values(json.users);
+    return null;
+  }
+  function lineExtra(row) {
+    if (!row || typeof row !== 'object') return {};
+    const status = String(row.status || row.line_status || '');
+    const banned = Number(row.is_banned) === 1 || Number(row.banned) === 1 || /banned/i.test(status);
+    const disabled = Number(row.enabled) === 0 || Number(row.admin_enabled) === 0 || /disabled/i.test(status);
+    const extra = { status: banned ? 'Banned' : (disabled ? 'Disabled' : status), enabled: !banned && !disabled };
+    const cons = Number(row.active_cons), maxc = Number(row.max_connections);
+    if (Number.isFinite(cons) || Number.isFinite(maxc)) extra.connections = { active: Number.isFinite(cons) ? cons : 0, max: Number.isFinite(maxc) ? maxc : 0 };
+    return extra;
+  }
+  function lineExpiry(row) {
+    const v = row.exp_date != null ? row.exp_date : (row.expire != null ? row.expire : (row.expires_at != null ? row.expires_at : row.expiry));
+    return v == null || v === '' ? 'unlimited' : parseDate(v);
+  }
+  function fromLine(row, username) {
+    if (!row || typeof row !== 'object') return result(false, null);
+    const un = String(row.username || row.user || row.login || '');
+    if (username && un && un.toLowerCase() !== String(username).toLowerCase()) return result(false, null);
+    if (username && !un) return result(false, null);
+    return result(true, lineExpiry(row), lineExtra(row));
+  }
+  function publicView(r, extra = {}) {
+    if (!r || r.error) return { found: false, error: true };
+    const out = { found: !!r.found, active: !!r.active, expiry: r.expiry || null, status: r.status || '', connections: r.connections || null, ...extra };
+    return out;
+  }
+
   // ---- adapters ----
   const xtream = {
     id: 'xtream', label: 'Xtream Codes API (player_api.php – Xtream UI, XUI.one, 1-stream…)',
@@ -87,23 +123,63 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
       if (Number.isFinite(cons) || Number.isFinite(maxc)) extra.connections = { active: Number.isFinite(cons) ? cons : 0, max: Number.isFinite(maxc) ? maxc : 0 };
       return result(true, ui.exp_date == null || ui.exp_date === '' ? 'unlimited' : parseDate(ui.exp_date), extra);
     },
-    async detect(c) { const r = await xtream.checkLine(c.base, c.user, c.pass).catch(() => null); return r && r.found ? { ok: true, note: 'Prihlasovacie údaje fungujú ako linka – vyhľadanie iných používateľov vyžaduje ich heslo (alebo API kľúč XUI.one).' } : null; },
+    async detect(c) { const r = await xtream.checkLine(c.base, c.user, c.pass).catch(() => null); return r && r.found ? { ok: true, note: 'Prihlasovacie údaje fungujú ako linka – vyhľadanie iných používateľov ide cez admin API (panel_api / Xtream UI) alebo cez uložený zoznam mien.' } : null; },
     lookup: null,
   };
   const xui = {
-    id: 'xui', label: 'XUI.one admin/reseller API (api_key)',
-    async lines(c) {
-      const { json } = await getJson(`${c.base}/?${q({ api_key: c.key, action: 'get_lines' })}`);
-      const arr = Array.isArray(json) ? json : json && (Array.isArray(json.data) ? json.data : Array.isArray(json.lines) ? json.lines : null);
-      return arr;
+    id: 'xui', label: 'Xtream UI / XUI.one admin API (meno a heslo administrátora)',
+    async adminGet(c, action, extra = {}) {
+      if (!c.user || !c.pass) return null;
+      const body = q({ username: c.user, password: c.pass, action, ...extra });
+      const post = await getJson(`${c.base}/?${q({ action, ...extra })}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
+      if (post.json != null) return post.json;
+      if (post.status === 404 || post.status === 405 || post.status === 501) return null;
+      const get = await getJson(`${c.base}/?${q({ username: c.user, password: c.pass, action, ...extra })}`);
+      return get.json;
     },
-    async detect(c) { if (!c.key) return null; const a = await xui.lines(c).catch(() => null); return a ? { ok: true, note: `API odpovedá (${a.length} liniek).` } : null; },
+    async apiPhp(c, sub, data) {
+      if (!c.user || !c.pass) return null;
+      const body = q({ username: c.user, password: c.pass, ...(data ? { data: JSON.stringify(data) } : {}) });
+      const { json } = await getJson(`${c.base}/api.php?action=user&sub=${encodeURIComponent(sub)}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
+      return json;
+    },
+    async lines(c) {
+      const json = await xui.adminGet(c, 'get_lines');
+      const arr = asList(json);
+      if (arr) return arr;
+      const listed = await xui.apiPhp(c, 'list').catch(() => null);
+      return asList(listed);
+    },
+    async detect(c) {
+      if (!c.user || !c.pass) return null;
+      const a = await xui.lines(c).catch(() => null);
+      if (a) return { ok: true, note: `Admin API odpovedá (${a.length} liniek).` };
+      const p = await xui.apiPhp(c, 'info', { username: '__lnkbio_probe__' }).catch(() => null);
+      if (p && typeof p === 'object' && ('result' in p || p.data || p.user_info)) return { ok: true, note: 'Admin API (api.php) odpovedá.' };
+      return null;
+    },
     async lookup(c, username) {
-      const { json } = await getJson(`${c.base}/?${q({ api_key: c.key, action: 'get_line', username })}`).catch(() => ({ json: null }));
-      let row = json && (json.data || json); if (Array.isArray(row)) row = row[0];
-      if (!row || String(row.username || '').toLowerCase() !== username.toLowerCase()) { const a = await xui.lines(c); row = (a || []).find((x) => String(x.username || '').toLowerCase() === username.toLowerCase()); }
+      if (!c.user || !c.pass) return { error: 'nocreds' };
+      // get_line uses line_username/line/search – admin auth already occupies username=
+      let json = await xui.adminGet(c, 'get_line', { line_username: username }).catch(() => null);
+      let row = json && (json.data || json.user_info || json);
+      if (Array.isArray(row)) row = row[0];
+      let r = fromLine(row, username);
+      if (r.found) return r;
+      json = await xui.adminGet(c, 'get_line', { line: username, search: username }).catch(() => null);
+      row = json && (json.data || json.user_info || json);
+      if (Array.isArray(row)) row = row[0];
+      r = fromLine(row, username);
+      if (r.found) return r;
+      const info = await xui.apiPhp(c, 'info', { username }).catch(() => null);
+      row = info && (info.data || info.user_info || (info.result && info.result !== false ? info : null));
+      if (Array.isArray(row)) row = row[0];
+      r = fromLine(row, username);
+      if (r.found) return r;
+      const a = await xui.lines(c).catch(() => null);
+      row = (a || []).find((x) => String((x && (x.username || x.user || x.login)) || '').toLowerCase() === username.toLowerCase());
       if (!row) return result(false, null);
-      return result(true, row.exp_date == null || row.exp_date === '' ? 'unlimited' : parseDate(row.exp_date), { enabled: !(Number(row.enabled) === 0 || Number(row.admin_enabled) === 0) });
+      return fromLine(row, username);
     },
   };
   const panelApi = {
@@ -111,15 +187,14 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
     async users(c) {
       const { json } = await getJson(`${c.base}/panel_api.php?${q({ username: c.user, password: c.pass })}`);
       if (!json || typeof json !== 'object') return null;
-      const list = Array.isArray(json.users) ? json.users : Array.isArray(json.lines) ? json.lines : json.users && typeof json.users === 'object' ? Object.values(json.users) : null;
-      return list;
+      return asList(json);
     },
     async detect(c) { const l = await panelApi.users(c).catch(() => null); return l ? { ok: true, note: `panel_api.php vracia zoznam (${l.length}).` } : null; },
     async lookup(c, username) {
       const l = await panelApi.users(c); if (!l) throw new Error('panel_api nedostupné');
-      const row = l.find((x) => String(x.username || '').toLowerCase() === username.toLowerCase());
+      const row = l.find((x) => String((x && (x.username || x.user)) || '').toLowerCase() === username.toLowerCase());
       if (!row) return result(false, null);
-      return result(true, row.exp_date == null || row.exp_date === '' ? 'unlimited' : parseDate(row.exp_date), { enabled: !(Number(row.enabled) === 0 || Number(row.admin_enabled) === 0) });
+      return fromLine(row, username);
     },
   };
   const stalker = {
@@ -186,6 +261,6 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
     if (status >= 400 || json == null) return null;
     return json;
   }
-  return { detect, lookup, checkOwn, liveCatalog, shortEpg, ADAPTERS, clear: () => cache.clear() };
+  return { detect, lookup, checkOwn, liveCatalog, shortEpg, ADAPTERS, publicView, fromLine, clear: () => cache.clear() };
 }
 module.exports = { create, normBase, parseDate, getPath, UNLIMITED, httpsTwin, sameSafeRedirect };
