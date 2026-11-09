@@ -45,6 +45,7 @@ function sameSafeRedirect(from, loc) {
 }
 function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
   async function getJsonOnce(url, opt = {}, hops = 0) {
+    const limit = opt.maxBody || MAX_BODY;
     const r = await fetchImpl(url, { method: opt.method || 'GET', headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (lnkbio subscription check)', ...(opt.headers || {}) }, body: opt.body, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT) });
     const loc = r.headers && r.headers.get && r.headers.get('location');
     if (hops < 3 && loc && [301, 302, 303, 307, 308].includes(r.status)) {
@@ -52,10 +53,10 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
       if (next) return getJsonOnce(next, opt, hops + 1);
     }
     const len = Number(r.headers && r.headers.get && r.headers.get('content-length')) || 0;
-    if (len > MAX_BODY) throw new Error('response too large');
+    if (len > limit) throw new Error('response too large');
     const ct = String((r.headers && r.headers.get && r.headers.get('content-type')) || '');
     if (/mpegurl|octet-stream|video|audio/i.test(ct)) throw new Error('unexpected content');
-    const t = await r.text(); if (t.length > MAX_BODY) throw new Error('response too large');
+    const t = await r.text(); if (t.length > limit) throw new Error('response too large');
     let j = null; try { j = JSON.parse(t); } catch { j = null; }
     return { status: r.status, json: j };
   }
@@ -81,7 +82,10 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
       const ui = json && json.user_info;
       if (status >= 400 || !ui) return status === 401 || status === 403 || (json && json.user_info === undefined && Array.isArray(json)) ? result(false, null) : null;
       if (String(ui.auth) !== '1') return result(false, null, { authFailed: true });
-      return result(true, ui.exp_date == null || ui.exp_date === '' ? 'unlimited' : parseDate(ui.exp_date), { status: String(ui.status || ''), enabled: !/^(banned|disabled|expired)$/i.test(String(ui.status || '')) || false });
+      const cons = Number(ui.active_cons), maxc = Number(ui.max_connections);
+      const extra = { status: String(ui.status || ''), enabled: !/^(banned|disabled|expired)$/i.test(String(ui.status || '')) || false };
+      if (Number.isFinite(cons) || Number.isFinite(maxc)) extra.connections = { active: Number.isFinite(cons) ? cons : 0, max: Number.isFinite(maxc) ? maxc : 0 };
+      return result(true, ui.exp_date == null || ui.exp_date === '' ? 'unlimited' : parseDate(ui.exp_date), extra);
     },
     async detect(c) { const r = await xtream.checkLine(c.base, c.user, c.pass).catch(() => null); return r && r.found ? { ok: true, note: 'Prihlasovacie údaje fungujú ako linka – vyhľadanie iných používateľov vyžaduje ich heslo (alebo API kľúč XUI.one).' } : null; },
     lookup: null,
@@ -163,6 +167,16 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
     const go = () => xtream.checkLine(c.base, username, password);
     return cacheKey ? cached('O:' + cacheKey, go) : go();
   }
-  return { detect, lookup, checkOwn, ADAPTERS, clear: () => cache.clear() };
+  /** Live channel catalog (names, logos, categories, tvg-id only). Never requests get.php / m3u / stream paths. */
+  async function liveCatalog(c) {
+    const CHS = require('./chsync');
+    if (!c || !c.base || !c.user || !c.pass) return { items: [], skipped: 0, error: 'nocreds' };
+    const opt = { maxBody: 8 * 1024 * 1024 };
+    const cats = await getJson(`${c.base}/player_api.php?${q({ username: c.user, password: c.pass, action: 'get_live_categories' })}`, opt);
+    const streams = await getJson(`${c.base}/player_api.php?${q({ username: c.user, password: c.pass, action: 'get_live_streams' })}`, opt);
+    if (!Array.isArray(streams.json)) return { items: [], skipped: 0, error: 'badlist' };
+    return CHS.fromXtream(Array.isArray(cats.json) ? cats.json : [], streams.json);
+  }
+  return { detect, lookup, checkOwn, liveCatalog, ADAPTERS, clear: () => cache.clear() };
 }
 module.exports = { create, normBase, parseDate, getPath, UNLIMITED, httpsTwin, sameSafeRedirect };

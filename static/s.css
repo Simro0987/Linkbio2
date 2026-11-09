@@ -169,7 +169,11 @@ body.fx::after{background:radial-gradient(rgba(255,255,255,.085) 1px,transparent
 .accbar{height:10px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin:6px 0 12px}.accbar span{display:block;height:100%;background:linear-gradient(90deg,#e50914,#f97316)}
 .accbar .w0{width:0}.accbar .w5{width:5%}.accbar .w10{width:10%}.accbar .w15{width:15%}.accbar .w20{width:20%}.accbar .w25{width:25%}.accbar .w30{width:30%}.accbar .w35{width:35%}.accbar .w40{width:40%}.accbar .w45{width:45%}.accbar .w50{width:50%}
 .accbar .w55{width:55%}.accbar .w60{width:60%}.accbar .w65{width:65%}.accbar .w70{width:70%}.accbar .w75{width:75%}.accbar .w80{width:80%}.accbar .w85{width:85%}.accbar .w90{width:90%}.accbar .w95{width:95%}.accbar .w100{width:100%}
-.accst{font-size:1.05rem;padding:10px 12px;border-radius:10px;margin:0 0 6px}.accst.ok{background:rgba(22,163,74,.15);border:1px solid rgba(22,163,74,.5)}.accst.bad{background:rgba(229,9,20,.12);border:1px solid rgba(229,9,20,.5)}
+.accst{font-size:1.05rem;padding:10px 12px;border-radius:10px;margin:0 0 6px;display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}.accst.ok{background:rgba(22,163,74,.15);border:1px solid rgba(22,163,74,.5)}.accst.bad{background:rgba(229,9,20,.12);border:1px solid rgba(229,9,20,.5)}.accst.warn{background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.5)}
+.accbadge{display:inline-block;font-size:.75rem;font-weight:700;letter-spacing:.02em;text-transform:uppercase;padding:3px 9px;border-radius:999px;background:rgba(255,255,255,.08)}
+.accbadge.ok{background:rgba(22,163,74,.25);color:#bbf7d0}.accbadge.bad{background:rgba(229,9,20,.25);color:#fecaca}.accbadge.warn{background:rgba(245,158,11,.25);color:#fde68a}
+.accard .accmeta{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:6px}.accard .accmeta li{padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06)}
+@media (min-width:640px){.accard .accmeta{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}}
 .accb{padding-left:18px;margin:6px 0}.accb li{margin:3px 0}.accout{margin-top:10px}.acc details{margin:8px 0}.acc summary{cursor:pointer;font-weight:600}
 .acc .hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
 .inl{display:inline}.tblw{overflow-x:auto;-webkit-overflow-scrolling:touch}.tbl{width:100%;border-collapse:collapse;font-size:.9rem}.tbl th,.tbl td{padding:7px 8px;border-bottom:1px solid rgba(255,255,255,.08);text-align:left;vertical-align:top}

@@ -765,4 +765,57 @@ ${hidden.length ? `<h3>🙈 Skryté</h3>${hidden.map((h) => `<div class="row"><s
   ctx.extAdminHtml = EXT.mountAdmin({ admin, needAuth, csrf, wrap, esc, hid });
   ctx.eventsHero = (req, s, where) => E.hero(req, s, where);
   ctx.epgRefresh = refresh;
+  const SYNC_SRC = 'Panel XMLTV';
+  ctx.epgUpsertSyncSource = async (url) => {
+    const bad = srcCheck(url); if (bad) return { ok: false, err: bad };
+    srcCache = null;
+    let list = await sources();
+    let src = list.find((x) => x.name === SYNC_SRC) || list.find((x) => x.url === url);
+    if (!src) {
+      if (list.length >= SRC_MAX) return { ok: false, err: 'Dosiahnutý max. počet vlastných EPG zdrojov.' };
+      src = (await pool.query('INSERT INTO epg_src (name,url,enabled,pref) VALUES ($1,$2,true,true) RETURNING *', [SYNC_SRC, url])).rows[0];
+    } else {
+      await pool.query('UPDATE epg_src SET url=$2, enabled=true, pref=true, name=$3 WHERE id=$1', [src.id, url, SYNC_SRC]);
+    }
+    srcCache = null;
+    src = (await sources()).find((x) => x.name === SYNC_SRC);
+    if (!src) return { ok: false, err: 'Zdroj sa nepodarilo uložiť.' };
+    if (probing) return { ok: false, err: 'Práve sa overuje iný zdroj, skúste o chvíľu.', id: src.id, busy: true };
+    probing = true; let ok = false;
+    try { ok = await probe(src); } finally { probing = false; }
+    if (ok) refreshSoon(['src:' + src.id]);
+    return { ok, id: src.id };
+  };
+  ctx.epgApplyTvg = async (pairs) => {
+    const list = Array.isArray(pairs) ? pairs : [];
+    const rows = (await pool.query('SELECT id FROM epg_chan')).rows.map((r) => r.id);
+    const exact = new Map(rows.map((id) => [id.toLowerCase(), id]));
+    const suff = new Map();
+    for (const id of rows) {
+      const low = id.toLowerCase();
+      const i = low.lastIndexOf(':');
+      const tail = i >= 0 ? low.slice(i + 1) : low;
+      if (!suff.has(tail)) suff.set(tail, []);
+      suff.get(tail).push(id);
+    }
+    const map = await loadMap();
+    let mapped = 0;
+    for (const p of list) {
+      const tvg = String(p.tvgId || '').trim();
+      const cid = +p.id;
+      if (!tvg || !cid) continue;
+      const cur = map.get(cid);
+      if (cur && cur.manual) continue;
+      let eid = exact.get(tvg.toLowerCase());
+      if (!eid) {
+        const hits = suff.get(tvg.toLowerCase()) || [];
+        eid = hits.length === 1 ? hits[0] : (hits.find((x) => x.startsWith('src')) || hits[0]);
+      }
+      if (!eid) continue;
+      await pool.query(`INSERT INTO epg_map (channel_id,epg_id,manual,score,shift,updated_at) VALUES ($1,$2,false,1,0,now()) ON CONFLICT (channel_id) DO UPDATE SET epg_id=$2, score=1, updated_at=now() WHERE NOT epg_map.manual`, [cid, eid]);
+      mapped++;
+    }
+    if (mapped) dropCaches();
+    return mapped;
+  };
 };

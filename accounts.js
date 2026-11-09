@@ -1,13 +1,17 @@
 'use strict';
 // 👤 Zákaznícke účty + affiliate bonusy + napojenie na server predplatného (len čítanie stavu/expirácie).
 // Bezpečnosť: bcrypt (cost 12), relácie v DB (hash tokenu, rotácia pri prihlásení), CSRF double-submit + kontrola Origin,
-// rate-limity + lockout, žiadna enumerácia používateľov, honeypot + časový token pri registrácii. Heslá k panelu zákazníka sa
-// nikdy neukladajú ani nelogujú. Žiadny inline JS/CSS (CSP).
+// rate-limity + lockout, žiadna enumerácia používateľov, honeypot + časový token pri registrácii. Heslo zadané zákazníkom
+// pri overení sa nikdy neukladá ani neloguje. Admin môže uložiť linky (meno+heslo) šifrovane pre overenie len podľa mena.
+// Žiadny inline JS/CSS (CSP).
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const QR = require('qrcode');
 const AFF = require('./affiliate');
 const PANEL = require('./panel');
+const LINES = require('./panellines');
+const CHS = require('./chsync');
+const EPGFETCH = require('./epgfetch');
 
 const C_SESS = '__Host-acc', C_CSRF = '__Host-acsrf', C_REF = '__Host-aref', C_DEV = '__Host-adev';
 const REF_RE = /^[a-z2-9]{8}$/;
@@ -76,6 +80,8 @@ function install(ctx) {
       active_count int NOT NULL DEFAULT 0, tier_min int NOT NULL DEFAULT 0, note text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (order_id, kind))`);
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_devices (id serial PRIMARY KEY, user_id int NOT NULL, order_id text UNIQUE, from_at timestamptz NOT NULL, until_at timestamptz NOT NULL, panel_user text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_panel_cfg (k text PRIMARY KEY, v text NOT NULL)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS acc_panel_lines (id serial PRIMARY KEY, username text NOT NULL, pass_enc text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS acc_panel_lines_user ON acc_panel_lines (lower(username))`);
     await pool.query(`DELETE FROM acc_sessions WHERE expires_at < now()`);
     (await pool.query(`SELECT order_id FROM acc_orders`)).rows.forEach((x) => done.add(x.order_id));
     // affiliate defaults changed (2026-10-27): migrate the stored tier table only if it still equals the old defaults
@@ -83,7 +89,7 @@ function install(ctx) {
   };
 
   // panel config – credentials encrypted at rest (AES-256-GCM via DATA_ENC_KEY)
-  const SECRET_K = new Set(['user', 'pass', 'key']);
+  const SECRET_K = new Set(['user', 'pass', 'key', 'm3u_url', 'xmltv_url']);
   let pcfg = null;
   async function panelCfg() {
     if (pcfg && pcfg.t > Date.now() - 60000) return pcfg.v;
@@ -100,6 +106,17 @@ function install(ctx) {
   const pcConf = (c) => ({ base: c.base, type: c.type, user: c.user || '', pass: c.pass || '', key: c.key || '', tpl: c.tpl || '', datePath: c.datepath || '' });
   const canLookup = (c) => panelReady(c) && !!(panelApi.ADAPTERS[c.type] && panelApi.ADAPTERS[c.type].lookup);
   const selfCheck = (c) => panelReady(c) && c.type !== 'stalker' && c.type !== 'custom';
+  const hasLines = async () => !!(await pool.query('SELECT 1 FROM acc_panel_lines LIMIT 1')).rowCount;
+  async function linePass(username) {
+    const r = (await pool.query('SELECT username, pass_enc FROM acc_panel_lines WHERE lower(username)=lower($1)', [username])).rows[0];
+    if (!r) return null;
+    try { return decrypt(JSON.parse(r.pass_enc), 'panel-line:' + String(r.username).toLowerCase()).toString(); } catch { return null; }
+  }
+  async function saveLine(user, pass) {
+    const enc = JSON.stringify(encrypt(Buffer.from(String(pass)), 'panel-line:' + user.toLowerCase()));
+    await pool.query(`INSERT INTO acc_panel_lines (username, pass_enc, updated_at) VALUES ($1,$2,now())
+      ON CONFLICT ((lower(username))) DO UPDATE SET username=EXCLUDED.username, pass_enc=EXCLUDED.pass_enc, updated_at=now()`, [user, enc]);
+  }
 
   // sessions / csrf
   async function fromReq(req) {
@@ -614,17 +631,38 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
     res.redirect(303, '/prihlasenie?m=resetok');
   }));
 
-  // ---------- public subscription check (username + password both required; password never stored/logged) ----------
+  // ---------- public subscription check (password entered by the customer is never stored/logged) ----------
+  function statusCard(r, en) {
+    const kind = LINES.statusKind(r);
+    const lab = { active: ['Aktívne', 'Active'], expired: ['Vypršané', 'Expired'], disabled: ['Vypnuté', 'Disabled'], banned: ['Zablokované', 'Banned'], unknown: ['Neznámy stav', 'Unknown status'] };
+    const cls = kind === 'active' ? 'ok' : (kind === 'disabled' ? 'warn' : 'bad');
+    const [sk, eng] = lab[kind] || lab.unknown;
+    const unlimited = !r.expiry || r.expiry >= PANEL.UNLIMITED;
+    const until = unlimited ? tx(en, 'bez obmedzenia', 'unlimited') : LINES.fmtDateTime(r.expiry);
+    const days = unlimited ? null : LINES.daysLeft(r.expiry);
+    const daysTxt = days == null ? '' : `<li>${tx(en, 'Zostáva', 'Remaining')}: <b>${days} ${LINES.daysWord(days, en)}</b></li>`;
+    const conn = r.connections && (r.connections.max > 0 || r.connections.active > 0)
+      ? `<li>${tx(en, 'Pripojenia', 'Connections')}: <b>${r.connections.active} / ${r.connections.max} ${LINES.devicesWord(r.connections.max, en)}</b></li>` : '';
+    const lead = kind === 'active' ? tx(en, 'Predplatné je aktívne.', 'Your subscription is active.')
+      : kind === 'expired' ? tx(en, 'Predplatné vypršalo.', 'Your subscription has expired.')
+      : kind === 'banned' ? tx(en, 'Účet je zablokovaný. Kontaktujte podporu.', 'The account is banned. Contact support.')
+      : kind === 'disabled' ? tx(en, 'Účet je vypnutý. Kontaktujte podporu.', 'The account is disabled. Contact support.')
+      : tx(en, 'Stav účtu sa nepodarilo určiť.', 'Account status could not be determined.');
+    return `<div class="card accard"><p class="accst ${cls}"><span class="accbadge ${cls}">${esc(tx(en, sk, eng))}</span> ${lead}</p>
+<ul class="accmeta"><li>${tx(en, 'Platí do', 'Valid until')}: <b>${esc(until)}</b></li>${daysTxt}${conn}</ul>
+${kind !== 'active' ? `<p><a class="b" href="/platby">🔁 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : ''}</div>`;
+  }
   async function checkPage(req, res, r) {
     const en = req.lang === 'en', c = await panelCfg();
-    const out = !r ? '' : r.err ? msgOf(r.err, en) : r.found ? `<div class="card"><p class="accst ${r.active ? 'ok' : 'bad'}">${r.active ? `✅ ${tx(en, 'Predplatné aktívne do', 'Subscription active until')} <b>${r.expiry && r.expiry < PANEL.UNLIMITED ? fmtDate(r.expiry) : tx(en, 'bez obmedzenia', 'unlimited')}</b>` : `⛔ ${tx(en, 'Predplatné vypršalo', 'Subscription expired')}${r.expiry ? ' (' + fmtDate(r.expiry) + ')' : ''}`}</p>${!r.active ? `<p><a class="b" href="/platby">🔁 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : ''}</div>` : msgOf('panelbad', en);
-    const hint = canLookup(c) && selfCheck(c)
-      ? tx(en, 'Zadajte meno k predplatnému (z aplikácie v TV). Heslo je voliteľné – ak ho zadáte, overenie je presnejšie. Heslo sa nikde neukladá. Všetka komunikácia ide cez HTTPS.', 'Enter your subscription username (from the TV app). Password is optional – if you enter it, the check is more precise. The password is never stored. All traffic uses HTTPS.')
+    const userOnly = canLookup(c) || (selfCheck(c) && await hasLines());
+    const out = !r ? '' : r.err ? msgOf(r.err, en) : r.found ? statusCard(r, en) : msgOf('panelbad', en);
+    const hint = userOnly && selfCheck(c)
+      ? tx(en, 'Zadajte meno k predplatnému (z aplikácie v TV). Heslo je voliteľné – ak ho zadáte, overenie ide priamo na server. Heslo zadané tu sa nikde neukladá. Všetka komunikácia ide cez HTTPS.', 'Enter your subscription username (from the TV app). The password is optional – if you enter it, we check the server directly. A password typed here is never stored. All traffic uses HTTPS.')
       : canLookup(c)
         ? tx(en, 'Zadajte meno k predplatnému. Všetka komunikácia ide cez HTTPS.', 'Enter your subscription username. All traffic uses HTTPS.')
         : tx(en, 'Zadajte meno a heslo k predplatnému (z aplikácie v TV). Heslo sa nikde neukladá – slúži len na overenie, že predplatné je vaše.', 'Enter your subscription username and password (from the TV app). The password is never stored – it only proves the subscription is yours.');
-    const needPw = selfCheck(c) && !canLookup(c);
-    await pub(req, res, tx(en, 'Overiť predplatné', 'Check subscription'), `<h1 class="ph">🔎 ${tx(en, 'Overiť predplatné', 'Check subscription')}</h1>${out}
+    const needPw = selfCheck(c) && !userOnly;
+    await pub(req, res, tx(en, 'Kontrola platnosti predplatného', 'Subscription validity check'), `<h1 class="ph">🔎 ${tx(en, 'Kontrola platnosti predplatného', 'Subscription validity check')}</h1>${out}
 ${(selfCheck(c) || canLookup(c)) ? `<form method="post" action="/overit-predplatne" class="card accf">${csrfField(req, res)}<input type="hidden" name="t" value="${esc(formTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
 <p class="hint">${hint}</p>
 <label for="cu">${tx(en, 'Meno', 'Username')}</label><input id="cu" name="u" required maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
@@ -642,11 +680,16 @@ ${(selfCheck(c) || canLookup(c)) ? `<form method="post" action="/overit-predplat
     const c = await panelCfg();
     let r;
     if (pp && selfCheck(c)) r = await panelApi.checkOwn(pcConf(c), pu, pp, hmac('chk:' + pu.toLowerCase() + '\n' + pp)).catch(() => null);
-    else if (!pp && canLookup(c)) r = await panelApi.lookup(pcConf(c), pu).catch(() => null);
-    else if (!pp && selfCheck(c)) return fail('panelbad');
-    else return fail('paneloff');
+    else if (!pp) {
+      if (selfCheck(c)) {
+        const stored = await linePass(pu);
+        if (stored) r = await panelApi.checkOwn(pcConf(c), pu, stored, hmac('chkline:' + pu.toLowerCase())).catch(() => null);
+      }
+      if (!r && canLookup(c)) r = await panelApi.lookup(pcConf(c), pu).catch(() => null);
+      else if (!r && selfCheck(c)) return fail('panelbad');
+    }
     if (!r || r.error) return fail('paneloff');
-    return checkPage(req, res, { found: r.found, active: r.active, expiry: r.expiry });
+    return checkPage(req, res, { found: r.found, active: r.active, expiry: r.expiry, status: r.status, connections: r.connections });
   }));
 
   // ---------- bonus info for checkout (/platby) + pricing ----------
@@ -666,8 +709,8 @@ ${(selfCheck(c) || canLookup(c)) ? `<form method="post" action="/overit-predplat
   const AB = '/admin/zakaznici', PB = '/admin/predplatne-server';
   const nav = `<p class="row"><a class="btnl sm" href="/admin">← Admin</a><a class="btnl sm" href="${AB}">👥 Zákazníci</a><a class="btnl sm" href="${AB}/ledger">📒 Bonusy (ledger)</a><a class="btnl sm" href="${AB}/nastavenia">🤝 Affiliate nastavenia</a><a class="btnl sm" href="${PB}">🖥️ Server predplatného</a></p>`;
   const apage = (t, b) => page(t, nav + b, 'a adm');
-  const AM = { ok: 'Uložené.', bad: 'Neplatné údaje.', del: 'Účet zmazaný.', synced: 'Synchronizované.', syncfail: 'Synchronizácia zlyhala (server nenastavený, nedostupný alebo jeho typ nevie vyhľadať používateľa bez hesla).', tiers: 'Neplatná tabuľka úrovní (čísla 0–120, počty musia byť rôzne).', taken: 'Toto meno k predplatnému už má iný účet.', limit: 'Príliš veľa testov – počkajte pár minút.' };
-  const amsg = (req) => (AM[req.query.m] ? `<div class="msg${['ok', 'del', 'synced'].includes(req.query.m) ? '' : ' err'}">${esc(AM[req.query.m])}</div>` : '');
+  const AM = { ok: 'Uložené.', bad: 'Neplatné údaje.', del: 'Účet zmazaný.', synced: 'Synchronizované.', syncfail: 'Synchronizácia zlyhala (server nenastavený, nedostupný alebo jeho typ nevie vyhľadať používateľa bez hesla).', tiers: 'Neplatná tabuľka úrovní (čísla 0–120, počty musia byť rôzne).', taken: 'Toto meno k predplatnému už má iný účet.', limit: 'Príliš veľa testov – počkajte pár minút.', lineok: 'Účet do zoznamu pridaný.', linedel: 'Účet zo zoznamu odstránený.', linebad: 'Neplatné meno alebo heslo k predplatnému.', bulkok: 'Zoznam účtov uložený.', syncch: 'Synchronizácia kanálov a programu spustená.', syncchfail: 'Synchronizácia kanálov zlyhala – skontrolujte M3U / XMLTV URL alebo prihlasovacie údaje servera.' };
+  const amsg = (req) => (AM[req.query.m] ? `<div class="msg${['ok', 'del', 'synced', 'lineok', 'linedel', 'bulkok', 'syncch'].includes(req.query.m) ? '' : ' err'}">${esc(AM[req.query.m])}</div>` : '');
   admin.get('/zakaznici', needAuth, wrap(async (req, res) => {
     const q = String(req.query.q || '').trim().toLowerCase().slice(0, 64);
     const r = await pool.query(`SELECT u.id,u.username,u.disabled,u.panel_user,u.panel_synced_at,u.ref_flag,u.ref_blocked,u.created_at, ${ACT('u.')} AS eff, ru.username AS ref_name,
@@ -800,12 +843,14 @@ ${devs.length ? `<div class="card"><h2>2. zariadenia</h2>${devs.map((d) => `<for
   let lastTest = null;
   admin.get('/predplatne-server', needAuth, wrap(async (req, res) => {
     const c = await panelCfg(), st = (k) => (c[k] ? '<b>(uložený)</b>' : '<span class="hint">(nenastavený)</span>');
+    const lines = (await pool.query('SELECT id,username,updated_at FROM acc_panel_lines ORDER BY lower(username)')).rows;
+    let chRep = null; try { chRep = c.last_chsync_report ? JSON.parse(c.last_chsync_report) : null; } catch { chRep = null; }
     const t = req.query.t === '1' && lastTest && Date.now() - lastTest.at < 600e3 ? lastTest : null;
     const types = [['', 'Automaticky zistiť (odporúčané)'], ...Object.values(panelApi.ADAPTERS).map((a) => [a.id, a.label])];
     const testBox = t ? `<div class="msg${t.ok ? '' : ' err'}">${t.ok ? `✅ Rozpoznaný adaptér: <b>${esc(t.label)}</b>${t.note ? ' – ' + esc(t.note) : ''}` : `❌ Server sa nepodarilo rozpoznať (skúšané: ${esc((t.tried || []).join(', ') || '–')}). Skontrolujte adresu, meno, heslo / API kľúč.`}${t.lookup ? `<br>Vyhľadanie „${esc(t.lookup.u)}“: ${t.lookup.error ? esc(t.lookup.error) : t.lookup.found ? `${t.lookup.active ? '✅ aktívne' : '⛔ neaktívne'} – do ${t.lookup.expiry && t.lookup.expiry < PANEL.UNLIMITED ? esc(fmtDate(t.lookup.expiry)) : 'bez obmedzenia'}` : 'používateľ sa nenašiel'}` : ''}</div>` : '';
     res.send(apage('Server predplatného', `<h1>🖥️ Server predplatného</h1>${amsg(req)}${testBox}
 ${c.base && /^http:/i.test(c.base) ? '<div class="msg err">⚠️ Server používa nešifrované HTTP – meno a heslo idú sieťou čitateľne. Ak to panel podporuje, použite https://.</div>' : ''}
-<form method="post" action="${PB}" class="card">${hid(req)}<p class="hint">Načítava sa iba stav a dátum expirácie predplatného. Streamy, playlisty ani m3u odkazy sa nikdy nesťahujú ani nezobrazujú. Adresa servera ani prihlasovacie údaje sa zákazníkom nikdy neukážu. Meno, heslo a API kľúč sú uložené šifrovane (AES-256-GCM, DATA_ENC_KEY). Prázdne pole = ponechať uložené.</p>
+<form method="post" action="${PB}" class="card">${hid(req)}<p class="hint">Načítava sa stav a dátum expirácie predplatného. Streamy sa nikdy neukladajú ani neposielajú na verejnú stránku. Adresa servera ani prihlasovacie údaje sa zákazníkom nikdy neukážu. Meno, heslo, API kľúč, M3U a XMLTV odkazy sú uložené šifrovane (AES-256-GCM, DATA_ENC_KEY). Prázdne pole = ponechať uložené.</p>
 <label for="pu">Adresa servera (host:port, http alebo https)</label><input id="pu" name="url" value="${esc(c.url || '')}" maxlength="300" placeholder="https://panel.example.com:8443" autocomplete="off">
 <label for="pn">Admin / reseller meno ${st('user')}</label><input id="pn" name="user" maxlength="200" autocomplete="off">
 <label for="pp">Heslo ${st('pass')}</label><input id="pp" name="pass" type="password" maxlength="200" autocomplete="new-password">
@@ -816,7 +861,19 @@ ${c.base && /^http:/i.test(c.base) ? '<div class="msg err">⚠️ Server použí
 <label for="dp">JSON pole s dátumom expirácie</label><input id="dp" name="datepath" value="${esc(c.datepath || '')}" maxlength="100" placeholder="data.exp_date"><p class="hint">Uložené meno a heslo sa pošlú ako HTTP Basic auth.</p></details>
 <p class="row"><button>💾 Uložiť</button></p></form>
 <form method="post" action="${PB}/test" class="card">${hid(req)}<h2>Otestovať pripojenie</h2><p class="hint">Zistí typ servera (ukáže, ktorý adaptér sedí) a voliteľne vyhľadá jedného používateľa – iba stav a expirácia.</p><label for="tu">Meno používateľa na skúšku (nepovinné)</label><input id="tu" name="u" maxlength="64" autocomplete="off"><p class="row"><button>🔌 Otestovať pripojenie</button></p></form>
-<form method="post" action="${PB}/sync" class="card">${hid(req)}<h2>Synchronizácia</h2><p>Aktívny adaptér: <b>${c.type ? esc((panelApi.ADAPTERS[c.type] || {}).label || c.type) : 'zatiaľ nezistený – spustite test'}</b> · Posledná synchronizácia: ${c.last_sync ? esc(fmtDT(c.last_sync)) : '–'}</p><p class="hint">Automaticky raz denne (po 4:00). Funguje s adaptérom, ktorý vie vyhľadať používateľa bez jeho hesla (XUI.one API, panel_api.php, Ministra, vlastné API). Pri čistom Xtream API (player_api.php) sa expirácia aktualizuje, keď zákazník prepojí účet svojím menom a heslom.</p><p class="row"><button>🔄 Synchronizovať teraz</button></p></form>`));
+<form method="post" action="${PB}/sync" class="card">${hid(req)}<h2>Synchronizácia</h2><p>Aktívny adaptér: <b>${c.type ? esc((panelApi.ADAPTERS[c.type] || {}).label || c.type) : 'zatiaľ nezistený – spustite test'}</b> · Posledná synchronizácia: ${c.last_sync ? esc(fmtDT(c.last_sync)) : '–'}</p><p class="hint">Automaticky raz denne (po 4:00). Funguje s adaptérom, ktorý vie vyhľadať používateľa bez jeho hesla (XUI.one API, panel_api.php, Ministra, vlastné API). Pri čistom Xtream API (player_api.php) sa expirácia aktualizuje, keď zákazník prepojí účet svojím menom a heslom, alebo podľa účtov v zozname nižšie.</p><p class="row"><button>🔄 Synchronizovať expirácie teraz</button></p></form>
+<form method="post" action="${PB}/katalog" class="card" id="katalog">${hid(req)}<h2>📺 Synchronizovať kanály a program</h2>
+<p class="hint">Stiahne zoznam kanálov (názov, kategória, logo, tvg-id) z M3U playlistu, alebo ak M3U nie je zadané, cez <code>player_api.php?action=get_live_categories</code> a <code>get_live_streams</code> uloženým admin menom a heslom. <b>URL streamov sa hneď zahodia a nikdy sa neuložia ani neodošlú na stránku.</b> XMLTV (TV program) sa pridá ako vlastný EPG zdroj a spáruje sa podľa tvg-id. Existujúce kanály ostávajú, nové sa doplnia, prázdne logá sa doplnia. Prázdne pole = ponechať uloženú adresu.</p>
+<label for="m3u">M3U playlist URL ${st('m3u_url')}</label><input id="m3u" name="m3u_url" type="url" maxlength="600" placeholder="https://…/get.php?…&amp;type=m3u_plus" autocomplete="off">
+<label for="xmltv">XMLTV (TV program) URL ${st('xmltv_url')}</label><input id="xmltv" name="xmltv_url" type="url" maxlength="600" placeholder="https://…/xmltv.php?…" autocomplete="off">
+<label class="chk"><input type="checkbox" name="clear_urls" value="1"> Vymazať uložené M3U a XMLTV odkazy</label>
+<p class="row"><button name="save" value="1">💾 Uložiť odkazy</button><button name="sync" value="1">🔄 Synchronizovať kanály a program</button></p>
+${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chRep.at) : (c.last_chsync ? fmtDT(c.last_chsync) : '–'))}${chRep.err ? ' · ⚠ ' + esc(String(chRep.err).slice(0, 200)) : ` · zdroj ${esc(chRep.source || '–')} · kanálov ${chRep.channels || 0} (nové ${chRep.added || 0}, doplnené ${chRep.updated || 0})${chRep.mapped != null ? ' · spárované s programom: ' + chRep.mapped : ''}${chRep.epg ? (chRep.epg.ok ? ' · XMLTV uložený' : ' · XMLTV: ' + esc(chRep.epg.err || 'chyba')) : ''}`}</p>` : (c.last_chsync ? `<p class="hint">Posledná synchronizácia: ${esc(fmtDT(c.last_chsync))}</p>` : '')}</form>
+<div class="card" id="linky"><h2>👤 Účty na overenie podľa mena</h2>
+<p class="hint">Uložte dvojice meno + heslo k predplatnému (šifrovane). Zákazník na stránke Overiť predplatné zadá len meno a stav sa overí na pozadí. Heslá sa v admine nikdy znova nezobrazia. Hromadne: jeden účet na riadok v tvare <code>meno:heslo</code> (alebo bodkočiarka / medzera).</p>
+<form method="post" action="${PB}/linky" class="row">${hid(req)}<label for="lu">Meno</label><input id="lu" name="u" maxlength="64" required autocomplete="off" autocapitalize="none"><label for="lp">Heslo</label><input id="lp" name="p" type="password" maxlength="128" required autocomplete="new-password"><button class="sm">➕ Pridať</button></form>
+<form method="post" action="${PB}/linky/bulk">${hid(req)}<label for="lb">Hromadne vložiť</label><textarea id="lb" name="bulk" rows="6" maxlength="20000" placeholder="jan:heslo1&#10;eva:heslo2"></textarea><p class="row"><button class="sm">💾 Uložiť zoznam</button></p></form>
+<div class="tblw"><table class="tbl"><thead><tr><th>Meno</th><th>Aktualizované</th><th></th></tr></thead><tbody>${lines.map((x) => `<tr><td><code>${esc(x.username)}</code></td><td>${esc(fmtDT(x.updated_at))}</td><td><form method="post" action="${PB}/linky/${x.id}/delete" class="inl">${hid(req)}<button class="sm">🗑️ Odstrániť</button></form></td></tr>`).join('') || '<tr><td colspan="3">Zatiaľ žiadne účty. Bez nich (a bez XUI / panel_api) musí zákazník zadať aj heslo.</td></tr>'}</tbody></table></div></div>`));
   }));
   admin.post('/predplatne-server', needAuth, adminCsrf, wrap(async (req, res) => {
     const b = req.body, url = String(b.url || '').trim();
@@ -857,6 +914,91 @@ ${c.base && /^http:/i.test(c.base) ? '<div class="msg err">⚠️ Server použí
   }));
   admin.post('/predplatne-server/sync', needAuth, adminCsrf, wrap(async (req, res) => {
     const r = await syncAll(); res.redirect(303, PB + '?m=' + (r.ok ? 'synced' : 'syncfail'));
+  }));
+  function catalogUrlOk(u) {
+    if (!u) return '';
+    try { EPGFETCH.checkUrl(u); } catch (e) { return e.message || 'bad'; }
+    return '';
+  }
+  async function saveCatalogUrls(b) {
+    if (b.clear_urls === '1') { await setPanel('m3u_url', null); await setPanel('xmltv_url', null); return ''; }
+    for (const k of ['m3u_url', 'xmltv_url']) {
+      const v = String(b[k] || '').trim();
+      if (!v) continue;
+      const err = catalogUrlOk(v); if (err) return err;
+      await setPanel(k, v.slice(0, 600));
+    }
+    return '';
+  }
+  async function syncCatalog() {
+    const c = await panelCfg();
+    const out = { at: new Date().toISOString(), channels: 0, added: 0, updated: 0, mapped: 0, source: null, epg: null, err: null };
+    let items = [];
+    try {
+      if (c.m3u_url) {
+        out.source = 'm3u';
+        const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 75e3);
+        try {
+          const got = await EPGFETCH.openPlaylist(c.m3u_url, { signal: ac.signal, maxBytes: 8 * 1024 * 1024 });
+          const p = await CHS.parseM3u(got.text);
+          items = p.items;
+          out.skipped = p.skipped;
+        } finally { clearTimeout(tm); ac.abort(); }
+      } else if (c.base && c.user && c.pass) {
+        out.source = 'xtream';
+        const p = await panelApi.liveCatalog(pcConf(c));
+        if (p.error && !p.items.length) { out.err = p.error; await setPanel('last_chsync_report', JSON.stringify(out)); return out; }
+        items = p.items || [];
+      } else {
+        out.err = 'Chýba M3U odkaz alebo admin meno a heslo k serveru.';
+        await setPanel('last_chsync_report', JSON.stringify(out));
+        return out;
+      }
+      out.channels = items.length;
+      if (typeof ctx.tvchUpsertMeta === 'function') {
+        const r = await ctx.tvchUpsertMeta(items);
+        out.added = r.added; out.updated = r.updated;
+        if (c.xmltv_url && typeof ctx.epgUpsertSyncSource === 'function') {
+          out.epg = await ctx.epgUpsertSyncSource(c.xmltv_url);
+        }
+        if (r.pairs && r.pairs.length && typeof ctx.epgApplyTvg === 'function') {
+          out.mapped = await ctx.epgApplyTvg(r.pairs);
+        }
+      }
+      await setPanel('last_chsync', out.at);
+      await setPanel('last_chsync_report', JSON.stringify(out));
+    } catch (e) {
+      out.err = String(e && e.message || e).slice(0, 200);
+      await setPanel('last_chsync_report', JSON.stringify(out));
+    }
+    return out;
+  }
+  admin.post('/predplatne-server/katalog', needAuth, adminCsrf, wrap(async (req, res) => {
+    if (L.hit('chsync', 8, 600e3)) return res.redirect(303, PB + '?m=limit#katalog');
+    const err = await saveCatalogUrls(req.body);
+    if (err) return res.redirect(303, PB + '?m=bad#katalog');
+    if (req.body.sync !== '1') return res.redirect(303, PB + '?m=ok#katalog');
+    const r = await syncCatalog();
+    res.redirect(303, PB + '?m=' + (r.err ? 'syncchfail' : 'syncch') + '#katalog');
+  }));
+  admin.post('/predplatne-server/linky', needAuth, adminCsrf, wrap(async (req, res) => {
+    const u = String(req.body.u || '').trim(), pw = String(req.body.p || '');
+    if (!panelUserOk(u) || !pw || pw.length > 128) return res.redirect(303, PB + '?m=linebad#linky');
+    await saveLine(u, pw);
+    audit(req, 'panel_line', u);
+    res.redirect(303, PB + '?m=lineok#linky');
+  }));
+  admin.post('/predplatne-server/linky/bulk', needAuth, adminCsrf, wrap(async (req, res) => {
+    const parsed = LINES.parseBulk(String(req.body.bulk || ''), panelUserOk);
+    if (!parsed.items.length) return res.redirect(303, PB + '?m=linebad#linky');
+    for (const x of parsed.items) await saveLine(x.user, x.pass);
+    audit(req, 'panel_lines_bulk', String(parsed.items.length));
+    res.redirect(303, PB + '?m=bulkok#linky');
+  }));
+  admin.post('/predplatne-server/linky/:id(\\d+)/delete', needAuth, adminCsrf, wrap(async (req, res) => {
+    const r = (await pool.query('DELETE FROM acc_panel_lines WHERE id=$1 RETURNING username', [+req.params.id])).rows[0];
+    if (r) audit(req, 'panel_line_del', r.username);
+    res.redirect(303, PB + '?m=linedel#linky');
   }));
 
   ctx.accountsAdminCard = () => `<div class="card"><h2>👥 Zákazníci a affiliate</h2><p class="row"><a class="btnl sm" href="${AB}">👥 Zákazníci</a><a class="btnl sm" href="${AB}/nastavenia">🤝 Affiliate nastavenia</a><a class="btnl sm" href="${AB}/ledger">📒 Bonusy</a><a class="btnl sm" href="${PB}">🖥️ Server predplatného</a><a class="btnl sm" href="/admin/xpub">🔑 xpub – automatické adresy</a></p></div>`;

@@ -703,7 +703,7 @@ admin.get('/export.json', needAuth, wrap(async (req, res) => {
   res.send(JSON.stringify(file));
 }));
 // extra tables in the (encrypted) backup: site sections, customer accounts/affiliate, subscription-server config, xpub. Sessions are never backed up.
-const BK_TABLES = ['site_sections', 'acc_users', 'acc_orders', 'acc_ledger', 'acc_devices', 'acc_panel_cfg', 'xpub_keys', 'xpub_addrs'];
+const BK_TABLES = ['site_sections', 'acc_users', 'acc_orders', 'acc_ledger', 'acc_devices', 'acc_panel_cfg', 'acc_panel_lines', 'xpub_keys', 'xpub_addrs'];
 async function tableCols(t) {
   const r = await pool.query(`SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name=$1`, [t]);
   return r.rowCount ? Object.fromEntries(r.rows.map(x => [x.column_name, x.data_type])) : null;

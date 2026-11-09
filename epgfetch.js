@@ -150,4 +150,29 @@ async function sniffed(stream) {
   const bad = sniffText(head); if (bad) { stream.destroy && stream.destroy(); throw (bad === NOT_EPG_M3U || bad === NOT_EPG_STREAM) ? notEpg(bad) : new Error(bad); }
   return Readable.from(rest(), { objectMode: false });
 }
-module.exports = { open, checkUrl, publicIp, sniffText, _decode: decode };
+
+/** Download an M3U playlist (SSRF-safe). Returns UTF-8 text; caller must parse metadata and drop stream URLs. */
+async function openPlaylist(url, { signal, maxBytes = 8 * 1024 * 1024 } = {}) {
+  let x = checkUrl(url), res;
+  for (let hop = 0; ; hop++) {
+    res = await get(x, signal);
+    if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+      res.resume(); if (hop >= 5) throw new Error('príliš veľa presmerovaní');
+      x = checkUrl(new URL(res.headers.location, x)); continue;
+    }
+    break;
+  }
+  if (res.statusCode !== 200) { res.resume(); throw new Error('HTTP ' + res.statusCode); }
+  const type = String(res.headers['content-type'] || '').toLowerCase();
+  if (/^(video|audio)\/|dash\+xml/.test(type)) { res.destroy(); throw new Error('Odkaz vracia video/audio stream, nie M3U zoznam kanálov.'); }
+  const len = +res.headers['content-length'] || 0; if (len > maxBytes) { res.destroy(); throw new Error('súbor je príliš veľký'); }
+  let total = 0; const chunks = [];
+  try { for await (const c of res) { total += c.length; if (total > maxBytes) throw new Error('súbor je príliš veľký'); chunks.push(c); } } finally { res.destroy(); }
+  let buf = Buffer.concat(chunks);
+  if (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf, { maxOutputLength: maxBytes });
+  const text = buf.toString('utf8');
+  if (/<(tv|channel|programme)[\s>]/i.test(text.slice(0, 8192))) throw new Error('Odkaz vracia XMLTV, nie M3U. Zadajte ho ako URL TV programu.');
+  if (!/#EXTM3U|#EXTINF[:\s]/i.test(text.slice(0, 8192))) throw new Error('Obsah nie je M3U zoznam kanálov.');
+  return { text, url: x.href };
+}
+module.exports = { open, openPlaylist, checkUrl, publicIp, sniffText, _decode: decode };
