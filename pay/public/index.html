@@ -1737,6 +1737,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
       }
       const c = fulfillCheck();
       showFulfillErr(c.ok ? '' : (fuEl && fuEl.value ? c.error : ''));
+      if (c.ok && statusEl) { statusEl.className = 'status'; statusEl.textContent = ''; }
       if (c.ok && c.values.email && emailEl && !emailEl.value) emailEl.value = c.values.email;
       syncGoButton();
     }
