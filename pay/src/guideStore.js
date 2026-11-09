@@ -14,7 +14,7 @@ const orderDb = require('./db');
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const FILE = path.join(DATA_DIR, 'guide-overrides.json');
 const IMG_DIR = path.join(DATA_DIR, 'guide-img');
-const V = '?v=20261026c';
+const V = '?v=20261109a';
 const R = (n) => `/guide-img/real/${n}.jpg${V}`;
 const MAX_IMG = 3 * 1024 * 1024;
 
@@ -60,13 +60,13 @@ const DEFAULTS = {
       'Log in to Revolut: enter your phone number → “Continue” (or “Continue with email”) and confirm with the code or in the Revolut app.', R('ramp-02-login-m'), R('ramp-02-login-d')),
     S('Kúpte kryptomenu (napr. {coin}) – vyberte tú, ktorú ste zvolili pri platbe. Sumu nemeňte. Potom ťuknite na „To – Select address“.',
       'Buy the cryptocurrency (e.g. {coin}) – pick the one you chose at payment. Don’t change the amount. Then tap “To – Select address”.',
-      '', '', 'Revolut app: nákup zvolenej kryptomeny (nie len LTC), zvýraznené „Buy {coin} with EUR“'),
+      R('ramp-buy-crypto-m')),
     S('Vložte adresu, ktorá je na našej stránke zobrazená pri zvolenej kryptomene (podržať → Vložiť). Ak vidíte „No addresses“, ťuknite na „Add wallet address“.',
       'Paste the address shown on our page for the chosen crypto (long-press → Paste). If you see “No addresses”, tap “Add wallet address”.',
-      '', '', 'Revolut: Select address / Add wallet address (adresa peňaženky musí byť na snímke úplne zakrytá)'),
+      R('ramp-select-address-m')),
     S('V „Wallet details“ zvoľte „My address“, vložte tú istú adresu peňaženky, vyberte typ Wallet / exchange, doplňte Label a ťuknite „Save“.',
       'In “Wallet details” choose “My address”, paste the same wallet address, pick Wallet / exchange, add a Label and tap “Save”.',
-      '', '', 'Revolut: Wallet details – My address, typ, Label, Save (adresa musí byť úplne zakrytá)'),
+      R('ramp-wallet-details-m')),
     S('Vráťte sa na nákup a stlačte „Buy {coin} with EUR“. Sumu nemeňte.', 'Go back to the buy screen and tap “Buy {coin} with EUR”. Don’t change the amount.', R('ramp-05-buy-m'), R('ramp-05-buy-d')),
     S('Potvrďte platbu v appke Revolut.', 'Confirm the payment in the Revolut app.', '', '',
       'Revolut: potvrdenie platby (súhrn / potvrdenie v appke)'),
