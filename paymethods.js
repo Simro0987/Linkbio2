@@ -236,7 +236,7 @@ ${li(WG.paygate, '💳 Karta / Apple Pay / Google Pay – PayGate.to', pg ? (pg.
 <fieldset class="pmfs"><legend>Logo</legend><div class="pmlibs">${lib}</div><p class="hint">Vlastné logo nahrajte cez „Upraviť“ pri vlastnom spôsobe platby, alebo použite knižnicu.</p></fieldset>
 <label class="ck"><input type="checkbox" name="enabled" value="1"${!e || e.enabled ? ' checked' : ''}> Zapnutá (zobraziť zákazníkom)</label>
 <p class="row"><button>💾 ${e ? 'Uložiť zmeny' : 'Pridať kartu'}</button>${e ? `<a class="btnl g2" href="${GC}">Zrušiť</a>` : ''}</p></form>`;
-    return `<h1>🎁 Darčekové karty</h1>${msgOf(req)}<p class="hint">Zákazník vidí jednu voľbu „Darčeková karta“. Systém vyberie najvýhodnejšiu kombináciu Azteco (Lightning / Onchain / Azteco) alebo Amazon DE podľa sumy. Azteco má prednosť, ak nie je drahšie o viac ako nastavený prah (predvolene 0,70 €). Poplatky sa zákazníkovi nezobrazujú. Ceny nižšie zadajte len ak poznáte skutočnú nákupnú cenu – inak sa berie nominálna hodnota karty.</p>
+    return `<h1>🎁 Darčekové karty</h1>${msgOf(req)}<p class="hint">Zákazník vidí jednu voľbu „Darčeková karta“ a len nominál / sumu balíka – bez poplatkov. Systém porovnáva Azteco vs Amazon podľa <b>koncovej ceny s poplatkami</b> (nákupná cena + % + fix). Azteco má prednosť, ak nie je drahšie o viac ako nastavený prah (predvolene 0,70 €). Neznámy poplatok = 0 (nič sa nevymýšľa) – doplňte skutočné čísla nižšie.</p>
 ${v.pick || ''}
 <div class="card pmw"><h2>Zoznam (${n})</h2><ul class="pml0">${rows || '<li class="hint">Žiadne karty.</li>'}</ul>
 <form method="post" action="${GC}/obnovit" class="pmf" data-confirm="Obnoviť predvolený zoznam kariet? Vaše zmeny sa stratia.">${tok}<button class="sm g2">♻️ Obnoviť predvolené</button></form></div>${form}`;
@@ -245,12 +245,22 @@ ${v.pick || ''}
   function pickForm(req, gp) {
     if (!gp) return '';
     const tok = hid(req);
-    const rows = (gp.rows || []).map((r) => `<tr><td>${esc(r.label)}</td><td>${esc(r.faceEur)} €</td><td><input name="price_${esc(r.id)}" value="${r.priceEur != null ? esc(r.priceEur) : ''}" inputmode="decimal" placeholder="${esc(r.faceEur)}" style="width:6rem"></td></tr>`).join('');
+    const fz = (gp.fees && gp.fees.azteco) || { feePct: 0, feeFix: 0 };
+    const fm = (gp.fees && gp.fees.amazon) || { feePct: 0, feeFix: 0 };
+    const rows = (gp.rows || []).map((r) => `<tr><td>${esc(r.label)}</td><td>${esc(r.faceEur)} €</td><td><input name="price_${esc(r.id)}" value="${r.priceEur != null ? esc(r.priceEur) : ''}" inputmode="decimal" placeholder="${esc(r.faceEur)}" style="width:6rem"></td><td>${esc(r.baseEur)} €</td><td><b>${esc(r.totalEur)} €</b></td></tr>`).join('');
     return `<form method="post" action="${GC}/prah" class="card">${tok}<h2>Inteligentný výber Azteco vs Amazon</h2>
-<p class="hint">Ak Azteco stojí najviac o tento prah viac ako Amazon, vyberie sa Azteco. Prázdna nákupná cena = použije sa nominál (nesmú sa vymýšľať ceny).</p>
+<p class="hint">Porovnáva sa <b>celková cena s poplatkami</b> (stĺpec „Celkom“). Ak Azteco celkom stojí najviac o tento prah viac ako Amazon, vyberie sa Azteco. Prázdna nákupná cena = nominál. Poplatky, ktoré nepoznáte, nechajte 0 – nič sa nevymýšľa. Zákazník poplatky ani celkom neuvidí.</p>
 <label>Prah v € (predvolene 0,70)</label><input name="threshold" value="${esc(gp.threshold)}" inputmode="decimal" required>
-<div style="overflow:auto"><table class="tbl"><thead><tr><th>Karta</th><th>Nominál</th><th>Nákupná cena €</th></tr></thead><tbody>${rows}</tbody></table></div>
-<button>Uložiť prah a ceny</button></form>`;
+<div class="row" style="gap:1rem;flex-wrap:wrap;margin:0.75rem 0">
+<div><h3 style="margin:0 0 .4rem">Poplatok Azteco (na kartu)</h3>
+<label>% z nákupnej ceny</label><input name="fee_azteco_pct" value="${esc(fz.feePct)}" inputmode="decimal" style="width:6rem">
+<label>Fix € na kartu</label><input name="fee_azteco_fix" value="${esc(fz.feeFix)}" inputmode="decimal" style="width:6rem"></div>
+<div><h3 style="margin:0 0 .4rem">Poplatok Amazon DE (na kartu)</h3>
+<label>% z nákupnej ceny</label><input name="fee_amazon_pct" value="${esc(fm.feePct)}" inputmode="decimal" style="width:6rem">
+<label>Fix € na kartu</label><input name="fee_amazon_fix" value="${esc(fm.feeFix)}" inputmode="decimal" style="width:6rem"></div>
+</div>
+<div style="overflow:auto"><table class="tbl"><thead><tr><th>Karta</th><th>Nominál (zákazník)</th><th>Nákupná cena €</th><th>Základ</th><th>Celkom s poplatkom</th></tr></thead><tbody>${rows}</tbody></table></div>
+<button>Uložiť prah, ceny a poplatky</button></form>`;
   }
   admin.get('/platobne-metody/darcekove-karty', needAuth, wrap(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -262,7 +272,11 @@ ${v.pick || ''}
   admin.post('/platobne-metody/darcekove-karty/prah', needAuth, csrf, wrap(async (req, res) => {
     const b = req.body || {}, prices = {};
     for (const [k, val] of Object.entries(b)) if (k.startsWith('price_')) prices[k.slice(6)] = val;
-    try { await callGp('gp_save', { threshold: b.threshold, prices }); await audit(req, 'giftpick_save', String(b.threshold || '')); res.redirect(303, GC + '?m=saved'); } catch (e) { fail(req, res, e, GC); }
+    const fees = {
+      azteco: { feePct: b.fee_azteco_pct, feeFix: b.fee_azteco_fix },
+      amazon: { feePct: b.fee_amazon_pct, feeFix: b.fee_amazon_fix },
+    };
+    try { await callGp('gp_save', { threshold: b.threshold, prices, fees }); await audit(req, 'giftpick_save', String(b.threshold || '')); res.redirect(303, GC + '?m=saved'); } catch (e) { fail(req, res, e, GC); }
   }));
   const gcPost = (sub, action, pick, m) => admin.post('/platobne-metody/darcekove-karty/' + sub, needAuth, csrf, wrap(async (req, res) => {
     const b = req.body || {};

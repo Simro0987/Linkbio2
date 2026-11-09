@@ -1,14 +1,21 @@
 'use strict';
 /**
  * One smart gift-card choice: Azteco (Lightning / Onchain / Azteco) vs Amazon DE.
- * Uses only configured or face-value prices (never invented). Prefer Azteco when its
- * cost is at most `threshold` EUR above Amazon (default 0.70). Customer UI shows no fees.
+ * Comparison uses TOTAL cost = purchase/base price + provider fees (admin-configured;
+ * unknown fees default to 0 — never invented). Prefer Azteco when its total is at most
+ * `threshold` EUR above Amazon (default 0.70). Customer UI/API shows face values only
+ * (no fees, no costs, no comparison numbers).
  */
 const g2a = require('./g2a');
 const store = require('./sealedStore');
 
 const DEFAULT_THRESHOLD = 0.70;
-const cfg = store.create('gift-pick', { threshold: DEFAULT_THRESHOLD, prices: {} });
+const ZERO_FEE = { feePct: 0, feeFix: 0 };
+const cfg = store.create('gift-pick', {
+  threshold: DEFAULT_THRESHOLD,
+  prices: {},
+  fees: { azteco: { ...ZERO_FEE }, amazon: { ...ZERO_FEE } },
+});
 let log = () => {};
 
 const clip = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, n);
@@ -19,8 +26,34 @@ function threshold() {
   return Number.isFinite(t) && t >= 0 && t <= 20 ? money(t) : DEFAULT_THRESHOLD;
 }
 
-/** Purchase price if the admin entered a real one; otherwise the face value (the only known figure). */
-function unitCost(p) {
+function parseFeePart(v, max) {
+  if (v === '' || v == null) return 0;
+  const n = Number(String(v).replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0 || n > max) return null;
+  return money(n);
+}
+
+/** Admin fee for a family. Unknown / unset → 0 (never invent rates). */
+function feesOf(family) {
+  const all = (cfg.get().fees && typeof cfg.get().fees === 'object') ? cfg.get().fees : {};
+  const raw = all[family] || {};
+  const pct = Number(raw.feePct);
+  const fix = Number(raw.feeFix);
+  return {
+    feePct: Number.isFinite(pct) && pct >= 0 && pct <= 100 ? money(pct) : 0,
+    feeFix: Number.isFinite(fix) && fix >= 0 && fix <= 50 ? money(fix) : 0,
+  };
+}
+
+/** Final unit cost for one card: base + % + fix. */
+function withFee(base, family) {
+  const b = money(base);
+  const { feePct, feeFix } = feesOf(family);
+  return money(b * (1 + feePct / 100) + feeFix);
+}
+
+/** Purchase/base price if the admin entered a real one; otherwise the face value (the only known figure). */
+function unitBase(p) {
   const prices = cfg.get().prices || {};
   const raw = prices[p.id] != null ? prices[p.id] : prices[p.aliasId];
   const n = Number(raw);
@@ -36,15 +69,20 @@ function familyOf(p) {
 }
 
 function catalog() {
-  return (typeof g2a.listProducts === 'function' ? g2a.listProducts() : []).map((p) => ({
-    id: p.id, aliasId: p.aliasId, type: p.type, label: p.label || p.shortLabel,
-    amountEur: Number(p.amountEur), buyUrl: p.buyUrl, family: familyOf(p), cost: unitCost(p),
-  })).filter((p) => p.family && Number.isFinite(p.amountEur) && p.amountEur > 0);
+  return (typeof g2a.listProducts === 'function' ? g2a.listProducts() : []).map((p) => {
+    const family = familyOf(p);
+    const base = unitBase(p);
+    return {
+      id: p.id, aliasId: p.aliasId, type: p.type, label: p.label || p.shortLabel,
+      amountEur: Number(p.amountEur), buyUrl: p.buyUrl, family,
+      base, cost: withFee(base, family),
+    };
+  }).filter((p) => p.family && Number.isFinite(p.amountEur) && p.amountEur > 0);
 }
 
 /**
  * Cheapest combination of the given denominations whose face values sum to >= amount.
- * Unlimited repeats. Minimise cost, then overshoot, then card count.
+ * Unlimited repeats. Minimise total cost (with fees), then overshoot, then card count.
  */
 function bestCombo(denoms, amount) {
   const amt = Math.round(Number(amount) * 100);
@@ -53,12 +91,17 @@ function bestCombo(denoms, amount) {
   const cap = amt + maxFace; // no point overshooting by more than the largest card
   const INF = { cost: Infinity };
   const dp = Array.from({ length: cap + 1 }, () => INF);
-  dp[0] = { cost: 0, face: 0, cards: [] };
+  dp[0] = { cost: 0, base: 0, face: 0, cards: [] };
   for (let s = 0; s <= cap; s++) {
     const cur = dp[s]; if (!Number.isFinite(cur.cost)) continue;
     for (const d of denoms) {
       const f = Math.round(d.amountEur * 100), ns = s + f; if (ns > cap) continue;
-      const next = { cost: money(cur.cost + d.cost), face: cur.face + f, cards: cur.cards.concat([d]) };
+      const next = {
+        cost: money(cur.cost + d.cost),
+        base: money(cur.base + d.base),
+        face: cur.face + f,
+        cards: cur.cards.concat([d]),
+      };
       const old = dp[ns];
       if (next.cost < old.cost - 1e-9
         || (Math.abs(next.cost - old.cost) < 1e-9 && (next.face < old.face || (next.face === old.face && next.cards.length < old.cards.length)))) {
@@ -93,6 +136,7 @@ function pick(amountEur) {
   return {
     amount: Number.isFinite(amount) ? money(amount) : amount,
     threshold: thr,
+    fees: { azteco: feesOf('azteco'), amazon: feesOf('amazon') },
     azteco: az ? pubCombo(az, 'azteco') : null,
     amazon: am ? pubCombo(am, 'amazon') : null,
     winner, reason,
@@ -100,11 +144,12 @@ function pick(amountEur) {
   };
 }
 
+/** Internal/admin combo summary. `cost` = total with fees (what the picker uses). No fee field names on the choice payload. */
 function pubCombo(c, family) {
   const cards = c.cards.map((p) => ({ id: p.id, aliasId: p.aliasId, label: p.label, faceEur: p.amountEur, type: p.type, buyUrl: p.buyUrl }));
   const label = family === 'azteco' ? 'Azteco' : 'Amazon DE';
   const names = cards.map((x) => x.label).join(' + ');
-  return { family, label, names, cost: c.cost, coverEur: c.coverEur, cards };
+  return { family, label, names, cost: c.cost, base: c.base != null ? c.base : c.cost, coverEur: c.coverEur, cards };
 }
 
 /** Public method shown instead of the individual Azteco/Amazon rows. No fees, no prices. */
@@ -142,12 +187,14 @@ function collapse(res) {
 
 function adminView() {
   const prices = { ...(cfg.get().prices || {}) };
+  const fees = { azteco: feesOf('azteco'), amazon: feesOf('amazon') };
   const rows = catalog().map((p) => ({
     id: p.id, label: p.label, family: p.family, faceEur: p.amountEur,
     priceEur: prices[p.id] != null && Number(prices[p.id]) > 0 ? money(prices[p.id]) : null,
-    usedEur: p.cost,
+    baseEur: p.base,
+    totalEur: p.cost,
   }));
-  return { ok: true, threshold: threshold(), prices, rows, seeded: cfg.get().threshold == null };
+  return { ok: true, threshold: threshold(), prices, fees, rows, seeded: cfg.get().threshold == null };
 }
 
 async function saveAdmin(b) {
@@ -162,8 +209,21 @@ async function saveAdmin(b) {
       else prices[id] = money(n);
     }
   }
-  await cfg.save({ threshold: money(t), prices });
-  log('GIFTPICK_SAVED threshold=' + money(t));
+  const fees = { azteco: feesOf('azteco'), amazon: feesOf('amazon') };
+  if (b.fees && typeof b.fees === 'object') {
+    for (const fam of ['azteco', 'amazon']) {
+      const src = b.fees[fam];
+      if (!src || typeof src !== 'object') continue;
+      const pct = parseFeePart(src.feePct, 100);
+      const fix = parseFeePart(src.feeFix, 50);
+      if (pct == null || fix == null) return { ok: false, status: 400, error: 'Poplatok: % 0–100, fix 0–50 €.' };
+      fees[fam] = { feePct: pct, feeFix: fix };
+    }
+  }
+  await cfg.save({ threshold: money(t), prices, fees });
+  log('GIFTPICK_SAVED threshold=' + money(t)
+    + ' azteco_fee=' + fees.azteco.feePct + '%+' + fees.azteco.feeFix
+    + ' amazon_fee=' + fees.amazon.feePct + '%+' + fees.amazon.feeFix);
   return adminView();
 }
 
@@ -177,7 +237,7 @@ function mount(app) {
     const amount = Number(String(req.query.amount || '').replace(',', '.'));
     if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Zadajte sumu.' });
     const r = pick(amount);
-    // Public payload: no costs, no fees, no comparison numbers.
+    // Public payload: no costs, no fees, no comparison numbers — face/cover only.
     const c = r.choice;
     res.json({
       ok: !!c, amount: r.amount, winner: r.winner,
@@ -189,4 +249,8 @@ function mount(app) {
 
 async function init(appendLog) { if (appendLog) log = appendLog; await cfg.load(); }
 
-module.exports = { DEFAULT_THRESHOLD, threshold, pick, bestCombo, catalog, collapse, publicItem, adminView, saveAdmin, mount, init, _set: (c) => cfg.set(c), _cfg: cfg };
+module.exports = {
+  DEFAULT_THRESHOLD, threshold, feesOf, withFee, pick, bestCombo, catalog,
+  collapse, publicItem, adminView, saveAdmin, mount, init,
+  _set: (c) => cfg.set(c), _cfg: cfg,
+};
