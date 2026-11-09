@@ -279,6 +279,64 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
   };
   const ADAPTERS = { custom, xui, stalker, panel_api: panelApi, xtream };
 
+  function rowUsername(row) { return String((row && (row.username || row.user || row.login)) || '').trim(); }
+  function rowPassword(row) {
+    if (!row || typeof row !== 'object') return '';
+    const p = row.password != null ? row.password : (row.pass != null ? row.pass : row.user_password);
+    if (p == null || p === false) return '';
+    const s = String(p);
+    if (!s || s === 'undefined' || s === 'null') return '';
+    return s;
+  }
+  const listCache = new Map();
+  const LIST_TTL = 5 * 60e3;
+  async function listAccounts(c) {
+    if (!c || !c.base || !c.user || !c.pass) return { users: [], error: 'nocreds' };
+    const k = 'LIST:' + String(c.type || '') + ':' + String(c.base || '');
+    const hit = listCache.get(k);
+    if (hit && now() - hit.at < LIST_TTL) return hit.v;
+    let rows = null, src = '';
+    const tryList = async (fn, name) => {
+      const a = await fn();
+      if (Array.isArray(a)) { rows = a; src = name; }
+    };
+    const typ = c.type || '';
+    try {
+      if (typ === 'xui' || typ === '') await tryList(() => xui.lines(c), 'xui');
+    } catch { /* */ }
+    if (!rows || (Array.isArray(rows) && !rows.length && typ !== 'xui')) {
+      try { if (typ === 'panel_api' || typ === '' || typ === 'xui' || typ === 'xtream') await tryList(() => panelApi.users(c), 'panel_api'); } catch { /* */ }
+    }
+    if (!rows) {
+      const miss = { users: [], error: 'nolist', source: src };
+      return miss; // do not cache failures
+    }
+    const users = [];
+    const seen = new Set();
+    for (const row of rows) {
+      const username = rowUsername(row);
+      if (!username) continue;
+      const key = username.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      users.push({ username, password: rowPassword(row) });
+      if (users.length >= 20000) break;
+    }
+    const v = { users, source: src, error: null };
+    listCache.set(k, { at: now(), v });
+    if (listCache.size > 20) listCache.delete(listCache.keys().next().value);
+    return v;
+  }
+  async function findPanelPassword(c, username) {
+    const want = String(username || '').trim().toLowerCase();
+    if (!want) return { found: false, pass: '' };
+    const list = await listAccounts(c);
+    if (list.error && !list.users.length) return { found: false, pass: '', error: list.error };
+    const row = (list.users || []).find((x) => String(x.username || '').toLowerCase() === want);
+    if (!row) return { found: false, pass: '' };
+    return { found: true, user: row.username, pass: row.password || '' };
+  }
+
   async function detect(c) {
     const order = c.tpl ? ['custom', 'xui', 'stalker', 'panel_api', 'xtream'] : ['xui', 'stalker', 'panel_api', 'xtream'];
     const tried = [];
@@ -318,6 +376,6 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
     if (status >= 400 || json == null) return null;
     return json;
   }
-  return { detect, lookup, checkOwn, liveCatalog, shortEpg, ADAPTERS, publicView, fromLine, clear: () => cache.clear() };
+  return { detect, lookup, checkOwn, liveCatalog, shortEpg, listAccounts, findPanelPassword, ADAPTERS, publicView, fromLine, clear: () => { cache.clear(); listCache.clear(); } };
 }
 module.exports = { create, normBase, joinUrl, tidyReqUrl, tidyFullUrl, parseDate, getPath, UNLIMITED, sameSafeRedirect };

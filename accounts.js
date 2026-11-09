@@ -116,6 +116,40 @@ function install(ctx) {
     if (!r) return null;
     try { return decrypt(JSON.parse(r.pass_enc), 'panel-line:' + String(r.username).toLowerCase()).toString(); } catch { return null; }
   }
+  function fulfillPass(username) {
+    try {
+      const F = require('./pay/src/fulfill');
+      const all = (global.__payOrders && global.__payOrders.load) ? global.__payOrders.load() : {};
+      const got = F.findLatestCreds(all, username);
+      if (got && got.passEnc) {
+        const p = F.openCreds(got.passEnc);
+        if (p) return p;
+      }
+      if (got && got.password) return got.password;
+    } catch { /* pay module optional */ }
+    return null;
+  }
+  function countFulfillPasswords() {
+    let n = 0;
+    try {
+      const F = require('./pay/src/fulfill');
+      const all = (global.__payOrders && global.__payOrders.load) ? global.__payOrders.load() : {};
+      const seen = new Set();
+      for (const o of Object.values(all || {})) {
+        const f = o && o.fulfill;
+        if (!f) continue;
+        const take = (c) => {
+          if (!c || !c.username) return;
+          const k = String(c.username).toLowerCase();
+          if (seen.has(k)) return;
+          if (c.passEnc || c.password) { seen.add(k); n++; }
+        };
+        for (const s of [...(f.lines || []), ...(f.slots || [])]) take(s);
+        for (const m of f.messages || []) take(m && m.card);
+      }
+    } catch { /* */ }
+    return n;
+  }
   async function saveLine(user, pass) {
     const enc = JSON.stringify(encrypt(Buffer.from(String(pass)), 'panel-line:' + user.toLowerCase()));
     await pool.query(`INSERT INTO acc_panel_lines (username, pass_enc, updated_at) VALUES ($1,$2,now())
@@ -292,6 +326,8 @@ function install(ctx) {
     email: ['Neplatný e-mail.', 'Invalid e-mail.'], limit: ['Príliš veľa registrácií z tejto siete. Skúste neskôr.', 'Too many sign-ups from this network. Try later.'], spam: ['Registrácia zlyhala – skúste znova.', 'Sign-up failed – please try again.'],
     welcome: ['Účet bol vytvorený. Vitajte!', 'Your account has been created. Welcome!'], pwok: ['Heslo bolo zmenené.', 'Password changed.'], oldpw: ['Heslo nesedí.', 'Password is wrong.'],
     panelok: ['Predplatné bolo prepojené s vaším účtom.', 'Your subscription is now linked.'], panelbad: ['Meno alebo heslo k predplatnému nesedí.', 'Subscription username or password is wrong.'],
+    panelmissing: ['Účet s týmto username sa nenašiel. Skontrolujte, či ste ho zadali správne, alebo zadajte aj heslo.', 'No account with this username was found. Check that you typed it correctly, or also enter the password.'],
+    panelauth: ['Účet sa nepodarilo overiť.', 'The account could not be verified.'],
     paneltaken: ['Toto predplatné je už prepojené s iným účtom. Kontaktujte podporu.', 'This subscription is linked to another account. Contact support.'], paneloff: ['Overenie predplatného momentálne nie je dostupné.', 'Subscription check is currently unavailable.'],
     choice: ['Voľba uložená.', 'Choice saved.'], reset: ['Odkaz na obnovu hesla je neplatný alebo vypršal.', 'The reset link is invalid or expired.'], resetok: ['Heslo nastavené – prihláste sa.', 'Password set – please log in.'],
     emailreq: ['Zadajte platný e-mail – slúži na obnovu hesla.', 'Enter a valid e-mail – it is used for password reset.'],
@@ -767,16 +803,22 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
 <ul class="accmeta"><li>${tx(en, 'Platí do', 'Valid until')}: <b>${esc(until)}</b>${known}</li>${daysTxt}${conn}</ul>
 ${kind !== 'active' ? `<p><a class="b" href="/platby">🔁 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : ''}</div>`;
   }
+  const subCheck = require('./subcheck').create({
+    getConf: async () => pcConf(await panelCfg()),
+    checkOwn: (c, u, p) => panelApi.checkOwn(c, u, p, hmac('chk:' + String(u).toLowerCase() + '\n' + p)),
+    findPanelPassword: (c, u) => panelApi.findPanelPassword(c, u),
+    linePass,
+    fulfillPass,
+    softwareByName,
+  });
   async function checkPage(req, res, r) {
     const en = req.lang === 'en', c = await panelCfg();
-    const userOnly = canLookup(c) || (selfCheck(c) && await hasLines());
+    const userOnly = !!(c && c.base) || (await hasLines()) || countFulfillPasswords() > 0;
     const out = !r ? '' : r.err ? msgOf(r.err, en) : r.found ? statusCard(r, en) : msgOf('panelbad', en);
-    const hint = userOnly && selfCheck(c)
-      ? tx(en, 'Zadajte meno k predplatnému (z aplikácie v TV). Heslo je voliteľné – ak ho zadáte, overenie ide priamo na server. Heslo zadané tu sa nikde neukladá. Všetka komunikácia ide cez HTTPS.', 'Enter your subscription username (from the TV app). The password is optional – if you enter it, we check the server directly. A password typed here is never stored. All traffic uses HTTPS.')
-      : canLookup(c)
-        ? tx(en, 'Zadajte meno k predplatnému. Všetka komunikácia ide cez HTTPS.', 'Enter your subscription username. All traffic uses HTTPS.')
-        : tx(en, 'Zadajte meno a heslo k predplatnému (z aplikácie v TV). Heslo sa nikde neukladá – slúži len na overenie, že predplatné je vaše.', 'Enter your subscription username and password (from the TV app). The password is never stored – it only proves the subscription is yours.');
-    const needPw = selfCheck(c) && !userOnly;
+    const hint = userOnly
+      ? tx(en, 'Zadajte meno k predplatnému (z aplikácie v TV). Heslo je voliteľné – ak ho zadáte, overenie ide priamo na server. Inak ho dohľadáme v uloženom zozname alebo v paneli a overíme na pozadí. Heslo zadané tu sa nikde neukladá.', 'Enter your subscription username (from the TV app). The password is optional – if you enter it, we check the server directly. Otherwise we look it up in the stored list or on the panel and verify in the background. A password typed here is never stored.')
+      : tx(en, 'Zadajte meno a heslo k predplatnému (z aplikácie v TV). Heslo sa nikde neukladá – slúži len na overenie, že predplatné je vaše.', 'Enter your subscription username and password (from the TV app). The password is never stored – it only proves the subscription is yours.');
+    const needPw = !userOnly;
     await pub(req, res, tx(en, 'Kontrola platnosti predplatného', 'Subscription validity check'), `<h1 class="ph">🔎 ${tx(en, 'Kontrola platnosti predplatného', 'Subscription validity check')}</h1>${out}
 ${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField(req, res)}<input type="hidden" name="t" value="${esc(formTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
 <p class="hint">${hint}</p>
@@ -792,26 +834,8 @@ ${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField
     if (L.hit('ck:' + ip, 5, 10 * 60e3) || L.hit('ckd:' + ip, 30, 86400e3) || L.hit('ckg', 300, 3600e3)) return fail('locked');
     if (!panelUserOk(pu) || (pp && pp.length > 128)) return fail('panelbad');
     if (L.hit('cku:' + pu.toLowerCase(), 5, 3600e3)) return fail('locked');
-    const c = await panelCfg();
-    let r;
-    if (pp && selfCheck(c)) r = await panelApi.checkOwn(pcConf(c), pu, pp, hmac('chk:' + pu.toLowerCase() + '\n' + pp)).catch(() => null);
-    else if (!pp) {
-      if (selfCheck(c)) {
-        const stored = await linePass(pu);
-        if (stored) r = await panelApi.checkOwn(pcConf(c), pu, stored, hmac('chkline:' + pu.toLowerCase())).catch(() => null);
-      }
-      if (!r && canLookup(c)) r = await panelApi.lookup(pcConf(c), pu).catch(() => null);
-      else if (!r && selfCheck(c)) return fail('panelbad');
-    }
-    if (!r || r.error || !r.found) {
-      const rec = await softwareByName(pu);
-      if (rec && rec.until_at) {
-        const exp = new Date(rec.until_at);
-        return checkPage(req, res, { found: true, active: exp > new Date(), expiry: exp, status: exp > new Date() ? 'Active' : 'Expired', source: 'known' });
-      }
-    }
-    if (!r || r.error) return fail('paneloff');
-    const view = panelApi.publicView ? panelApi.publicView(r) : { found: r.found, active: r.active, expiry: r.expiry, status: r.status, connections: r.connections };
+    const view = await subCheck.check({ username: pu, password: pp });
+    if (view && view.err) return fail(view.err);
     return checkPage(req, res, view);
   }));
 
@@ -981,7 +1005,11 @@ ${devs.length ? `<div class="card"><h2>2. zariadenia</h2>${devs.map((d) => `<for
     let chRep = null; try { chRep = c.last_chsync_report ? JSON.parse(c.last_chsync_report) : null; } catch { chRep = null; }
     const t = req.query.t === '1' && lastTest && Date.now() - lastTest.at < 600e3 ? lastTest : null;
     const types = [['', 'Automaticky zistiť (odporúčané)'], ...Object.values(panelApi.ADAPTERS).map((a) => [a.id, a.label])];
-    const testBox = t ? `<div class="msg${t.ok ? '' : ' err'}">${t.ok ? `✅ Rozpoznaný adaptér: <b>${esc(t.label)}</b>${t.note ? ' – ' + esc(t.note) : ''}` : `❌ Server sa nepodarilo rozpoznať (skúšané: ${esc((t.tried || []).join(', ') || '–')}). Skontrolujte adresu servera a admin meno a heslo.`}${t.lookup ? `<br>Vyhľadanie „${esc(t.lookup.u)}“: ${t.lookup.error ? esc(t.lookup.error) : t.lookup.found ? `${t.lookup.active ? '✅ aktívne' : '⛔ neaktívne'} – do ${t.lookup.expiry && t.lookup.expiry < PANEL.UNLIMITED ? esc(fmtDate(t.lookup.expiry)) : 'bez obmedzenia'}` : 'používateľ sa nenašiel'}` : ''}</div>` : '';
+    const listTxt = t && t.listing ? (t.listing.ok
+      ? `Zoznam účtov z panela (admin API): ✅ ${t.listing.n} účtov${t.listing.withPass != null ? ' (z toho s heslom: ' + t.listing.withPass + ')' : ''}${t.listing.source ? ' · ' + esc(t.listing.source) : ''}`
+      : `Zoznam účtov z panela (admin API): ❌ ${esc(t.listing.err || 'nedostupné')}`) : '';
+    const locTxt = t && t.local ? `Lokálne uložené účty (meno:heslo): <b>${t.local.lines}</b> · z plnenia s heslom: <b>${t.local.fulfill}</b>` : '';
+    const testBox = t ? `<div class="msg${t.ok ? '' : ' err'}">${t.ok ? `✅ Rozpoznaný adaptér: <b>${esc(t.label)}</b>${t.note ? ' – ' + esc(t.note) : ''}` : `❌ Server sa nepodarilo rozpoznať (skúšané: ${esc((t.tried || []).join(', ') || '–')}). Skontrolujte adresu servera a admin meno a heslo.`}${listTxt ? '<br>' + listTxt : ''}${locTxt ? '<br>' + locTxt : ''}${t.lookup ? `<br>Vyhľadanie „${esc(t.lookup.u)}“: ${t.lookup.error ? esc(t.lookup.error) : t.lookup.found ? `${t.lookup.active ? '✅ aktívne' : '⛔ neaktívne'} – do ${t.lookup.expiry && t.lookup.expiry < PANEL.UNLIMITED ? esc(fmtDate(t.lookup.expiry)) : 'bez obmedzenia'}` : 'používateľ sa nenašiel'}` : ''}</div>` : '';
     res.send(apage('Server predplatného', `<h1>🖥️ Server predplatného</h1>${amsg(req)}${testBox}
 <form method="post" action="${PB}" class="card">${hid(req)}<p class="hint">Pripojenie na panel ide výhradne cez adresu servera a admin meno a heslo (uložené šifrovane, AES-256-GCM, DATA_ENC_KEY). Stav a dátum expirácie predplatného sa na verejnej stránke overujú na serveri – zákazník zadá len svoje meno (heslo je voliteľné). Adresa, heslá ani odpovede panela sa do prehliadača neposielajú. Streamy sa nikdy neukladajú. Záložné M3U/XMLTV odkazy sú tiež šifrované. Prázdne pole = ponechať uložené.</p>
 <label for="pu">Adresa servera</label><input id="pu" name="url" value="${esc(c.url || '')}" maxlength="300" placeholder="http://ip-alebo-domena:port" autocomplete="off" inputmode="url" spellcheck="false">
@@ -993,7 +1021,7 @@ ${devs.length ? `<div class="card"><h2>2. zariadenia</h2>${devs.map((d) => `<for
 <details${c.tpl ? ' open' : ''}><summary>Vlastné API (URL šablóna + JSON pole s dátumom)</summary><label for="tp">URL šablóna – {username} sa nahradí menom zákazníka</label><input id="tp" name="tpl" value="${esc(c.tpl || '')}" maxlength="400" placeholder="https://api.example.com/users/{username}">
 <label for="dp">JSON pole s dátumom expirácie</label><input id="dp" name="datepath" value="${esc(c.datepath || '')}" maxlength="100" placeholder="data.exp_date"><p class="hint">Uložené meno a heslo sa pošlú ako HTTP Basic auth.</p></details>
 <p class="row"><button>💾 Uložiť</button></p></form>
-<form method="post" action="${PB}/test" class="card">${hid(req)}<h2>Otestovať pripojenie</h2><p class="hint">Zistí typ servera (ukáže, ktorý adaptér sedí) a voliteľne vyhľadá jedného používateľa – iba stav a expirácia.</p><label for="tu">Meno používateľa na skúšku (nepovinné)</label><input id="tu" name="u" maxlength="64" autocomplete="off"><p class="row"><button>🔌 Otestovať pripojenie</button></p></form>
+<form method="post" action="${PB}/test" class="card">${hid(req)}<h2>Otestovať pripojenie</h2><p class="hint">Zistí typ servera, či admin API vráti zoznam účtov (pre overenie podľa mena) a koľko účtov je uložených lokálne. Voliteľne vyhľadá jedného používateľa – iba stav a expirácia, bez hesiel.</p><label for="tu">Meno používateľa na skúšku (nepovinné)</label><input id="tu" name="u" maxlength="64" autocomplete="off"><p class="row"><button>🔌 Otestovať pripojenie</button></p></form>
 <form method="post" action="${PB}/sync" class="card">${hid(req)}<h2>Synchronizácia</h2><p>Aktívny adaptér: <b>${c.type ? esc((panelApi.ADAPTERS[c.type] || {}).label || c.type) : 'zatiaľ nezistený – spustite test'}</b> · Posledná synchronizácia: ${c.last_sync ? esc(fmtDT(c.last_sync)) : '–'}</p><p class="hint">Automaticky raz denne (po 4:00). Funguje s adaptérom, ktorý vie vyhľadať používateľa cez admin meno a heslo (Xtream UI / XUI.one admin API, panel_api.php, Ministra, vlastné API). Pri čistom player_api.php sa expirácia aktualizuje, keď zákazník overí heslo, alebo podľa účtov v zozname nižšie.</p><p class="row"><button>🔄 Synchronizovať expirácie teraz</button></p></form>
 <form method="post" action="${PB}/katalog" class="card" id="katalog">${hid(req)}<h2>📺 Synchronizovať kanály a program</h2>
 <p class="hint">Primárne sa kanály a kategórie načítajú cez <code>player_api.php?action=get_live_categories</code> a <code>get_live_streams</code> z adresy servera a admin mena/hesla vyššie (adresa panela sa upraví automaticky). Program „Teraz / Potom“ sa ťahá na požiadanie cez <code>get_short_epg&amp;stream_id=…</code> (len pre viditeľné kanály, s krátkou cache). <b>URL streamov a heslá sa nikdy neuložia ani neodošlú do prehliadača</b> – stream_id ostáva len na serveri. M3U a XMLTV sú záloha, ak player_api zlyhá alebo nie je nastavené. Existujúce kanály ostávajú, nové sa doplnia, prázdne logá sa doplnia. Prázdne pole = ponechať uloženú adresu.</p>
@@ -1035,6 +1063,16 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
     else { d = await panelApi.detect(cc); d.ok = !!d.type; }
     if (d.ok) await setPanel('type', d.type);
     const out = { at: Date.now(), ok: d.ok, label: d.label, note: d.note, tried: d.tried };
+    const cc2 = pcConf(await panelCfg());
+    try {
+      const list = await panelApi.listAccounts(cc2);
+      const withPass = (list.users || []).filter((x) => x.password).length;
+      out.listing = list.error && !list.users.length
+        ? { ok: false, err: list.error === 'nolist' ? 'server nevrátil zoznam liniek (uložte účty do zoznamu nižšie)' : list.error }
+        : { ok: true, n: (list.users || []).length, withPass, source: list.source };
+    } catch { out.listing = { ok: false, err: 'zoznam sa nepodarilo načítať' }; }
+    const nLines = (await pool.query('SELECT count(*)::int AS n FROM acc_panel_lines')).rows[0].n;
+    out.local = { lines: nLines, fulfill: countFulfillPasswords() };
     const tu = String(req.body.u || '').trim();
     if (tu && d.ok) {
       if (!panelUserOk(tu)) out.lookup = { u: tu.slice(0, 64), error: 'neplatné meno' };
