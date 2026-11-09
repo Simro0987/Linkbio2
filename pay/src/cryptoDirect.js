@@ -52,17 +52,60 @@ const xpub = require('./xpub');
 function available() { if (!wallets.isReady()) return []; return ASSETS.filter((a) => addrFor(a)); }
 const enabled = () => available().length > 0;
 
-/* ---------- EUR prices (CoinGecko public API, 60 s cache; failures → EUR-only display) ---------- */
+/* ---------- EUR prices (public APIs, 60 s cache; CoinGecko → Binance → Coinbase; failures → last cache / {}) ---------- */
 const PRICE = { at: 0, eur: {}, pending: null };
+const CG_TO_BINANCE = { bitcoin: 'BTCEUR', litecoin: 'LTCEUR', dogecoin: 'DOGEEUR', ethereum: 'ETHEUR', solana: 'SOLEUR', ripple: 'XRPEUR', tron: 'TRXEUR', 'binancecoin': 'BNBEUR', 'usd-coin': 'USDCEUR', tether: 'USDTEUR' };
+const CG_TO_CB = { bitcoin: 'BTC-EUR', litecoin: 'LTC-EUR', dogecoin: 'DOGE-EUR', ethereum: 'ETH-EUR', solana: 'SOL-EUR', ripple: 'XRP-EUR' };
+async function fetchJson(url) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json', 'User-Agent': 'lnkbio-prices/1.0' } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+async function pricesFromCoinGecko(ids) {
+  const j = await fetchJson(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=eur`);
+  const out = {}; for (const [k, v] of Object.entries(j || {})) if (v && Number(v.eur) > 0) out[k] = Number(v.eur);
+  return out;
+}
+async function pricesFromBinance(want) {
+  const out = {};
+  await Promise.all(want.map(async (cg) => {
+    const sym = CG_TO_BINANCE[cg]; if (!sym) return;
+    try {
+      const j = await fetchJson(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
+      const n = Number(j && j.price); if (n > 0) out[cg] = n;
+    } catch { /* skip */ }
+  }));
+  return out;
+}
+async function pricesFromCoinbase(want) {
+  const out = {};
+  await Promise.all(want.map(async (cg) => {
+    const pair = CG_TO_CB[cg]; if (!pair) return;
+    try {
+      const j = await fetchJson(`https://api.coinbase.com/v2/prices/${pair}/spot`);
+      const n = Number(j && j.data && j.data.amount); if (n > 0) out[cg] = n;
+    } catch { /* skip */ }
+  }));
+  return out;
+}
 async function prices() {
   if (Date.now() - PRICE.at < 60e3 && Object.keys(PRICE.eur).length) return PRICE.eur;
   if (!PRICE.pending) {
-    const ids = [...new Set(ASSETS.map((a) => a.cg))].join(',');
-    PRICE.pending = fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=eur`, { signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' } })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
-      .then((j) => { const out = {}; for (const [k, v] of Object.entries(j || {})) if (v && Number(v.eur) > 0) out[k] = Number(v.eur); if (Object.keys(out).length) { PRICE.eur = out; PRICE.at = Date.now(); } return PRICE.eur; })
-      .catch(() => PRICE.eur)
-      .finally(() => { PRICE.pending = null; });
+    const ids = [...new Set(ASSETS.map((a) => a.cg))];
+    PRICE.pending = (async () => {
+      let out = {};
+      try { out = await pricesFromCoinGecko(ids.join(',')); } catch { /* fall through */ }
+      const missing = ids.filter((id) => !(out[id] > 0));
+      if (missing.length) {
+        try { out = { ...out, ...(await pricesFromBinance(missing)) }; } catch { /* ignore */ }
+      }
+      const still = ids.filter((id) => !(out[id] > 0));
+      if (still.length) {
+        try { out = { ...out, ...(await pricesFromCoinbase(still)) }; } catch { /* ignore */ }
+      }
+      if (Object.keys(out).length) { PRICE.eur = out; PRICE.at = Date.now(); }
+      return PRICE.eur;
+    })().finally(() => { PRICE.pending = null; });
   }
   return PRICE.pending;
 }
