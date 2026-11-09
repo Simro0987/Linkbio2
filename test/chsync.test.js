@@ -46,8 +46,10 @@ http://x/4
   assert.strictEqual(xt.items[0].category, 'Šport');
   assert.strictEqual(xt.items[0].tvgId, 'csport.sk');
   assert.strictEqual(xt.items[1].logo, 'https://l.example/f.png');
+  assert.strictEqual(xt.items[0].streamId, 99);
+  assert.strictEqual(xt.items[1].streamId, undefined);
   const xd = JSON.stringify(xt);
-  assert.ok(!/stream_id|direct_source|secret\.example|live\.ts/i.test(xd));
+  assert.ok(!/direct_source|secret\.example|live\.ts|"stream_id"/i.test(xd));
 
   const b = L.parseBulk('jan:tajne\n# skip\neva;heslo2\npeto\tpass3\nmara  pass 4\nbadline\njan:newer\n***:x\n', (u) => /^[A-Za-z0-9_.@+-]{1,64}$/.test(u));
   assert.deepStrictEqual(b.items.map((x) => x.user), ['jan', 'eva', 'peto', 'mara']);
@@ -80,7 +82,8 @@ http://x/4
   const cat = await api.liveCatalog({ base: 'https://x.example', user: 'res', pass: 'rp' });
   assert.strictEqual(cat.items[0].name, 'JOJ');
   assert.strictEqual(cat.items[0].tvgId, 'joj.sk');
-  assert.ok(!/stream_id|direct_source|hidden\/stream/.test(JSON.stringify(cat)));
+  assert.strictEqual(cat.items[0].streamId, 7);
+  assert.ok(!/direct_source|hidden\/stream|"stream_id"/.test(JSON.stringify(cat)));
   assert.ok(calls.every((u) => /player_api\.php/.test(u) && /action=get_live_(categories|streams)/.test(u)));
   assert.ok(calls.every((u) => !/get\.php|m3u|live\//i.test(u)));
   const own = await api.checkOwn({ base: 'https://x.example', type: 'xtream' }, 'ana', 'ok');

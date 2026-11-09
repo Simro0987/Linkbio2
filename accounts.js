@@ -994,12 +994,12 @@ ${c.base && /^http:/i.test(c.base) ? '<div class="msg err">⚠️ Server použí
 <form method="post" action="${PB}/test" class="card">${hid(req)}<h2>Otestovať pripojenie</h2><p class="hint">Zistí typ servera (ukáže, ktorý adaptér sedí) a voliteľne vyhľadá jedného používateľa – iba stav a expirácia.</p><label for="tu">Meno používateľa na skúšku (nepovinné)</label><input id="tu" name="u" maxlength="64" autocomplete="off"><p class="row"><button>🔌 Otestovať pripojenie</button></p></form>
 <form method="post" action="${PB}/sync" class="card">${hid(req)}<h2>Synchronizácia</h2><p>Aktívny adaptér: <b>${c.type ? esc((panelApi.ADAPTERS[c.type] || {}).label || c.type) : 'zatiaľ nezistený – spustite test'}</b> · Posledná synchronizácia: ${c.last_sync ? esc(fmtDT(c.last_sync)) : '–'}</p><p class="hint">Automaticky raz denne (po 4:00). Funguje s adaptérom, ktorý vie vyhľadať používateľa bez jeho hesla (XUI.one API, panel_api.php, Ministra, vlastné API). Pri čistom Xtream API (player_api.php) sa expirácia aktualizuje, keď zákazník prepojí účet svojím menom a heslom, alebo podľa účtov v zozname nižšie.</p><p class="row"><button>🔄 Synchronizovať expirácie teraz</button></p></form>
 <form method="post" action="${PB}/katalog" class="card" id="katalog">${hid(req)}<h2>📺 Synchronizovať kanály a program</h2>
-<p class="hint">Stiahne zoznam kanálov (názov, kategória, logo, tvg-id) z M3U playlistu, alebo ak M3U nie je zadané, cez <code>player_api.php?action=get_live_categories</code> a <code>get_live_streams</code> uloženým admin menom a heslom. <b>URL streamov sa hneď zahodia a nikdy sa neuložia ani neodošlú na stránku.</b> XMLTV (TV program) sa pridá ako vlastný EPG zdroj a spáruje sa podľa tvg-id. Existujúce kanály ostávajú, nové sa doplnia, prázdne logá sa doplnia. Prázdne pole = ponechať uloženú adresu.</p>
-<label for="m3u">M3U playlist URL ${st('m3u_url')}</label><input id="m3u" name="m3u_url" type="url" maxlength="600" placeholder="https://…/get.php?…&amp;type=m3u_plus" autocomplete="off">
-<label for="xmltv">XMLTV (TV program) URL ${st('xmltv_url')}</label><input id="xmltv" name="xmltv_url" type="url" maxlength="600" placeholder="https://…/xmltv.php?…" autocomplete="off">
+<p class="hint">Primárne sa kanály a kategórie načítajú cez <code>player_api.php?action=get_live_categories</code> a <code>get_live_streams</code> z adresy servera a admin mena/hesla vyššie (adresa panela sa upraví automaticky). Program „Teraz / Potom“ sa ťahá na požiadanie cez <code>get_short_epg&amp;stream_id=…</code> (len pre viditeľné kanály, s krátkou cache). <b>URL streamov a heslá sa nikdy neuložia ani neodošlú do prehliadača</b> – stream_id ostáva len na serveri. M3U a XMLTV sú záloha, ak player_api zlyhá alebo nie je nastavené. Existujúce kanály ostávajú, nové sa doplnia, prázdne logá sa doplnia. Prázdne pole = ponechať uloženú adresu.</p>
+<label for="m3u">Záložný M3U playlist URL ${st('m3u_url')}</label><input id="m3u" name="m3u_url" type="url" maxlength="600" placeholder="https://…/get.php?…&amp;type=m3u_plus" autocomplete="off">
+<label for="xmltv">Záložný XMLTV (celý TV program) URL ${st('xmltv_url')}</label><input id="xmltv" name="xmltv_url" type="url" maxlength="600" placeholder="https://…/xmltv.php?…" autocomplete="off">
 <label class="chk"><input type="checkbox" name="clear_urls" value="1"> Vymazať uložené M3U a XMLTV odkazy</label>
 <p class="row"><button name="save" value="1">💾 Uložiť odkazy</button><button name="sync" value="1">🔄 Synchronizovať kanály a program</button></p>
-${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chRep.at) : (c.last_chsync ? fmtDT(c.last_chsync) : '–'))}${chRep.err ? ' · ⚠ ' + esc(String(chRep.err).slice(0, 200)) : ` · zdroj ${esc(chRep.source || '–')} · kanálov ${chRep.channels || 0} (nové ${chRep.added || 0}, doplnené ${chRep.updated || 0})${chRep.mapped != null ? ' · spárované s programom: ' + chRep.mapped : ''}${chRep.epg ? (chRep.epg.ok ? ' · XMLTV uložený' : ' · XMLTV: ' + esc(chRep.epg.err || 'chyba')) : ''}`}</p>` : (c.last_chsync ? `<p class="hint">Posledná synchronizácia: ${esc(fmtDT(c.last_chsync))}</p>` : '')}</form>
+${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chRep.at) : (c.last_chsync ? fmtDT(c.last_chsync) : '–'))}${chRep.err ? ' · ⚠ ' + esc(String(chRep.err).slice(0, 200)) : ` · zdroj ${esc(chRep.sourceLabel || chRep.source || '–')} · kanálov ${chRep.channels || 0} (nové ${chRep.added || 0}, doplnené ${chRep.updated || 0})${chRep.mapped != null ? ' · spárované s programom: ' + chRep.mapped : ''}${chRep.epg ? (chRep.epg.ok ? ' · XMLTV uložený' : ' · XMLTV: ' + esc(chRep.epg.err || 'chyba')) : ''}`}</p>` : (c.last_chsync ? `<p class="hint">Posledná synchronizácia: ${esc(fmtDT(c.last_chsync))}</p>` : '')}</form>
 <div class="card" id="linky"><h2>👤 Účty na overenie podľa mena</h2>
 <p class="hint">Uložte dvojice meno + heslo k predplatnému (šifrovane). Zákazník na stránke Overiť predplatné zadá len meno a stav sa overí na pozadí. Heslá sa v admine nikdy znova nezobrazia. Hromadne: jeden účet na riadok v tvare <code>meno:heslo</code> (alebo bodkočiarka / medzera).</p>
 <form method="post" action="${PB}/linky" class="row">${hid(req)}<label for="lu">Meno</label><input id="lu" name="u" maxlength="64" required autocomplete="off" autocapitalize="none"><label for="lp">Heslo</label><input id="lp" name="p" type="password" maxlength="128" required autocomplete="new-password"><button class="sm">➕ Pridať</button></form>
@@ -1061,12 +1061,30 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
     }
     return '';
   }
+  function sourceLabel(out) {
+    if (out.source === 'player_api') return 'player_api.php (JSON)';
+    if (out.source === 'm3u') return 'M3U (záloha' + (out.fallback ? ', player_api: ' + String(out.fallback).slice(0, 80) : '') + ')';
+    return out.source || '–';
+  }
   async function syncCatalog() {
     const c = await panelCfg();
-    const out = { at: new Date().toISOString(), channels: 0, added: 0, updated: 0, mapped: 0, source: null, epg: null, err: null };
+    const out = { at: new Date().toISOString(), channels: 0, added: 0, updated: 0, mapped: 0, source: null, sourceLabel: '', epg: null, err: null, fallback: null };
     let items = [];
     try {
-      if (c.m3u_url) {
+      if (c.base && c.user && c.pass) {
+        try {
+          const p = await panelApi.liveCatalog(pcConf(c));
+          if (!p.error && p.items && p.items.length) {
+            out.source = 'player_api';
+            items = p.items;
+          } else {
+            out.fallback = p.error || 'prázdny zoznam';
+          }
+        } catch (e) { out.fallback = String(e && e.message || e).slice(0, 120); }
+      } else {
+        out.fallback = 'player_api nie je nastavený (chýba adresa servera alebo meno/heslo)';
+      }
+      if (!items.length && c.m3u_url) {
         out.source = 'm3u';
         const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 75e3);
         try {
@@ -1075,17 +1093,16 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
           items = p.items;
           out.skipped = p.skipped;
         } finally { clearTimeout(tm); ac.abort(); }
-      } else if (c.base && c.user && c.pass) {
-        out.source = 'xtream';
-        const p = await panelApi.liveCatalog(pcConf(c));
-        if (p.error && !p.items.length) { out.err = p.error; await setPanel('last_chsync_report', JSON.stringify(out)); return out; }
-        items = p.items || [];
-      } else {
-        out.err = 'Chýba M3U odkaz alebo admin meno a heslo k serveru.';
+      }
+      if (!items.length) {
+        out.err = out.fallback ? ('player_api: ' + out.fallback + (c.m3u_url ? ' · M3U záloha tiež zlyhala alebo je prázdna' : ' · záložný M3U nie je nastavený')) : 'Chýba adresa servera s menom a heslom, alebo záložný M3U odkaz.';
+        out.sourceLabel = sourceLabel(out);
         await setPanel('last_chsync_report', JSON.stringify(out));
         return out;
       }
+      out.sourceLabel = sourceLabel(out);
       out.channels = items.length;
+      out.sourceLabel = sourceLabel(out);
       if (typeof ctx.tvchUpsertMeta === 'function') {
         const r = await ctx.tvchUpsertMeta(items);
         out.added = r.added; out.updated = r.updated;
@@ -1135,6 +1152,34 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
   ctx.accountsAdminCard = () => `<div class="card"><h2>👥 Zákazníci a affiliate</h2><p class="row"><a class="btnl sm" href="${AB}">👥 Zákazníci</a><a class="btnl sm" href="${AB}/nastavenia">🤝 Affiliate nastavenia</a><a class="btnl sm" href="${AB}/ledger">📒 Bonusy</a><a class="btnl sm" href="${PB}">🖥️ Server predplatného</a><a class="btnl sm" href="/admin/xpub">🔑 xpub – automatické adresy</a></p></div>`;
   ctx.accSweep = sweep;
   ctx.accSyncAll = syncAll;
+
+  const shortApi = require('./shortepg').create({
+    getConf: async () => pcConf(await panelCfg()),
+    fetchShort: (c, sid) => panelApi.shortEpg(c, sid),
+    streamIdsFor: (ids) => (ctx.tvchStreamIds ? ctx.tvchStreamIds(ids) : {}),
+    appendLog: (m) => { try { console.warn(m); } catch { /* */ } },
+  });
+  ctx.shortEpgReady = async () => {
+    const c = await panelCfg();
+    if (!shortApi.ready(pcConf(c))) return false;
+    try { return ctx.tvchHasPanelStreams ? await ctx.tvchHasPanelStreams() : true; } catch { return true; }
+  };
+  const shortHits = new Map();
+  app.get('/api/tv/short-epg', wrap(async (req, res) => {
+    const ip = String(req.ip || ''), now = Date.now();
+    const q = (shortHits.get(ip) || []).filter((t) => now - t < 60e3); q.push(now); shortHits.set(ip, q);
+    if (shortHits.size > 4000) shortHits.clear();
+    if (q.length > 40) return res.status(429).set('Retry-After', '60').json({ error: 'rate_limited' });
+    const ids = String(req.query.ids || '').split(/[,\s]+/).map((x) => +x).filter((n) => Number.isInteger(n) && n > 0);
+    const body = await shortApi.forCatalogIds(ids);
+    const dump = JSON.stringify(body);
+    if (/player_api|get\.php|direct_source|username=|password=/i.test(dump)) {
+      return res.status(500).json({ t: Math.round(Date.now() / 1000), c: {} });
+    }
+    res.set({ 'Cache-Control': 'private, max-age=60', 'X-Content-Type-Options': 'nosniff' });
+    res.json(body);
+  }));
+
   return ctx;
 }
 module.exports = { install, refMiddleware, fmtDate, REF_RE, USER_RE };

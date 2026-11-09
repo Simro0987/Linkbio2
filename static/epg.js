@@ -107,9 +107,53 @@ function openDay(li,btn,day){
 }
 function markDay(day,scroll){var n=now(),c=null;[].forEach.call(day.querySelectorAll('.tdi'),function(x){var s=+x.getAttribute('data-s'),e=+x.getAttribute('data-e');x.classList.toggle('past',e<=n);var on=s<=n&&e>n;x.classList.toggle('cur',on);if(on)c=x;});if(scroll&&c&&day.scrollTo)day.scrollTop=Math.max(0,c.offsetTop-day.offsetTop-8);}
 function each(fn){Object.keys(data).forEach(function(id){(byId[id]||[]).forEach(function(li){fn(li,id);});});}
-function load(){fetch('/api/epg/now',{credentials:'omit'}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(!d||!d.c)return;skew=d.t-Date.now()/1000;if(Math.abs(skew)<90)skew=0;data=d.c;loaded=Date.now();each(function(li,id){render(li,data[id]);});}).catch(function(){});}
-function tick(){var need=Date.now()-loaded>10*60000;each(function(li,id){var l=data[id].filter(function(p){return p[1]>now();});if(l.length<2)need=true;render(li,data[id]);var d=li.querySelector('.tday[data-ok]');if(d&&!d.hidden)markDay(d);});if(need)load();}
-load();setInterval(tick,60000);
+function load(){fetch('/api/epg/now',{credentials:'omit'}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(!d||!d.c)return;skew=d.t-Date.now()/1000;if(Math.abs(skew)<90)skew=0;data=d.c;loaded=Date.now();each(function(li,id){render(li,data[id]);});shortSeen={};queueShort();}).catch(function(){queueShort();});}
+function tick(){var need=Date.now()-loaded>10*60000;each(function(li,id){var l=(data[id]||[]).filter(function(p){return p[1]>now();});if(l.length<2)need=true;render(li,data[id]||[]);var d=li.querySelector('.tday[data-ok]');if(d&&!d.hidden)markDay(d);});if(need)load();}
+/* Lazy now/next from /api/tv/short-epg for visible (open category) tiles. Merges over XMLTV when the panel has a listing. */
+var shortSeen={},shortBusy=0,shortPend=[];
+function visIds(){
+  var ids=[],seen={};
+  document.querySelectorAll('details.tvg[open] li.tch[data-id]:not([hidden]), .tvfavg li.tch[data-id]').forEach(function(li){
+    var id=li.getAttribute('data-id');
+    if(!id||seen[id]||shortSeen[id])return;
+    var r=li.getBoundingClientRect();
+    if(r.bottom< -80||r.top> (window.innerHeight||800)+80)return;
+    seen[id]=1;ids.push(id);
+  });
+  return ids.slice(0,24);
+}
+function applyShort(c){
+  if(!c)return;
+  Object.keys(c).forEach(function(id){
+    if(!c[id]||!c[id].length)return;
+    data[id]=c[id];
+    (byId[id]||[]).forEach(function(li){render(li,data[id]);});
+  });
+}
+function fetchShort(ids){
+  if(!ids.length)return;
+  ids.forEach(function(id){shortSeen[id]=1;});
+  shortBusy++;
+  fetch('/api/tv/short-epg?ids='+ids.join(','),{credentials:'omit'}).then(function(r){return r.ok?r.json():null;}).then(function(d){
+    if(d&&d.c)applyShort(d.c);
+  }).catch(function(){}).then(function(){shortBusy--;if(shortPend.length){var n=shortPend;shortPend=[];fetchShort(n);} });
+}
+function queueShort(){
+  var ids=visIds();if(!ids.length)return;
+  if(shortBusy){ids.forEach(function(id){if(shortPend.indexOf(id)<0)shortPend.push(id);});return;}
+  fetchShort(ids);
+}
+function bootShort(){
+  document.querySelectorAll('details.tvg').forEach(function(g){g.addEventListener('toggle',function(){if(g.open)queueShort();});});
+  if(typeof IntersectionObserver==='function'){
+    var io=new IntersectionObserver(function(){queueShort();},{rootMargin:'80px',threshold:0.01});
+    document.querySelectorAll('li.tch[data-id]').forEach(function(li){io.observe(li);});
+  }
+  window.addEventListener('scroll',function(){queueShort();},{passive:true});
+  queueShort();
+}
+window.__tvEpgApply=function(id,list){if(!list||!list.length)return;data[id]=list;(byId[id]||[]).forEach(function(li){render(li,list);});};
+load();bootShort();setInterval(tick,60000);
 document.addEventListener('visibilitychange',function(){if(!document.hidden&&Date.now()-loaded>60000)tick();});
 
 /* ---------- Program podľa žánru: genre tabs + day tabs, lazy per genre/day ---------- */

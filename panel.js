@@ -177,6 +177,15 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
     if (!Array.isArray(streams.json)) return { items: [], skipped: 0, error: 'badlist' };
     return CHS.fromXtream(Array.isArray(cats.json) ? cats.json : [], streams.json);
   }
-  return { detect, lookup, checkOwn, liveCatalog, ADAPTERS, clear: () => cache.clear() };
+  /** Short EPG for one stream_id. Returns raw JSON (parsed listings happen in shortepg). */
+  async function shortEpg(c, streamId, { limit = 4 } = {}) {
+    if (!c || !c.base || !c.user || !c.pass) return null;
+    const sid = Math.round(Number(streamId));
+    if (!Number.isInteger(sid) || sid <= 0) return null;
+    const { status, json } = await getJson(`${c.base}/player_api.php?${q({ username: c.user, password: c.pass, action: 'get_short_epg', stream_id: String(sid), limit: String(limit) })}`);
+    if (status >= 400 || json == null) return null;
+    return json;
+  }
+  return { detect, lookup, checkOwn, liveCatalog, shortEpg, ADAPTERS, clear: () => cache.clear() };
 }
 module.exports = { create, normBase, parseDate, getPath, UNLIMITED, httpsTwin, sameSafeRedirect };

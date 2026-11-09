@@ -153,6 +153,7 @@ module.exports = function install(ctx) {
     await pool.query(`CREATE TABLE IF NOT EXISTS tv_logo_auto (channel_id INT PRIMARY KEY, url TEXT NOT NULL DEFAULT '', src TEXT NOT NULL DEFAULT '', applied BOOLEAN NOT NULL DEFAULT false, tried_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`CREATE TABLE IF NOT EXISTS tv_channels (id SERIAL PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'Ostatné', logo TEXT NOT NULL DEFAULT '', ord INT NOT NULL DEFAULT 0, visible BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ NOT NULL DEFAULT now())`);
     await pool.query(`ALTER TABLE tv_channels ADD COLUMN IF NOT EXISTS tvg_id TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE tv_channels ADD COLUMN IF NOT EXISTS panel_stream_id INT`);
   };
   // restore from l_trash (called by server restore route inside its transaction)
   ctx.tvchRestore = async (c, x) => {
@@ -236,7 +237,7 @@ module.exports = function install(ctx) {
 <input type="search" id="tvq" class="tvq" placeholder="${esc(tx(en, '🔎 Hľadať kanál…', '🔎 Search channel…'))}" aria-label="${esc(tx(en, 'Hľadať kanál', 'Search channel'))}" autocomplete="off">
 <p class="hint" id="tvnone" hidden>${esc(tx(en, 'Žiadny kanál nezodpovedá hľadaniu.', 'No channel matches your search.'))}</p>
 ${[...g].map(([c, l]) => `<details class="tvg"><summary><span class="tt">${esc(c)}</span><span class="tm">${l.length} ${esc(tx(en, 'kanálov', 'channels'))}</span></summary><ul class="tvl">${l.map((r) => `<li class="tch" data-id="${r.id}" data-n="${esc((r.name + ' ' + c).toLowerCase())}">${logoImg(r, 40, broken)}<span class="tcn">${esc(r.name)}</span><a class="trb" href="/${esc(req.params.slug)}/kanal-nahlasit/${r.id}${en ? '?lang=en' : ''}" rel="nofollow" title="${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}">⚠<span> ${esc(tx(en, 'Nahlásiť problém', 'Report a problem'))}</span></a></li>`).join('')}</ul></details>`).join('')}
-<p class="hint">${rows.length} ${esc(tx(en, 'kanálov celkom', 'channels in total'))}</p></section><script src="/static/tvch.js?v=2" defer></script>`;
+<p class="hint">${rows.length} ${esc(tx(en, 'kanálov celkom', 'channels in total'))}</p></section><script src="/static/tvch.js?v=3" defer></script>`;
   };
 
   // ---------- user problem reports ----------
@@ -431,7 +432,7 @@ ${j.bad.length ? `<div class="card"><h2>Nefunkčné</h2>${j.bad.slice(0, 500).ma
     const rcs = (id) => rc[id] ? ` <span class="hint">⚠ ${rc[id].o} otvorených / ${rc[id].n} hlásení</span>` : '';
     const m = MS[req.query.m] ? `<p class="${/^(ok|added|trashed|imported|logos)$/.test(req.query.m) ? 'ok' : 'err'}">${esc(MS[req.query.m])}</p>` : '';
     res.send(page('Katalóg kanálov', `<h1>📺 Katalóg kanálov</h1>${m}<p><a href="/admin">← Admin</a> · <a href="/admin#kanaly">nastavenia sekcie</a> · <a href="/admin#trash">🗑️ Kôš</a> · <a href="/admin/epg">🗓 TV program (EPG)</a></p>
-<p class="hint">Ukladajú sa iba <b>názvy, kategórie, logá a tvg-id</b>. Stream URL sa nikdy neukladajú. Kanály viete doplniť aj synchronizáciou z M3U alebo z panelu na <a href="/admin/predplatne-server#katalog">🖥️ Server predplatného</a>. Verejne sa zobrazuje na stránke Kanály (zoskupené podľa kategórií, s vyhľadávaním a programom Teraz / Potom). Texty na verejnej stránke upravíte v <a href="/admin/texty">✏️ Texty</a>.</p>
+<p class="hint">Ukladajú sa iba <b>názvy, kategórie, logá, tvg-id a vnútorné stream_id</b> (pre krátky program z panela). Stream URL a heslá sa nikdy neukladajú ani neposielajú do prehliadača. Kanály viete doplniť aj synchronizáciou z M3U alebo z panelu na <a href="/admin/predplatne-server#katalog">🖥️ Server predplatného</a>. Verejne sa zobrazuje na stránke Kanály (zoskupené podľa kategórií, s vyhľadávaním a programom Teraz / Potom). Texty na verejnej stránke upravíte v <a href="/admin/texty">✏️ Texty</a>.</p>
 <form method="post" action="/admin/tvch" class="card" id="add">${hid(req)}<h2>➕ Pridať kanál</h2>
 <label>Názov</label><input name="name" maxlength="120" required>
 <label>Kategória</label>${cats.length ? catSel(cats, '', 'category') : ''}<input name="newcat" maxlength="80" placeholder="${cats.length ? 'alebo nová kategória' : 'Kategória'}">
@@ -534,7 +535,7 @@ ${items.length ? `<form method="post" action="/admin/tvch/import/confirm" class=
     const c = await pool.connect();
     try {
       await c.query('BEGIN');
-      const rows = (await c.query('SELECT id,name,category,logo,tvg_id FROM tv_channels')).rows;
+      const rows = (await c.query('SELECT id,name,category,logo,tvg_id,panel_stream_id FROM tv_channels')).rows;
       const byKey = new Map(rows.map((r) => [(r.name + '|' + r.category).toLowerCase(), r]));
       let o = await nextOrd(c);
       for (const it of list) {
@@ -543,19 +544,23 @@ ${items.length ? `<form method="post" action="/admin/tvch/import/confirm" class=
         let logo = it.logo ? safeLogo(it.logo) : '';
         if (logo === null) logo = '';
         const tvgId = cleanTxt(it.tvgId || it.tvg_id, 120);
+        const sidN = Math.round(Number(it.streamId || it.panel_stream_id || 0));
+        const streamId = (Number.isInteger(sidN) && sidN > 0 && sidN < 2e9) ? sidN : null;
         const k = (name + '|' + category).toLowerCase();
         const cur = byKey.get(k);
         if (cur) {
           const newLogo = (!cur.logo && logo) ? logo : cur.logo;
           const newTvg = (tvgId && !cur.tvg_id) ? tvgId : (cur.tvg_id || '');
-          if (newLogo !== cur.logo || newTvg !== (cur.tvg_id || '')) {
-            await c.query('UPDATE tv_channels SET logo=$2, tvg_id=$3 WHERE id=$1', [cur.id, newLogo, newTvg]);
+          const newSid = streamId != null ? streamId : (cur.panel_stream_id || null);
+          if (newLogo !== cur.logo || newTvg !== (cur.tvg_id || '') || newSid !== (cur.panel_stream_id || null)) {
+            await c.query('UPDATE tv_channels SET logo=$2, tvg_id=$3, panel_stream_id=$4 WHERE id=$1', [cur.id, newLogo, newTvg, newSid]);
             updated.push(cur.id);
+            cur.panel_stream_id = newSid;
           }
           if (tvgId) pairs.push({ id: cur.id, tvgId });
         } else {
-          const r = (await c.query('INSERT INTO tv_channels (name,category,logo,ord,tvg_id) VALUES ($1,$2,$3,$4,$5) RETURNING id', [name, category, logo || '', o++, tvgId || ''])).rows[0];
-          byKey.set(k, { id: r.id, name, category, logo: logo || '', tvg_id: tvgId || '' });
+          const r = (await c.query('INSERT INTO tv_channels (name,category,logo,ord,tvg_id,panel_stream_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id', [name, category, logo || '', o++, tvgId || '', streamId])).rows[0];
+          byKey.set(k, { id: r.id, name, category, logo: logo || '', tvg_id: tvgId || '', panel_stream_id: streamId });
           added.push(r.id);
           if (tvgId) pairs.push({ id: r.id, tvgId });
         }
@@ -563,6 +568,18 @@ ${items.length ? `<form method="post" action="/admin/tvch/import/confirm" class=
       await c.query('COMMIT');
     } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); drop(); }
     return { added: added.length, updated: updated.length, pairs };
+  };
+  ctx.tvchStreamIds = async (ids) => {
+    const list = (ids || []).map((x) => +x).filter((n) => Number.isInteger(n) && n > 0);
+    if (!list.length) return {};
+    const rows = (await pool.query('SELECT id, panel_stream_id FROM tv_channels WHERE id = ANY($1::int[]) AND panel_stream_id IS NOT NULL AND visible', [list])).rows;
+    const m = {};
+    for (const r of rows) if (r.panel_stream_id > 0) m[r.id] = r.panel_stream_id;
+    return m;
+  };
+  ctx.tvchHasPanelStreams = async () => {
+    const r = await pool.query('SELECT 1 FROM tv_channels WHERE visible AND panel_stream_id IS NOT NULL LIMIT 1');
+    return !!r.rowCount;
   };
   return ctx;
 };

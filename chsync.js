@@ -104,6 +104,9 @@ function fromXtream(categories, streams, { max = MAX_CH } = {}) {
     const tvgId = s.epg_channel_id || s.tvg_id || '';
     const ch = normalize({ name, category, logo, tvgId });
     if (!ch) { skipped++; continue; }
+    const sidRaw = s.stream_id != null ? s.stream_id : s.id;
+    const sid = Math.round(Number(sidRaw));
+    if (Number.isInteger(sid) && sid > 0 && sid < 2e9) ch.streamId = sid;
     const k = (ch.name + '|' + ch.category).toLowerCase();
     if (seen.has(k)) { skipped++; continue; }
     seen.add(k);
