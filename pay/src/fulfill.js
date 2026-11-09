@@ -815,6 +815,51 @@ function adminList(orders) {
     .slice(0, 200);
 }
 
+
+/** Admin edit of Software username/password: keep fulfillment lines/slots/cards in sync. Never logs secrets. */
+function updateSoftwareCreds(orders, { oldUsername, newUsername, password }) {
+  const oldU = String(oldUsername || '').trim();
+  const newU = String(newUsername || '').trim();
+  const oldKey = oldU.toLowerCase();
+  const newKey = newU.toLowerCase();
+  if (!oldKey && !newKey) return { updated: 0 };
+  let updated = 0;
+  let passEnc = '';
+  if (password != null && String(password) !== '') {
+    passEnc = sealCreds(String(password));
+  }
+  const rename = oldKey && newKey && oldKey !== newKey;
+  for (const o of Object.values(orders || {})) {
+    const f = o && o.fulfill;
+    if (!f) continue;
+    let touched = false;
+    const bump = (row) => {
+      if (!row || !row.username) return;
+      if (String(row.username).toLowerCase() !== oldKey && !(newKey && String(row.username).toLowerCase() === newKey && !oldKey)) return;
+      if (rename) row.username = newU;
+      else if (!row.username && newU) row.username = newU;
+      if (passEnc) { row.passEnc = passEnc; delete row.password; }
+      touched = true;
+    };
+    for (const s of [...(f.lines || []), ...(f.slots || [])]) bump(s);
+    if (f.username && String(f.username).toLowerCase() === oldKey) {
+      if (rename) f.username = newU;
+      touched = true;
+    }
+    for (const m of f.messages || []) {
+      if (!m || !m.card) continue;
+      const cu = String(m.card.username || '').toLowerCase();
+      if (cu === oldKey || (newKey && cu === newKey && !oldKey)) {
+        if (rename) m.card.username = newU;
+        if (passEnc) { m.card.passEnc = passEnc; delete m.card.password; }
+        touched = true;
+      }
+    }
+    if (touched) updated++;
+  }
+  return { updated };
+}
+
 module.exports = {
   USER_RE, CHECKOUT_USER_RE, EMAIL_RE, validateFulfill, validateCheckout, validateContact, validatePassword,
   isPaid, isConfirmed, confirm, statusLabel, ensure, findByReturn, findByToken,
@@ -822,7 +867,7 @@ module.exports = {
   mailReady, sealCreds, openCreds, pathFor, urlFor, paidUrl, deliver, attachDelivery, setLineUntil,
   slotList, renderMessages, cardHtml, photoBytes, daysPhrase, applyExpiry,
   adminList, mount, contactMatches,
-  findLatestCreds, latestUntilForUser, removeShotBlobsForUser, sweepExpiredShots,
+  findLatestCreds, updateSoftwareCreds, latestUntilForUser, removeShotBlobsForUser, sweepExpiredShots,
   retainDays, setRetainDays, clampRetain, scrubDrafts, startShotSweep,
 };
 

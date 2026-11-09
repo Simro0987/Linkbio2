@@ -12,8 +12,9 @@ const PANEL = require('./panel');
 const LINES = require('./panellines');
 const CHS = require('./chsync');
 const EPGFETCH = require('./epgfetch');
+const SEC = require('./accSecure');
 
-const C_SESS = '__Host-acc', C_CSRF = '__Host-acsrf', C_REF = '__Host-aref', C_DEV = '__Host-adev';
+const C_SESS = '__Host-acc', C_CSRF = '__Host-acsrf', C_REF = '__Host-aref', C_DEV = '__Host-adev', C_MFA = '__Host-amfa';
 const REF_RE = /^[a-z2-9]{8}$/;
 const USER_RE = /^[a-z0-9][a-z0-9_.-]{2,23}$/;
 const RESERVED_USERS = new Set(['admin', 'administrator', 'root', 'support', 'podpora', 'system', 'tokigo', 'moderator', 'owner', 'api', 'ucet']);
@@ -71,6 +72,12 @@ function install(ctx) {
     await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS verify_hash text, ADD COLUMN IF NOT EXISTS verify_exp timestamptz`);
     await pool.query(`UPDATE acc_users SET email=lower(btrim(email)) WHERE email IS NOT NULL AND email<>lower(btrim(email))`).catch(() => {});
     await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS remind_for timestamptz`); // licence end-date we already sent the 7-day reminder for
+    await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS guide_extra text NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS totp_on boolean NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS totp_secret text NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS totp_pending text NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS totp_rc text NOT NULL DEFAULT '[]'`);
+    await pool.query(`ALTER TABLE acc_users ADD COLUMN IF NOT EXISTS totp_last int NOT NULL DEFAULT 0`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS acc_users_email ON acc_users (lower(email)) WHERE email IS NOT NULL`).catch((e) => console.error('[acc] email index: ' + e.message));
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS acc_users_panel ON acc_users (lower(panel_user)) WHERE panel_user IS NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS acc_users_ref ON acc_users (referrer_id)`);
@@ -343,8 +350,12 @@ function install(ctx) {
     verified: ['E-mail bol overený. Ďakujeme!', 'Your e-mail is verified. Thank you!'], vbad: ['Overovací odkaz je neplatný alebo vypršal.', 'The verification link is invalid or expired.'],
     emailok: ['E-mail bol zmenený.', 'E-mail changed.'],
     off: ['Registrácia je momentálne vypnutá.', 'Sign-up is currently disabled.'], del: ['Účet bol zrušený.', 'Your account has been deleted.'],
+    mfa: ['Zadajte kód z aplikácie alebo záložný kód.', 'Enter the app code or a recovery code.'], mfabad: ['Nesprávny overovací kód.', 'Wrong verification code.'],
+    softok: ['Software údaje boli uložené.', 'Software credentials saved.'], softbad: ['Neplatné Software meno (min. 8 znakov, malé písmená) alebo heslo.', 'Invalid Software username (min. 8 chars, lowercase) or password.'],
+    guideok: ['Návod bol uložený.', 'Guide saved.'], totpok: ['2FA je zapnuté. Uložte si záložné kódy.', '2FA is on. Save your recovery codes.'], totpoff: ['2FA bolo vypnuté.', '2FA has been turned off.'],
+    totpbad: ['Nesprávny kód alebo heslo.', 'Wrong code or password.'], totpreset: ['2FA zákazníka bolo resetované.', 'Customer 2FA was reset.'],
   };
-  const OKM = new Set(['out', 'welcome', 'pwok', 'panelok', 'choice', 'resetok', 'del', 'sent', 'vsent', 'verified', 'emailok']);
+  const OKM = new Set(['out', 'welcome', 'pwok', 'panelok', 'choice', 'resetok', 'del', 'sent', 'vsent', 'verified', 'emailok', 'softok', 'guideok', 'totpok', 'totpoff', 'totpreset']);
   const msgOf = (k, en) => (MSG[k] ? `<div class="msg${OKM.has(k) ? '' : ' err'}" role="status">${esc(MSG[k][en ? 1 : 0])}</div>` : '');
   const msg = (req) => msgOf(String(req.query.m || ''), req.lang === 'en');
   // e-mail goes through mailer.js (Brevo/Resend/Mailjet HTTPS API – Render free blocks SMTP – or SMTP)
@@ -426,8 +437,87 @@ function install(ctx) {
     }
     await pool.query(`UPDATE acc_users SET failed=0, locked_until=NULL, last_login_at=now(), last_ip=$2, dev_hash=CASE WHEN dev_hash='' THEN $3 ELSE dev_hash END WHERE id=$1`, [u.id, ip, devId(req, res)]);
     if (bcrypt.getRounds(u.pw_hash) < 12) await pool.query(`UPDATE acc_users SET pw_hash=$2 WHERE id=$1`, [u.id, await bcrypt.hash(pw, 12)]);
+    if (u.totp_on && u.totp_secret) {
+      const exp = Date.now() + 5 * 60e3;
+      const tok = Buffer.from(JSON.stringify({ id: u.id, exp, n: 0, next: safeNext(req.body.next) || '/ucet' })).toString('base64url');
+      const sig = hmac('mfa:' + tok);
+      setCookie(res, C_MFA, tok + '.' + sig, 300, 'Strict');
+      return res.redirect(303, '/prihlasenie/2fa');
+    }
     await startSession(req, res, u.id);
     res.redirect(303, safeNext(req.body.next) || '/ucet');
+  }));
+
+  function readMfa(req) {
+    const raw = String(cookies(req)[C_MFA] || '');
+    const i = raw.lastIndexOf('.'); if (i < 0) return null;
+    const tok = raw.slice(0, i), sig = raw.slice(i + 1);
+    if (hmac('mfa:' + tok) !== sig) return null;
+    try {
+      const o = JSON.parse(Buffer.from(tok, 'base64url').toString());
+      if (!o || !o.id || !o.exp || o.exp < Date.now()) return null;
+      return { ...o, tok };
+    } catch { return null; }
+  }
+  function writeMfa(res, o) {
+    const tok = Buffer.from(JSON.stringify(o)).toString('base64url');
+    setCookie(res, C_MFA, tok + '.' + hmac('mfa:' + tok), 300, 'Strict');
+  }
+  async function openTotpSecret(u) {
+    if (!u || !u.totp_secret) return '';
+    try { return decrypt(JSON.parse(u.totp_secret), 'acc-totp:' + u.id).toString(); } catch { return ''; }
+  }
+  async function openTotpPending(u) {
+    if (!u || !u.totp_pending) return '';
+    try { return decrypt(JSON.parse(u.totp_pending), 'acc-totp-pending:' + u.id).toString(); } catch { return ''; }
+  }
+  function sealTotp(uid, secret, kind) {
+    return JSON.stringify(encrypt(Buffer.from(String(secret)), kind + ':' + uid));
+  }
+
+  app.get('/prihlasenie/2fa', wrap(async (req, res) => {
+    if (await fromReq(req)) return res.redirect(303, '/ucet');
+    const m = readMfa(req); if (!m) return res.redirect(303, '/prihlasenie?m=csrf');
+    const en = req.lang === 'en';
+    await pub(req, res, tx(en, 'Overenie 2FA', '2FA verification'), `<h1 class="ph">🔐 ${tx(en, 'Overenie', 'Verification')}</h1>${msg(req)}
+<div class="card accard"><p class="hint">${tx(en, 'Zadajte 6-miestny kód z aplikácie, alebo jednorazový záložný kód.', 'Enter the 6-digit app code, or a one-time recovery code.')}</p>
+<form method="post" action="/prihlasenie/2fa" class="accf">${csrfField(req, res)}
+<label for="c">${tx(en, 'Kód', 'Code')}</label><input id="c" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="20" autofocus>
+<button class="b">${tx(en, 'Overiť', 'Verify')}</button></form>
+<p class="hint"><a href="/prihlasenie">← ${tx(en, 'Späť na prihlásenie', 'Back to login')}</a></p></div>`);
+  }));
+  app.post('/prihlasenie/2fa', wrap(async (req, res) => {
+    const back = (m) => res.redirect(303, '/prihlasenie/2fa?m=' + m);
+    if (!csrfOk(req)) return res.redirect(303, '/prihlasenie?m=csrf');
+    const mfa = readMfa(req); if (!mfa) return res.redirect(303, '/prihlasenie?m=csrf');
+    const ip = ipKey(req.ip);
+    if (L.count('mfa:' + ip, 15 * 60e3) >= 20) return back('locked');
+    const u = (await pool.query(`SELECT * FROM acc_users WHERE id=$1 AND NOT disabled`, [mfa.id])).rows[0];
+    if (!u || !u.totp_on) { clearCookie(res, C_MFA); return res.redirect(303, '/prihlasenie'); }
+    const code = String(req.body.code || '').trim().slice(0, 20);
+    let good = false;
+    const secret = await openTotpSecret(u);
+    if (/^\d{6}$/.test(code) && secret) {
+      const st = SEC.totp.verify(secret, code);
+      if (st > 0 && st > Number(u.totp_last || 0)) {
+        good = true;
+        await pool.query(`UPDATE acc_users SET totp_last=$2 WHERE id=$1`, [u.id, st]);
+      }
+    } else {
+      let list = []; try { list = JSON.parse(u.totp_rc || '[]'); } catch { list = []; }
+      const next = await SEC.consumeRecovery(list, code);
+      if (next) { good = true; await pool.query(`UPDATE acc_users SET totp_rc=$2 WHERE id=$1`, [u.id, JSON.stringify(next)]); }
+    }
+    if (!good) {
+      L.hit('mfa:' + ip, 1e9, 15 * 60e3); L.hit('lf:' + ip, 1e9, 15 * 60e3);
+      const n = (mfa.n || 0) + 1;
+      if (n >= 5) { clearCookie(res, C_MFA); return res.redirect(303, '/prihlasenie?m=locked'); }
+      writeMfa(res, { ...mfa, n });
+      return back('mfabad');
+    }
+    clearCookie(res, C_MFA);
+    await startSession(req, res, u.id);
+    res.redirect(303, safeNext(mfa.next) || '/ucet');
   }));
 
   app.get('/registracia', wrap(async (req, res) => {
@@ -582,10 +672,12 @@ ${!u.panel_user ? `<form method="post" action="/ucet/panel-meno" class="accf">${
     const bi = await bonusInfo(u);
     let aff = '';
     if (bi) {
-      const link = `${origin(req)}/?ref=${u.ref_code}`, plans = await plansList(), mx = AFF.matrix(bi.st.tiers, await packages());
+      const link = `${origin(req)}/?ref=${u.ref_code}`, plans = await plansList(), byM = await priceByMonths();
+      const eligibleM = new Set(plans.filter((p) => AFF.bonusEligible({ months: +p.period || 1, amount: +p.price, devices: AFF.devicesOf(p) }, plans)).map((p) => +p.period || 1));
+      const mx = AFF.matrix(bi.st.tiers, [...byM.keys()].filter((m) => eligibleM.has(m)));
       const nx = bi.next, cur = bi.tier, cap = AFF.oneDevice12Price(plans);
-      const eligibleMonths = [...new Set(plans.filter((p) => AFF.bonusEligible({ months: +p.period || 1, amount: +p.price, devices: AFF.devicesOf(p) }, plans)).map((p) => +p.period || 1))].sort((a, b) => a - b);
-      const shown = eligibleMonths.filter((m) => mx.rows.some((r) => r.bonus[m] || r.dev[m]));
+      // Same columns as the public cenník bonus table – every configured bonus per tier, not a truncated subset.
+      const shown = mx.packages.filter((m) => byM.has(m) && eligibleM.has(m) && mx.rows.some((r) => r.bonus[m] || r.dev[m]));
       const perPk = shown.map((m) => { const b = bi.bonus(m), d = bi.devFor(m); return `<li><span>${esc(moLabel(m, en))}</span><b>${b ? `+${esc(moLabel(b, en))}` : d ? '' : '–'}${d ? `${b ? ` ${tx(en, 'alebo', 'or')} ` : ''}🖥️ 2.` : ''}</b></li>`; }).join('');
       const earned = (await pool.query(`SELECT COALESCE(sum(bonus_months) FILTER (WHERE kind='bonus'),0)::int m, count(*) FILTER (WHERE kind='device')::int d FROM acc_ledger WHERE user_id=$1`, [u.id])).rows[0];
       const devs = (await pool.query(`SELECT from_at,until_at,panel_user FROM acc_devices WHERE user_id=$1 ORDER BY id DESC LIMIT 10`, [u.id])).rows;
@@ -672,7 +764,67 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
 <details><summary>${tx(en, 'Zrušiť účet', 'Delete account')}</summary><form method="post" action="/ucet/zrusit" class="accf">${csrfField(req, res)}<p class="hint">${tx(en, 'Účet sa natrvalo zmaže. Predplatné na serveri tým nezaniká.', 'The account is deleted permanently. Your subscription itself stays.')}</p>
 <label for="dp">${tx(en, 'Heslo na potvrdenie', 'Password to confirm')}</label><input id="dp" name="password" type="password" required autocomplete="current-password" maxlength="200"><button class="btnl sm">🗑️ ${tx(en, 'Zrušiť účet', 'Delete account')}</button></form></details>
 <form method="post" action="/odhlasenie" class="accout">${csrfField(req, res)}<button class="btnl sm">🚪 ${tx(en, 'Odhlásiť sa', 'Log out')}</button></form></div>`;
-    await pub(req, res, tx(en, 'Môj účet', 'My account'), `<header class="acchero"><p class="hint">${tx(en, 'Môj účet', 'My account')}</p><h1 class="ph">👤 ${esc(u.username)}</h1></header>${msg(req)}${lic}${checkoutOrd}${aff}${panelBox}${ord}${sec}<script src="/static/acc.js?v=${ACC_V}" defer></script>`);
+    // Software slots + guide (server-gated: logged-in + paid + creds sent) + optional 2FA card
+    let softBox = '', guideBox = '', totpBox = '';
+    try {
+      const F = require('./pay/src/fulfill');
+      const all = (global.__payOrders && global.__payOrders.load) ? global.__payOrders.load() : {};
+      const slots = SEC.collectSoftwareSlots(u, all, F, linePass, fulfillPass);
+      const mayGuide = SEC.userMaySeeGuide(u, all, F);
+      if (slots.length) {
+        const bits = slots.map((s, i) => {
+          const id = 'spw' + i;
+          const mask = s.hasPass ? '••••••••' : '–';
+          const until = s.until ? fmtDate(s.until) : '';
+          const days = s.until ? Math.ceil((new Date(s.until) - now) / 86400e3) : null;
+          const pwAttr = s.hasPass ? esc(s.password) : '';
+          return `<div class="softslot"><div class="softrow"><label>${tx(en, 'Meno', 'User')}</label><code class="softval">${esc(s.username)}</code></div>
+<div class="softrow"><label>${tx(en, 'Heslo', 'Password')}</label><span class="softval softpw" id="${id}" data-mask="${mask}" data-pw="${pwAttr}" data-show="0">${mask}</span>
+${s.hasPass ? `<button type="button" class="softtog" data-reveal="${id}" data-label-show="${tx(en, '👁️ Ukázať', '👁️ Show')}" data-label-hide="${tx(en, '🙈 Skryť', '🙈 Hide')}">${tx(en, '👁️ Ukázať', '👁️ Show')}</button>` : ''}</div>
+${until ? `<div class="softmeta"><span>${tx(en, 'Platí do', 'Valid until')} <b>${esc(until)}</b></span>${days != null ? `<span>${days > 0 ? tx(en, `ešte ${days} d.`, `${days} d left`) : tx(en, 'vypršané', 'expired')}</span>` : ''}</div>` : ''}</div>`;
+        }).join('');
+        softBox = `<div class="card accard softcard"><div class="acchead"><h2>📺 ${tx(en, 'Software – prihlasovacie údaje', 'Software login')}</h2></div>
+<p class="hint">${tx(en, 'Prihlasovacie údaje do TV aplikácie (nie na túto stránku).', 'Logins for the TV app, not this website.')}</p>${bits}</div>`;
+      }
+      if (mayGuide) {
+        const st = await getSettings();
+        const globalG = String(st.acc_guide || '');
+        const extra = String(u.guide_extra || '');
+        const html = [globalG, extra].filter((x) => String(x).trim()).map((x) => SEC.mdLite(x)).filter(Boolean).join('');
+        if (html) {
+          guideBox = `<div class="card accard"><div class="acchead"><h2>📘 ${tx(en, 'Návod / inštrukcie', 'Guide / instructions')}</h2></div><div class="guidebox">${html}</div></div>`;
+        }
+      }
+    } catch (e) { /* pay optional */ }
+    {
+      const on = !!u.totp_on;
+      if (on) {
+        totpBox = `<div class="card accard"><div class="acchead"><h2>🔐 ${tx(en, 'Dvojfaktorové overenie', 'Two-factor authentication')}</h2><span class="accbadge ok">${tx(en, 'Zapnuté', 'On')}</span></div>
+<p class="hint">${tx(en, 'Pri každom prihlásení budete potrebovať kód z aplikácie.', 'Every login needs an app code.')}</p>
+<form method="post" action="/ucet/2fa/vypnut" class="accf">${csrfField(req, res)}
+<label for="tpw">${tx(en, 'Heslo', 'Password')}</label><input id="tpw" name="password" type="password" required maxlength="200" autocomplete="current-password">
+<label for="tc">${tx(en, 'Kód z aplikácie', 'App code')}</label><input id="tc" name="code" inputmode="numeric" required maxlength="6" autocomplete="one-time-code">
+<button class="btnl sm">${tx(en, 'Vypnúť 2FA', 'Turn off 2FA')}</button></form></div>`;
+      } else if (u.totp_pending) {
+        const pend = await openTotpPending(u);
+        let svg = '';
+        try { if (pend) svg = await QR.toString(SEC.totp.uri(pend, u.username, 'TV Software'), { type: 'svg', margin: 1, width: 168, errorCorrectionLevel: 'M' }); } catch { svg = ''; }
+        totpBox = `<div class="card accard"><div class="acchead"><h2>🔐 ${tx(en, 'Zapnúť 2FA', 'Enable 2FA')}</h2></div>
+<p class="hint">${tx(en, 'Naskenujte QR kód v Authenticator / Aegis / 1Password a potvrďte 6-miestnym kódom.', 'Scan the QR in Authenticator / Aegis / 1Password and confirm with a 6-digit code.')}</p>
+<div class="accqr">${svg || '<span class="hint">QR</span>'}</div>
+<p class="hint">${tx(en, 'Alebo kľúč ručne', 'Or enter key manually')}:</p><p class="mono">${esc(String(pend||'').replace(/(.{4})/g, '$1 ').trim())}</p>
+<form method="post" action="/ucet/2fa/potvrdit" class="accf">${csrfField(req, res)}
+<label for="tc2">${tx(en, '6-miestny kód', '6-digit code')}</label><input id="tc2" name="code" inputmode="numeric" required maxlength="6" autocomplete="one-time-code">
+<button class="b sm">${tx(en, 'Potvrdiť a zapnúť', 'Confirm & enable')}</button></form>
+<form method="post" action="/ucet/2fa/zrusit" class="accout">${csrfField(req, res)}<button class="btnl sm">${tx(en, 'Zrušiť', 'Cancel')}</button></form></div>`;
+      } else {
+        totpBox = `<div class="card accard"><div class="acchead"><h2>🔐 ${tx(en, 'Dvojfaktorové overenie', 'Two-factor authentication')}</h2><span class="accbadge warn">${tx(en, 'Vypnuté', 'Off')}</span></div>
+<p class="hint">${tx(en, 'Voliteľné. Po zapnutí budete pri prihlásení zadávať aj kód z telefónu.', 'Optional. After enabling, login also asks for a phone code.')}</p>
+<form method="post" action="/ucet/2fa/start" class="accf">${csrfField(req, res)}<button class="btnl sm">${tx(en, 'Nastaviť 2FA', 'Set up 2FA')}</button></form></div>`;
+      }
+    }
+
+    await pub(req, res, tx(en, 'Môj účet', 'My account'), `<header class="acchero"><p class="hint">${tx(en, 'Môj účet', 'My account')}</p><h1 class="ph">👤 ${esc(u.username)}</h1></header>${msg(req)}${lic}${softBox}${guideBox}${checkoutOrd}${aff}${panelBox}${ord}${totpBox}${sec}<script src="/static/acc.js?v=${ACC_V}" defer></script>`);
   }));
   app.get('/ucet/objednavka/:id/foto/:i', wrap(async (req, res) => {
     const u = await fromReq(req); if (!u) return res.status(401).end();
@@ -912,8 +1064,8 @@ ${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField
   const AB = '/admin/zakaznici', PB = '/admin/predplatne-server';
   const nav = `<p class="row"><a class="btnl sm" href="/admin">← Admin</a><a class="btnl sm" href="${AB}">👥 Zákazníci</a><a class="btnl sm" href="${AB}/ledger">📒 Bonusy (ledger)</a><a class="btnl sm" href="${AB}/nastavenia">🤝 Affiliate nastavenia</a><a class="btnl sm" href="${PB}">🖥️ Server predplatného</a></p>`;
   const apage = (t, b) => page(t, nav + b, 'a adm');
-  const AM = { ok: 'Uložené.', bad: 'Neplatné údaje.', del: 'Účet zmazaný.', synced: 'Synchronizované.', syncfail: 'Synchronizácia zlyhala (server nenastavený, nedostupný alebo jeho typ nevie vyhľadať používateľa bez hesla).', tiers: 'Neplatná tabuľka úrovní (čísla 0–120, počty musia byť rôzne).', taken: 'Toto meno k predplatnému už má iný účet.', limit: 'Príliš veľa testov – počkajte pár minút.', lineok: 'Účet do zoznamu pridaný.', linedel: 'Účet zo zoznamu odstránený.', linebad: 'Neplatné meno alebo heslo k predplatnému.', bulkok: 'Zoznam účtov uložený.', syncch: 'Synchronizácia kanálov a programu spustená.', syncchfail: 'Synchronizácia kanálov zlyhala – skontrolujte M3U / XMLTV URL alebo prihlasovacie údaje servera.' };
-  const amsg = (req) => (AM[req.query.m] ? `<div class="msg${['ok', 'del', 'synced', 'lineok', 'linedel', 'bulkok', 'syncch'].includes(req.query.m) ? '' : ' err'}">${esc(AM[req.query.m])}</div>` : '');
+  const AM = { ok: 'Uložené.', bad: 'Neplatné údaje.', del: 'Účet zmazaný.', synced: 'Synchronizované.', syncfail: 'Synchronizácia zlyhala (server nenastavený, nedostupný alebo jeho typ nevie vyhľadať používateľa bez hesla).', tiers: 'Neplatná tabuľka úrovní (čísla 0–120, počty musia byť rôzne).', taken: 'Toto meno k predplatnému už má iný účet.', limit: 'Príliš veľa testov – počkajte pár minút.', lineok: 'Účet do zoznamu pridaný.', linedel: 'Účet zo zoznamu odstránený.', linebad: 'Neplatné meno alebo heslo k predplatnému.', bulkok: 'Zoznam účtov uložený.', syncch: 'Synchronizácia kanálov a programu spustená.', syncchfail: 'Synchronizácia kanálov zlyhala – skontrolujte M3U / XMLTV URL alebo prihlasovacie údaje servera.', softok: 'Software údaje uložené.', softbad: 'Neplatné Software meno (min. 8, malé písmená) alebo heslo.', totpreset: '2FA zákazníka bolo resetované.' };
+  const amsg = (req) => (AM[req.query.m] ? `<div class="msg${['ok', 'del', 'synced', 'lineok', 'linedel', 'bulkok', 'syncch', 'softok', 'totpreset'].includes(req.query.m) ? '' : ' err'}">${esc(AM[req.query.m])}</div>` : '');
   admin.get('/zakaznici', needAuth, wrap(async (req, res) => {
     const q = String(req.query.q || '').trim().toLowerCase().slice(0, 64);
     const r = await pool.query(`SELECT u.id,u.username,u.disabled,u.panel_user,u.panel_synced_at,u.ref_flag,u.ref_blocked,u.created_at, ${ACT('u.')} AS eff, ru.username AS ref_name,
@@ -954,6 +1106,9 @@ ${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField
 <p class="row"><button type="button" class="btnl sm" id="afadd">➕ Pridať úroveň</button></p>
 <p class="msg err" id="aferr" hidden role="alert"></p>
 <h2>Živý náhľad – čo uvidí zákazník v „Prečo sa zaregistrovať“</h2><div class="tblw" id="afprev"><p class="hint">Náhľad sa zobrazí po načítaní stránky (vyžaduje JavaScript). Po uložení ho nájdete aj verejne v Cenníku.</p></div>
+<h2>📘 Návod / inštrukcie (globálny)</h2>
+<p class="hint">Zobrazí sa zákazníkovi na /ucet <b>až po zaplatenej a vybavennej</b> objednávke (odoslané Software meno, heslo a expirácia). Jednoduchý text, odkazy a **tučné**. Na verejných stránkach ani v /objednavka sa nezobrazuje.</p>
+<label for="acc_guide">Text návodu</label><textarea id="acc_guide" name="acc_guide" rows="8" maxlength="20000" placeholder="1. Stiahnite aplikáciu…&#10;2. Zadajte meno a heslo…">${esc(s.acc_guide || '')}</textarea>
 <p class="row"><button id="afsave">💾 Uložiť</button></p></form>
 <script src="/static/affadm.js?v=${AFF_V}" defer></script>`));
   }
@@ -979,7 +1134,8 @@ ${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField
     const t = err ? null : AFF.cleanTiers(rows);
     const flags = { acc_on: b.acc_on === '1', aff_on: b.aff_on === '1', aff_block_ip: b.aff_block_ip === '1' };
     if (!t) { res.status(400); return affEditor(req, res, { rows, flags, err: err || 'Neplatná tabuľka úrovní.' }); }
-    await setSettings({ acc_on: flags.acc_on ? '1' : '0', aff_on: flags.aff_on ? '1' : '0', aff_block_ip: flags.aff_block_ip ? '1' : '0', aff_tiers: JSON.stringify(t) });
+    const guide = String(b.acc_guide || '').slice(0, 20000);
+    await setSettings({ acc_on: flags.acc_on ? '1' : '0', aff_on: flags.aff_on ? '1' : '0', aff_block_ip: flags.aff_block_ip ? '1' : '0', aff_tiers: JSON.stringify(t), acc_guide: guide });
     audit(req, 'affiliate_settings', `${t.length} úrovní`);
     res.redirect(303, AB + '/nastavenia?m=ok');
   }));
@@ -993,6 +1149,21 @@ ${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField
     const eff = AFF.effectiveUntil(u), bi = await bonusInfo(u);
     const rq = String(req.query.reset || ''), reset = /^[A-Za-z0-9_-]{43}$/.test(rq) ? `<div class="msg">🔐 Odkaz na nastavenie hesla (platí 24 h, pošlite ho zákazníkovi): <code>${esc(origin(req))}/ucet/reset/${esc(rq)}</code></div>` : '';
     const act = (a, label, cls = '') => `<form method="post" action="${AB}/${u.id}/akcia" class="inl">${hid(req)}<input type="hidden" name="a" value="${a}"><button class="sm ${cls}">${label}</button></form>`;
+    let softSlots = [];
+    try {
+      const F = require('./pay/src/fulfill');
+      const all = (global.__payOrders && global.__payOrders.load) ? global.__payOrders.load() : {};
+      softSlots = SEC.collectSoftwareSlots(u, all, F, linePass, fulfillPass);
+      if (!softSlots.length) softSlots = [{ username: u.panel_user || '', password: '', until: '', hasPass: false }];
+      if (softSlots.length < 2) softSlots = softSlots.concat([{ username: '', password: '', until: '', hasPass: false }]);
+    } catch { softSlots = [{ username: u.panel_user || '', password: '', until: '', hasPass: false }, { username: '', password: '', until: '', hasPass: false }]; }
+    const softForms = softSlots.slice(0, 2).map((s, i) => `<div class="softedit"><h3>Software slot ${i + 1}</h3>
+<form method="post" action="${AB}/${u.id}/akcia">${hid(req)}<input type="hidden" name="a" value="soft"><input type="hidden" name="slot" value="${i}">
+<input type="hidden" name="old_user" value="${esc(s.username || '')}">
+<label>Software username (min. 8, malé písmená)</label><input name="su" value="${esc(s.username || '')}" maxlength="24" autocomplete="off" autocapitalize="none" spellcheck="false">
+<label>Heslo ${s.hasPass ? '(uložené – nechajte prázdne = bez zmeny)' : ''}</label><input name="sp" type="password" maxlength="128" autocomplete="new-password" class="pwmask" placeholder="${s.hasPass ? '••••••••' : ''}">
+<p class="hint">Heslo sa v admine zobrazuje maskované. Prázdne = bez zmeny uloženého hesla.</p>
+<button class="sm">💾 Uložiť slot ${i + 1}</button></form></div>`).join('');
     res.send(apage('Zákazník ' + u.username, `<h1>👤 ${esc(u.username)}${u.disabled ? ' 🚫 (vypnutý)' : ''}</h1>${amsg(req)}${reset}
 <div class="card"><p>Predplatné (platí): <b>${eff ? fmtDate(eff) : '–'}</b> ${eff ? (eff > new Date() ? '✅ aktívne' : '⛔ vypršané') : ''}</p>
 <p class="hint">Z objednávok: ${u.licence_until ? fmtDate(u.licence_until) : '–'} · Z panelu: ${u.panel_expiry ? fmtDate(u.panel_expiry) : '–'} (${esc(u.panel_status || 'nesynchronizované')}${u.panel_synced_at ? ', ' + esc(fmtDT(u.panel_synced_at)) : ''}) · Ručne: ${u.override_until ? fmtDate(u.override_until) : '–'}. Poradie: ručne → panel → objednávky.</p>
@@ -1007,6 +1178,18 @@ ${smtpWarn()}<p>E-mail: ${u.email ? esc(u.email) + (u.email_verified ? ' ✅' : 
 <p class="row">${act('sync', '🔄 Synchronizovať s panelom')}${act('reset', '🔐 Odkaz na reset hesla')}${u.disabled ? act('enable', '✅ Zapnúť účet') : act('disable', '🚫 Vypnúť účet')}${u.referrer_id ? (u.ref_blocked ? act('unblock', '🤝 Povoliť odporúčanie') : act('block', '⛔ Zablokovať odporúčanie')) : ''}</p>
 <form method="post" action="${AB}/${u.id}/akcia" class="row">${hid(req)}<input type="hidden" name="a" value="delete"><label>Zmazať účet – napíšte ZMAZAT</label><input name="confirm" maxlength="10" required><button class="sm">🗑️ Zmazať</button></form></div>
 ${devs.length ? `<div class="card"><h2>2. zariadenia</h2>${devs.map((d) => `<form method="post" action="${AB}/${u.id}/akcia" class="row">${hid(req)}<input type="hidden" name="a" value="device"><input type="hidden" name="did" value="${d.id}"><span>${fmtDate(d.from_at)} – ${fmtDate(d.until_at)}</span><input name="pu" value="${esc(d.panel_user)}" placeholder="meno v paneli" maxlength="64"><button class="sm">Uložiť</button></form>`).join('')}</div>` : ''}
+<div class="card"><h2>📺 Software – meno a heslo</h2>
+<p class="hint">Údaje do TV aplikácie (nie webové heslo). Ukladajú sa šifrovane (AES-256-GCM), synchronizujú sa s plnením objednávok a overením /overit-predplatne. Heslo v audite nikdy nie je.</p>
+${softForms}</div>
+<div class="card"><h2>📘 Návod pre tohto zákazníka</h2>
+<p class="hint">Doplnok alebo úprava globálneho návodu. Ukáže sa na /ucet len po zaplatenej a vybavennej objednávke.</p>
+<form method="post" action="${AB}/${u.id}/akcia">${hid(req)}<input type="hidden" name="a" value="guide">
+<textarea name="guide_extra" rows="6" maxlength="20000">${esc(u.guide_extra || '')}</textarea>
+<button class="sm">💾 Uložiť návod</button></form></div>
+<div class="card"><h2>🔐 2FA zákazníka</h2>
+<p>${u.totp_on ? '✅ Zapnuté' : 'Vypnuté (predvolené)'}${u.totp_pending ? ' · prebieha nastavenie' : ''}</p>
+${u.totp_on || u.totp_pending ? `<form method="post" action="${AB}/${u.id}/akcia" class="row">${hid(req)}<input type="hidden" name="a" value="totpreset"><button class="sm">♻️ Resetovať 2FA</button></form><p class="hint">Audit zaznamená dátum resetu, nie tajomstvá.</p>` : '<p class="hint">Zákazník si 2FA môže zapnúť sám na /ucet.</p>'}
+</div>
 <div class="card"><h2>Odporučení (${refs.length})</h2><ul>${refs.map((x) => `<li><a href="${AB}/${x.id}">${esc(x.username)}</a> · ${x.eff ? fmtDate(x.eff) : '–'} ${x.eff && new Date(x.eff) > new Date() && !x.disabled && !x.ref_blocked ? '✅ aktívny' : '⛔'}${x.ref_flag ? ' ⚠️ ' + esc(x.ref_flag) : ''}</li>`).join('') || '<li>–</li>'}</ul></div>
 <div class="card"><h2>Zaplatené objednávky</h2><ul>${ords.map((o) => `<li>${esc(fmtDT(o.paid_at))} · <code>${esc(o.order_id)}</code> · ${o.months} m · ${esc(String(o.amount))} €</li>`).join('') || '<li>–</li>'}</ul></div>
 <div class="card"><h2>Ledger</h2><ul>${led.map((l) => `<li>${esc(fmtDT(l.created_at))} · ${esc(l.kind)} · ${l.bonus_months > 0 ? '+' : ''}${l.bonus_months} m${l.order_id ? ' · ' + esc(l.order_id) : ''}${l.note ? ' · ' + esc(l.note) : ''}</li>`).join('') || '<li>–</li>'}</ul></div>`));
@@ -1037,6 +1220,50 @@ ${devs.length ? `<div class="card"><h2>2. zariadenia</h2>${devs.map((d) => `<for
     } else if (a === 'disable' || a === 'enable') { await pool.query(`UPDATE acc_users SET disabled=$2 WHERE id=$1`, [id, a === 'disable']); if (a === 'disable') await pool.query(`DELETE FROM acc_sessions WHERE user_id=$1`, [id]); audit(req, 'acc_' + a, u.username); }
     else if (a === 'block' || a === 'unblock') await pool.query(`UPDATE acc_users SET ref_blocked=$2 WHERE id=$1`, [id, a === 'block']);
     else if (a === 'device') { const pu = String(req.body.pu || '').trim(); if (pu && !panelUserOk(pu)) return back('bad'); await pool.query(`UPDATE acc_devices SET panel_user=$3 WHERE id=$2 AND user_id=$1`, [id, +req.body.did || 0, pu]); }
+    else if (a === 'guide') {
+      await pool.query(`UPDATE acc_users SET guide_extra=$2 WHERE id=$1`, [id, String(req.body.guide_extra || '').slice(0, 20000)]);
+      audit(req, 'acc_guide', u.username);
+    } else if (a === 'totpreset') {
+      await pool.query(`UPDATE acc_users SET totp_on=false, totp_secret='', totp_pending='', totp_rc='[]', totp_last=0 WHERE id=$1`, [id]);
+      audit(req, 'acc_totp_reset', u.username + ' @ ' + new Date().toISOString().slice(0, 10));
+      return back('totpreset');
+    } else if (a === 'soft') {
+      const oldU = String(req.body.old_user || '').trim();
+      const su = String(req.body.su || '').trim().toLowerCase();
+      const sp = String(req.body.sp || '');
+      if (!SEC.softUserOk(su)) return back('softbad');
+      if (sp && (sp.length < 3 || sp.length > 128)) return back('softbad');
+      if (sp) await saveLine(su, sp);
+      else if (oldU && oldU.toLowerCase() !== su) {
+        // rename: copy password from old line if present
+        const oldPw = await linePass(oldU);
+        if (oldPw) await saveLine(su, oldPw);
+      }
+      try {
+        const F = require('./pay/src/fulfill');
+        if (global.__payOrders && global.__payOrders.load && global.__payOrders.save) {
+          const all = global.__payOrders.load();
+          F.updateSoftwareCreds(all, { oldUsername: oldU || su, newUsername: su, password: sp || undefined });
+          global.__payOrders.save(all);
+        }
+      } catch { /* */ }
+      if (+req.body.slot === 0) {
+        await pool.query(`UPDATE acc_users SET panel_user=$2, panel_verified=CASE WHEN $2 IS NULL OR $2='' THEN '' ELSE COALESCE(NULLIF(panel_verified,''),'admin') END WHERE id=$1`, [id, su]);
+      } else {
+        const dev = (await pool.query(`SELECT id FROM acc_devices WHERE user_id=$1 ORDER BY id LIMIT 1 OFFSET 0`, [id])).rows[0];
+        // prefer second device row if any; else first empty
+        const rows = (await pool.query(`SELECT id,panel_user FROM acc_devices WHERE user_id=$1 ORDER BY id`, [id])).rows;
+        if (rows[1]) await pool.query(`UPDATE acc_devices SET panel_user=$2 WHERE id=$1`, [rows[1].id, su]);
+        else if (rows[0] && !rows[0].panel_user) await pool.query(`UPDATE acc_devices SET panel_user=$2 WHERE id=$1`, [rows[0].id, su]);
+      }
+      await pool.query(`INSERT INTO acc_software (username, display, user_id, until_at, updated_at) VALUES ($1,$1,$2,COALESCE((SELECT until_at FROM acc_software WHERE lower(username)=lower($3) LIMIT 1), now() + interval '30 days'), now())
+        ON CONFLICT (username) DO UPDATE SET user_id=EXCLUDED.user_id, updated_at=now()`, [su, id, oldU || su]).catch(() => {});
+      if (oldU && oldU.toLowerCase() !== su) {
+        await pool.query(`DELETE FROM acc_panel_lines WHERE lower(username)=lower($1)`, [oldU]).catch(() => {});
+      }
+      audit(req, 'acc_soft_edit', `${u.username} slot ${req.body.slot} @ ${new Date().toISOString().slice(0, 10)}`);
+      return back('softok');
+    }
     else if (a === 'delete') { if (String(req.body.confirm || '') !== 'ZMAZAT') return back('bad'); await deleteUser(id); audit(req, 'acc_delete', u.username); return res.redirect(303, AB + '?m=del'); }
     else return back('bad');
     back('ok');
