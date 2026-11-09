@@ -402,6 +402,11 @@ function mount(app, { loadOrders, saveOrders, appendLog = () => {} }) {
     res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' });
     const o = findByToken(load(), req.params.token);
     if (!o) return res.status(404).type('html').send(pageShell('Nenájdené', '<div class="card"><h1>Odkaz je neplatný</h1><p>Skúste <a href="/objednavka/navrat" style="color:#93c5fd">návrat cez meno a kontakt</a>.</p></div>'));
+    // Wake / page open: for auto-watched crypto methods, re-check the chain (does not touch non-chain methods).
+    try {
+      const pv = require('./payVerify');
+      if (pv.isAuto(o) && !isPaid(o)) pv.checkNow(o, { loadOrders: load, saveOrders: save, appendLog }).catch(() => {});
+    } catch { /* ignore */ }
     const f = ensure(o);
     if (!isPaid(o)) {
       const st = statusLabel(o);
@@ -821,7 +826,7 @@ module.exports = {
   retainDays, setRetainDays, clampRetain, scrubDrafts, startShotSweep,
 };
 
-function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, saveOrders }) {
+function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, saveOrders, appendLog = () => {} }) {
   const listPage = (req, res) => {
     const rows = adminList(loadOrders());
     const tr = rows.map((o) => {
@@ -851,7 +856,21 @@ function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, s
     const m = req.query.m === 'ok' ? '<div class="msg">Údaje boli odoslané do okna zákazníka.</div>' : (req.query.m === 'conf' ? '<div class="msg">Objednávka bola potvrdená.</div>' : (req.query.m && req.query.m !== 'ok' && req.query.m !== 'conf' ? `<div class="msg err">${esc(req.query.m)}</div>` : ''));
     const contact = [f.email, f.telegram, f.facebook].filter(Boolean).join(' · ') || '—';
     const mailOpt = (f.email && (global.__lnkMailer && global.__lnkMailer.ready && global.__lnkMailer.ready())) ? `<label class="ck"><input type="checkbox" name="alsoEmail" value="1"> Poslať aj e-mailom na ${esc(f.email)}</label>` : (f.email ? '<p class="hint">E-mail je vyplnený, ale odosielanie e-mailov nie je nastavené (Admin → Odosielanie e-mailov).</p>' : '<p class="hint">Zákazník e-mail nevyplnil – údaje uvidí v súkromnom okne alebo po prihlásení.</p>');
-    const confirmForm = !isConfirmed(o) ? `<form method="post" action="/admin/objednavky/${esc(o.orderId)}/potvrdit">${hid(req)}<p class="hint">Najprv objednávku potvrďte (ručne, ak ju systém ešte automaticky nepotvrdil po platbe). Až potom môžete odoslať prihlasovacie údaje.</p><button>Potvrdiť</button></form>` : '';
+    let chainBox = '';
+    try {
+      const pv = require('./payVerify').adminSummary(o);
+      if (pv) {
+        const autoTag = pv.auto ? '<span class="tag ok">auto overenie (blockchain)</span>' : '<span class="tag">manuálne overenie</span>';
+        chainBox = `<div class="card" style="margin-top:10px"><h3>Overenie platby ${autoTag}</h3>
+<p class="hint">${esc(pv.reason)}</p>
+${pv.auto ? `<p>Chain: <b>${esc(pv.chainStatus || 'čaká sa')}</b>${pv.coin ? ' · ' + esc(String(pv.coin).toUpperCase()) : ''}${pv.addressMasked ? ' · ' + esc(pv.addressMasked) : ''}<br>
+${pv.receivedCrypto ? 'Prijaté: ' + esc(pv.receivedCrypto) + (pv.receivedEur != null ? ' ≈ ' + esc(pv.receivedEur) + ' EUR' : '') + '<br>' : ''}
+${pv.chainTxUrl ? 'TX: <a href="' + esc(pv.chainTxUrl) + '" target="_blank" rel="noopener noreferrer">' + esc(pv.chainTxid) + '</a>' : (pv.chainTxid ? 'TX: ' + esc(pv.chainTxid) : 'TX: —')}</p>
+<form method="post" action="/admin/objednavky/${esc(o.orderId)}/chain-check">${hid(req)}<button class="g2">🔄 Skontrolovať blockchain teraz</button></form>` : ''}
+</div>`;
+      }
+    } catch { /* payVerify optional */ }
+    const confirmForm = !isConfirmed(o) ? `<form method="post" action="/admin/objednavky/${esc(o.orderId)}/potvrdit">${hid(req)}<p class="hint">Najprv objednávku potvrďte (ručne, ak ju systém ešte automaticky nepotvrdil po platbe). Až potom môžete odoslať prihlasovacie údaje.</p><button>Potvrdiť (manuálne)</button></form>` : '';
     const slots = slotList(o);
     const typ = soft.intentLabel(slots);
     const gem = panelOcr.geminiReady() ? 'Gemini OCR je zapnuté (kľúč v Admin → API kľúče).' : 'GEMINI_API_KEY nie je nastavený – snímku môžete nahrať, údaje dopíšte ručne (alebo doplňte kľúč; systém je autonómny na Renderi).';
@@ -887,7 +906,7 @@ ${mailOpt}
 <div class="card"><p>Suma: <b>${esc(o.amountExact || o.amountEur || '—')} €</b> · Stav: <b>${esc(st.sk)}</b> (${esc(o.status || '')}) · Typ: ${esc(typ)}</p>
 <p>Software username: <b>${esc(slots.map((s)=>s.username).join(', ') || f.username || '—')}</b><br>Kontakt: ${esc(contact)}</p>
 ${f.submittedAt ? `<p class="hint">Údaje zadané ${esc(f.submittedAt)}. Súkromné okno: <a href="${esc(pathFor(o))}" target="_blank" rel="noopener">${esc(pathFor(o))}</a></p>` : ''}
-${confirmForm}${sendForm}
+${chainBox}${confirmForm}${sendForm}
 </div>`, 'a adm'));
   }));
   admin.post('/objednavky/nastavenia', needAuth, csrf, wrap(async (req, res) => {
@@ -901,6 +920,18 @@ ${confirmForm}${sendForm}
     confirm(o, (req.adminSession && req.adminSession.email) || 'admin');
     saveOrders(orders);
     res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=conf');
+  }));
+  admin.post('/objednavky/:id/chain-check', needAuth, csrf, wrap(async (req, res) => {
+    const orders = loadOrders(); const o = orders[req.params.id];
+    if (!o) return res.redirect(303, '/admin/objednavky');
+    const pv = require('./payVerify');
+    if (!pv.isAuto(o)) return res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent('Táto metóda sa nedá overiť na chaini.'));
+    try {
+      await pv.checkNow(o, { loadOrders, saveOrders, appendLog });
+      res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=ok');
+    } catch (e) {
+      res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent('Kontrola zlyhala: ' + (e && e.message || 'chyba')));
+    }
   }));
   admin.post('/objednavky/:id/udaje', needAuth, csrf, wrap(async (req, res) => {
     const orders = loadOrders(); const o = orders[req.params.id];

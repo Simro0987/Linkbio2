@@ -166,12 +166,26 @@ function relative(r, b) {
   if (!b || r.status === 'error' || r.status === 'unsupported') return r;
   const out = { ...r, txs: [], baselineAt: b.at };
   let status = 'waiting', newSat = null;
-  if (b.source === r.source && !b.amountsUnknown && !r.amountsUnknown) {
+  // Prefer per-tx amounts when explorers provide them (filter to txs after baseline time when known).
+  const baseMs = b.at ? Date.parse(b.at) : 0;
+  const freshTxs = (r.txs || []).filter((t) => {
+    if (!t || !t.txid) return false;
+    if (t.blockTime && baseMs && Date.parse(t.blockTime) + 5000 < baseMs) return false;
+    return Number(t.valueSat) > 0 || t.txid;
+  });
+  const valued = freshTxs.filter((t) => Number(t.valueSat) > 0);
+  if (valued.length) {
+    newSat = valued.reduce((s, t) => s + Number(t.valueSat), 0);
+    status = valued.every((t) => t.confirmed) ? 'confirmed' : 'unconfirmed';
+    out.txs = freshTxs;
+  } else if (b.source === r.source && !b.amountsUnknown && !r.amountsUnknown) {
     const before = b.confirmedSat + b.unconfirmedSat;
     const total = Number(r.confirmedSat || 0) + Number(r.unconfirmedSat || 0) - before;
     if (total > 0) { newSat = total; status = Number(r.confirmedSat || 0) - before >= total ? 'confirmed' : 'unconfirmed'; }
+    out.txs = freshTxs;
   } else if (Number(r.txCount || 0) > b.txCount) {
     status = Number(r.unconfirmedSat || 0) > 0 ? 'unconfirmed' : 'confirmed';
+    out.txs = freshTxs;
   }
   out.status = status; out.label = LABELS[status]; out.newSat = newSat;
   return out;

@@ -115,32 +115,10 @@ async function createOrder({ orderId, amountEur, countryCode, providerAlias, ema
   return order;
 }
 
-/** chainWatcher hook (server onStatus): amount check against the EUR price → 'paid' / 'partial'. */
-async function onChainStatus(order, status, r, { loadOrders, saveOrders, appendLog }) {
+/** chainWatcher hook → shared payVerify (amount + confirmations + tx claim + Telegram). */
+async function onChainStatus(order, status, r, deps) {
   if (!order || !GATEWAYS.has(order.provider)) return;
-  const sat = r && Number(r.newSat) > 0 ? Number(r.newSat) : null;
-  const a = asset(order.payoutCoin);
-  const px = await cryptoDirect.prices().catch(() => ({}));
-  const p = a && px ? px[a.cg] : null;
-  const recvCoin = sat != null ? sat / 1e8 : null;
-  const recvEur = recvCoin != null && p > 0 ? Math.round(recvCoin * p * 100) / 100 : null;
-  const ratio = recvEur != null && order.amountEur > 0 ? recvEur / Number(order.amountEur) : null;
-  const need = Number(order.paidRatio) > 0 ? Number(order.paidRatio) : PAID_RATIO();
-  const fresh = loadOrders(); const f = fresh[order.orderId]; if (!f) return;
-  f.chainStatus = status; f.chainStatusAt = order.chainStatusAt || new Date().toISOString();
-  if (recvCoin != null) { f.receivedCrypto = recvCoin.toFixed(DP[order.payoutCoin] || 8); f.receivedEur = recvEur; f.receivedRatio = ratio != null ? Math.round(ratio * 1000) / 1000 : null; }
-  let verdict = null;
-  if (status === 'confirmed') {
-    if (ratio == null) { verdict = 'unknown'; f.status = 'received_check'; }
-    else if (ratio >= need) { verdict = 'paid'; f.status = 'paid'; f.paidAt = new Date().toISOString(); }
-    else { verdict = 'partial'; f.status = 'partial'; }
-  }
-  saveOrders(fresh);
-  appendLog(`${gwOf(order).toUpperCase()}_CHAIN ${order.orderId} ${status} recv=${f.receivedCrypto || '?'} eur=${recvEur ?? '?'} ratio=${ratio != null ? ratio.toFixed(3) : '?'}${verdict ? ' → ' + verdict : ''}`);
-  const got = recvCoin != null ? `\nPrijaté: ${f.receivedCrypto} ${order.ticker}${recvEur != null ? ` ≈ ${recvEur} EUR (${Math.round(ratio * 100)} %)` : ''}` : '';
-  if (verdict === 'partial') tg(`⚠️ ${brand(order)} – ČIASTOČNÁ platba (pod ${Math.round(need * 100)} %)\n${line(order)}${got}\nSkontrolujte a rozhodnite ručne.`);
-  else if (verdict === 'unknown') tg(`❔ ${brand(order)} – platba potvrdená, sumu sa nepodarilo overiť (explorer bez súm)\n${line(order)}\nSkontrolujte peňaženku.`);
-  else if (verdict === 'paid') tg(`✅ ${brand(order)} – zaplatené\n${line(order)}${got}`);
+  return require('./payVerify').apply(order, status, r, deps);
 }
 
 const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');

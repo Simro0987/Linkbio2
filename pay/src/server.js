@@ -1365,22 +1365,20 @@ app.use(express.static(path.join(__dirname, '..', 'public'), {
 // Guided Electrocoin SEPA (no automation) — registered early so /bank-sepa-pay can redirect
 electrocoinGuided.register(app, { loadOrders, saveOrders, appendLog });
 // Live on-chain payment watcher (read-only public explorers)
-require('./orderStatus').register(app, { loadOrders });
+require('./orderStatus').register(app, { loadOrders, saveOrders, appendLog });
 if (require('./payMode').jobs()) require('./chainWatcher').start({
   loadOrders,
   saveOrders,
   appendLog,
   onStatus: (order, status, r) => {
     if (status === 'unconfirmed' || status === 'confirmed') require('./xpub').markUsed(order && order.orderId).catch(() => {});
-    if (order && (order.provider === 'changelly' || order.provider === 'revolut_ramp')) {
-      changelly.onChainStatus(order, status, r, { loadOrders, saveOrders, appendLog }).catch((e) => appendLog('CHANGELLY_CHAIN_FAIL ' + (e && e.message)));
-    }
-    try {
-      if (global.__telegramBot && (status === 'unconfirmed' || status === 'confirmed')) {
-        global.__telegramBot.notifyChain(order, status);
-      }
-    } catch (e) {
-      appendLog('TELEGRAM_CHAIN_FAIL ' + (e && e.message));
+    // Auto-verify ONLY for methods with a watched UTXO address (revolut_ramp / changelly / crypto_direct).
+    // Gift cards, Revtag, SEPA, etc. stay manual — payVerify.isAuto rejects them.
+    if (order && require('./payVerify').isAuto(order)) {
+      require('./payVerify').apply(order, status, r, { loadOrders, saveOrders, appendLog })
+        .catch((e) => appendLog('PAYVERIFY_FAIL ' + (e && e.message)));
+    } else if (order && (status === 'unconfirmed' || status === 'confirmed')) {
+      try { if (global.__telegramBot) global.__telegramBot.notifyChain(order, status); } catch (e) { appendLog('TELEGRAM_CHAIN_FAIL ' + (e && e.message)); }
     }
   },
 });

@@ -1052,6 +1052,7 @@ try {
     needAuth, csrf, wrap, page, hid, esc,
     loadOrders: () => (global.__payOrders && global.__payOrders.load && global.__payOrders.load()) || {},
     saveOrders: (o) => { if (global.__payOrders && global.__payOrders.save) global.__payOrders.save(o); },
+    appendLog: (m) => { try { if (global.__payAppendLog) global.__payAppendLog(m); else console.log('[pay]', m); } catch {} },
   });
 } catch (e) { console.error('[fulfill-admin]', e && e.message); }
 app.use('/admin', admin);

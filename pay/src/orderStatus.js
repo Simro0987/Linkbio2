@@ -5,14 +5,25 @@ const watcher = require('./chainWatcher');
 const esc = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const ORDER_ID_RE = /^[A-Za-z0-9_-]{4,80}$/;
 
-function register(app, { loadOrders }) {
+function register(app, { loadOrders, saveOrders, appendLog }) {
   const find = (id) => (ORDER_ID_RE.test(String(id || '')) ? loadOrders()[id] : null);
+  const deps = () => ({ loadOrders, saveOrders: saveOrders || (() => {}), appendLog: appendLog || (() => {}) });
 
   app.get('/api/order/:id/chain-status', async (req, res) => {
     const o = find(req.params.id);
     if (!o) return res.status(404).json({ error: 'Objednávka sa nenašla' });
     res.set('Cache-Control', 'no-store');
-    res.json(await watcher.statusForOrder(o, { force: req.query.force === '1' }));
+    // On every status poll (page open / wake): for auto-watched methods, also run paid-marking.
+    const payVerify = require('./payVerify');
+    let r;
+    if (payVerify.isAuto(o) && saveOrders) {
+      r = await payVerify.checkNow(o, deps()).catch(() => null);
+    }
+    if (!r) r = await watcher.statusForOrder(o, { force: req.query.force === '1' });
+    // Public: never expose full comparison internals; txid is OK (already on a public explorer).
+    const pub = { ...r };
+    delete pub._t;
+    res.json(pub);
   });
 
   app.get('/api/order/:id/chain-status/stream', async (req, res) => {
@@ -25,7 +36,14 @@ function register(app, { loadOrders }) {
     const unsub = watcher.subscribe(o.orderId, send);
     const ping = setInterval(() => res.write(': ping\n\n'), 20000);
     // Per-connection poll too, so stream works even if the sweep is slow.
-    const poll = setInterval(async () => { try { send(await watcher.statusForOrder(o)); } catch {} }, 30000);
+    const poll = setInterval(async () => {
+      try {
+        const pv = require('./payVerify');
+        const cur = find(req.params.id) || o;
+        if (pv.isAuto(cur) && saveOrders) send(await pv.checkNow(cur, deps()) || await watcher.statusForOrder(cur));
+        else send(await watcher.statusForOrder(cur));
+      } catch {}
+    }, 30000);
     req.on('close', () => { unsub(); clearInterval(ping); clearInterval(poll); });
   });
 
