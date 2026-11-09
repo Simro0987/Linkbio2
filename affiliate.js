@@ -1,5 +1,6 @@
 'use strict';
 // Affiliate tier bonuses (pure logic + paid-order processing over an abstract store; pg in production, memory in tests).
+// Bonus months apply only to 1-device packages ≤12 months and priced ≤ the 1-device 12-month plan (see bonusEligible).
 // The number of ACTIVE referred members (valid subscription: manual override > panel expiry > order licence) at the moment
 // the REFERRER buys a package selects the tier; the tier matrix gives bonus months on top of that package (price unchanged).
 // Lower tiers inherit upward when a higher tier has no value for a package. A tier may allow "2nd device" instead of months.
@@ -98,6 +99,62 @@ const isActive = (u, now = new Date()) => !u.disabled && !!effectiveUntil(u) && 
 const PAID = new Set(['paid', 'confirmed']);
 const isPaidOrder = (o) => !!o && (PAID.has(o.status) || (o.provider === 'crypto_direct' && o.chainStatus === 'confirmed'));
 
+/** How many simultaneous devices a price-list plan covers (name/features; default 1). */
+function devicesOf(p) {
+  if (!p) return 1;
+  if (Number(p.devices) >= 2) return 2;
+  const blob = [p.name, p.name_en, p.features, p.features_en, p.badge, p.badge_en, p.note, p.note_en].filter(Boolean).join(' ');
+  return /2\s*zariad|2\s*device|two devices|2nd device/i.test(blob) ? 2 : 1;
+}
+
+/** EUR price of the cheapest active 1-device 12-month plan (Ryan's bonus ceiling). */
+function oneDevice12Price(plans) {
+  let cap = null;
+  for (const p of plans || []) {
+    if (!p || p.active === false) continue;
+    if ((+p.period || 1) !== 12) continue;
+    if (devicesOf(p) >= 2) continue;
+    const pr = Number(p.price);
+    if (!(pr > 0)) continue;
+    if (cap == null || pr < cap) cap = pr;
+  }
+  return cap;
+}
+
+/**
+ * Referral bonus months (and free 2nd-device reward) apply ONLY to 1-device packages
+ * with period ≤ 12 months AND price ≤ the 1-device 12-month plan (currently ~85 €).
+ * 2-device, 15m+, reseller, and anything dearer than the 12m 1-device plan → no bonus.
+ */
+function bonusEligible(meta, plans) {
+  if (!meta) return false;
+  const months = Number(meta.months != null ? meta.months : meta.period) || 0;
+  const amount = Number(meta.amount != null ? meta.amount : meta.price) || 0;
+  let devices = Number(meta.devices);
+  if (!(devices >= 1)) {
+    if (meta.plan) devices = devicesOf(meta.plan);
+    else if (meta.planId != null && Array.isArray(plans)) {
+      const p = plans.find((x) => String(x.id) === String(meta.planId));
+      devices = devicesOf(p);
+    } else devices = 1;
+  }
+  if (devices >= 2) return false;
+  if (!(months >= 1 && months <= 12)) return false;
+  const cap = oneDevice12Price(plans);
+  if (!(cap > 0)) return false;
+  if (!(amount > 0) || amount > cap + 1e-6) return false;
+  return true;
+}
+
+function rewardForPurchase(active, order, tiers, choice, plans) {
+  const months = Number(order && order.planMonths) || 0;
+  const amount = Number((order && (order.amountEur != null ? order.amountEur : order.amount))) || 0;
+  const meta = { months, amount, planId: order && order.planId, devices: order && order.planDevices };
+  if (!bonusEligible(meta, plans)) return { bonus: 0, device: false, alt: false, eligible: false };
+  return { ...rewardFor(active, months, tiers, choice), eligible: true };
+}
+
+
 /**
  * Process one paid order of a logged-in customer (idempotent via store.recordPurchase).
  * The buyer's licence is extended by package months; if the buyer is a referrer with enough ACTIVE referred members,
@@ -114,7 +171,11 @@ async function processPaidOrder(store, order, st, now = new Date()) {
   let bonus = 0, device = false, active = 0;
   if (st.on && months > 0 && !user.disabled) {
     active = await store.countActiveReferred(user.id, now);
-    const rw = rewardFor(active, months, st.tiers, user.aff_choice);
+    // st.plans = current price list (optional). Without it, fall back to legacy months-only reward
+    // (tests); production always passes plans so 2-device / >12m / >12m-price are excluded.
+    const rw = Array.isArray(st.plans)
+      ? rewardForPurchase(active, order, st.tiers, user.aff_choice, st.plans)
+      : { ...rewardFor(active, months, st.tiers, user.aff_choice), eligible: true };
     bonus = rw.bonus; device = rw.device;
   }
   if (months > 0) {
@@ -147,4 +208,4 @@ function memoryStore() {
     async addDevice(d) { devices.push(d); },
   };
 }
-module.exports = { DEF_TIERS, OLD_DEF_TIERS, migrateTiers, DEF_PACKAGES, cleanTiers, settings, tierFor, nextTier, bonusFor, deviceAllowed, deviceFor, rewardFor, matrix, materialize, addMonths, effectiveUntil, isActive, isPaidOrder, processPaidOrder, memoryStore };
+module.exports = { DEF_TIERS, OLD_DEF_TIERS, migrateTiers, DEF_PACKAGES, cleanTiers, settings, tierFor, nextTier, bonusFor, deviceAllowed, deviceFor, rewardFor, devicesOf, oneDevice12Price, bonusEligible, rewardForPurchase, matrix, materialize, addMonths, effectiveUntil, isActive, isPaidOrder, processPaidOrder, memoryStore };

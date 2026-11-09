@@ -151,6 +151,45 @@ t('ledger: automatic device at 0 bonus months', async () => {
   assert.strictEqual(s.ledger[0].kind, 'device'); assert.strictEqual(s.ledger[0].note, '2. zariadenie zadarmo');
 });
 
+
+t('bonusEligible: only 1-device ≤12m and ≤12m 1-device price', () => {
+  const plans = [
+    { id: 1, name: '1 mesiac', period: 1, price: 10, active: true },
+    { id: 2, name: '12 mesiacov', period: 12, price: 85, active: true },
+    { id: 3, name: '15 mesiacov', period: 15, price: 100, active: true },
+    { id: 4, name: '12 mesiacov – 2 zariadenia', period: 12, price: 85, active: true },
+    { id: 5, name: '6 mesiacov - 2 zariadenia', period: 12, price: 85, active: true },
+    { id: 6, name: 'Reseller 40', period: 40, price: 200, active: true },
+  ];
+  assert.strictEqual(A.oneDevice12Price(plans), 85);
+  assert.strictEqual(A.bonusEligible({ months: 1, amount: 10, devices: 1 }, plans), true);
+  assert.strictEqual(A.bonusEligible({ months: 12, amount: 85, devices: 1 }, plans), true);
+  assert.strictEqual(A.bonusEligible({ months: 6, amount: 45, devices: 1 }, plans), true);
+  assert.strictEqual(A.bonusEligible({ months: 15, amount: 100, devices: 1 }, plans), false);
+  assert.strictEqual(A.bonusEligible({ months: 12, amount: 100, devices: 1 }, plans), false); // dearer than 12m
+  assert.strictEqual(A.bonusEligible({ months: 12, amount: 85, devices: 2 }, plans), false);
+  assert.strictEqual(A.bonusEligible({ months: 12, amount: 85, planId: 4 }, plans), false);
+  assert.strictEqual(A.devicesOf(plans[3]), 2);
+});
+
+t('processPaidOrder grants no bonus for 2-device or 15m when plans are provided', async () => {
+  const plans = [
+    { id: 10, name: '12 mesiacov', period: 12, price: 85, active: true },
+    { id: 11, name: '12 mesiacov – 2 zariadenia', period: 12, price: 129, active: true },
+    { id: 12, name: '15 mesiacov', period: 15, price: 100, active: true },
+  ];
+  const st = { on: true, tiers: T, plans };
+  const s = world(20);
+  const r2 = await A.processPaidOrder(s, order({ planMonths: 12, amountEur: 129, planId: 11, planDevices: 2 }), st, NOW);
+  assert.strictEqual(r2.bonus, 0); assert.strictEqual(r2.device, false);
+  const s15 = world(20);
+  const r15 = await A.processPaidOrder(s15, order({ planMonths: 15, amountEur: 100, planId: 12, planDevices: 1 }), st, NOW);
+  assert.strictEqual(r15.bonus, 0);
+  const s12 = world(20);
+  const r12 = await A.processPaidOrder(s12, order({ planMonths: 12, amountEur: 85, planId: 10, planDevices: 1 }), st, NOW);
+  assert.strictEqual(r12.bonus, 6); // still gets tier bonus for eligible 12m
+});
+
 (async () => {
   for (const [name, fn] of tests) { try { await fn(); n++; } catch (e) { console.error('FAIL', name); throw e; } }
   console.log(`affiliate: ${n} tests passed`);

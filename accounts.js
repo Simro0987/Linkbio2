@@ -228,7 +228,13 @@ function install(ctx) {
     const c = await pool.connect();
     try {
       await c.query('BEGIN');
-      const r = await AFF.processPaidOrder(pgStore(c), o, st);
+      const plans = await plansList();
+      // Resolve devices on the order so bonusEligible can reject 2-device packages even when period matches 1-device.
+      if (o && o.planDevices == null && o.planId != null) {
+        const pl = plans.find((x) => String(x.id) === String(o.planId));
+        if (pl) o.planDevices = AFF.devicesOf(pl);
+      }
+      const r = await AFF.processPaidOrder(pgStore(c), o, { ...st, plans });
       if (r && !r.skipped) { // first paid order confirms the panel username the customer entered (ownership via payment)
         await c.query(`UPDATE acc_users u SET panel_user=u.panel_pending, panel_verified='order', panel_pending=NULL WHERE u.id=$1 AND u.panel_user IS NULL AND u.panel_pending IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM acc_users x WHERE lower(x.panel_user)=lower(u.panel_pending))`, [o.acct.id]);
@@ -360,14 +366,15 @@ function install(ctx) {
   async function priceByMonths() { const byM = new Map(); for (const p of await plansList()) { const m = +p.period || 1, pr = +p.price; if (!/zariaden|device/i.test(p.name + ' ' + (p.name_en || '')) && (!byM.has(m) || pr < byM.get(m))) byM.set(m, pr); } return byM; }
   async function whyHtml(req, full) {
     const en = req.lang === 'en', st = await affSettings();
-    const byM = await priceByMonths();
-    const mx = st.on ? AFF.matrix(st.tiers, [...byM.keys()]) : null;
-    const pk = mx ? mx.packages.filter((m) => byM.has(m) && mx.rows.some((r) => r.bonus[m] || r.dev[m])) : [];
+    const plans = await plansList(), byM = await priceByMonths(), cap = AFF.oneDevice12Price(plans);
+    const eligibleM = new Set(plans.filter((p) => AFF.bonusEligible({ months: +p.period || 1, amount: +p.price, devices: AFF.devicesOf(p) }, plans)).map((p) => +p.period || 1));
+    const mx = st.on ? AFF.matrix(st.tiers, [...byM.keys()].filter((m) => eligibleM.has(m))) : null;
+    const pk = mx ? mx.packages.filter((m) => byM.has(m) && eligibleM.has(m) && mx.rows.some((r) => r.bonus[m] || r.dev[m])) : [];
     const devTxt = tx(en, '2. zariadenie zadarmo', '2nd device free');
     const cell = (m, b, d) => { const pr = byM.get(m); if (!b) return d ? `<b>🖥️ ${devTxt}</b>` : '–'; const eff = pr / (m + b), disc = Math.round((b / (m + b)) * 100); return `<b>${m} + ${b} m</b><br>${eur(eff)} / ${tx(en, 'mes.', 'mo')}<br><span class="accdisc">−${disc} %</span>${d ? `<br><span class="hint">${tx(en, 'alebo', 'or')} 🖥️ ${devTxt} *</span>` : ''}`; };
     const rows = mx ? mx.rows.filter((r) => pk.some((m) => r.bonus[m] || r.dev[m])) : [];
     const table = pk.length ? `<div class="tblw"><table class="tbl acctier"><thead><tr><th>${tx(en, 'Aktívni odporučení', 'Active referrals')}</th>${pk.map((m) => `<th>${esc(moLabel(m, en))}<br><span class="hint">${eur(byM.get(m))} · ${eur(byM.get(m) / m)}/${tx(en, 'mes.', 'mo')}</span></th>`).join('')}</tr></thead><tbody>${rows.map((r) => `<tr><th>${r.min > 0 ? '≥ ' + r.min : tx(en, 'každý', 'everyone')}</th>${pk.map((m) => `<td>${cell(m, r.bonus[m], r.dev[m])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
-<p class="hint">${tx(en, 'Bonusové mesiace dostanete k balíku, ktorý si sami zaplatíte – cena sa nemení. Platí najvyššia dosiahnutá úroveň podľa počtu aktívnych odporučených v čase nákupu. Cena za mesiac = cena balíka / (mesiace + bonus).', 'Bonus months are added to the package you pay for – same price. The highest tier reached (active referrals at purchase time) applies. Price per month = package price / (months + bonus).')}${rows.some((r) => pk.some((m) => r.dev[m] && r.bonus[m])) ? ' ' + tx(en, '* Na tejto úrovni si môžete namiesto mesiacov vybrať druhé zariadenie – nepotrebujete 2 zariadenia? Druhé jednoducho dajte niekomu a máte pre seba zadarmo.', '* At this tier you can choose a second device instead – don\'t need two? Give the second one to someone and yours is free.') : ''}</p>` : '';
+<p class="hint">${tx(en, 'Bonusové mesiace dostanete k oprávnenému balíku (1 zariadenie, do 12 mesiacov, cena ≤ 12-mesačný 1-zar. balík) – cena sa nemení. Platí najvyššia dosiahnutá úroveň podľa aktívnych odporučených v čase nákupu.', 'Bonus months are added only to eligible plans (1 device, up to 12 months, price ≤ the 12-month 1-device plan) – same price. The highest tier reached (active referrals at purchase time) applies.')}${rows.some((r) => pk.some((m) => r.dev[m] && r.bonus[m])) ? ' ' + tx(en, '* Na tejto úrovni si môžete namiesto mesiacov vybrať druhé zariadenie – nepotrebujete 2 zariadenia? Druhé jednoducho dajte niekomu a máte pre seba zadarmo.', '* At this tier you can choose a second device instead – don\'t need two? Give the second one to someone and yours is free.') : ''}</p>` : '';
     const li = [
       st.on ? tx(en, '🤝 <b>Vlastný affiliate odkaz a mesiace zadarmo</b> – odporučte nás známym a pri každom vašom nákupe dostanete mesiace navyše.', '🤝 <b>Your own affiliate link and free months</b> – refer friends and get extra months with every purchase.') : '',
       tx(en, '📅 <b>Prehľad, do kedy platí predplatné</b> – kedykoľvek na jednom mieste.', '📅 <b>See when your subscription ends</b> – anytime, in one place.'),
@@ -558,10 +565,14 @@ ${ref ? `<p class="hint">🤝 ${tx(en, 'Odporučil vás', 'Referred by')}: <b>${
     const en = req.lang === 'en', now = new Date();
     const until = AFF.effectiveUntil(u), active = !!until && until > now, days = until ? Math.ceil((until - now) / 86400e3) : 0;
     const src = u.override_until ? tx(en, 'nastavené podporou', 'set by support') : u.panel_user && u.panel_synced_at && u.panel_expiry ? tx(en, 'podľa servera predplatného', 'from the subscription server') : u.licence_until ? tx(en, 'podľa zaplatených objednávok', 'from paid orders') : '';
-    const lic = `<div class="card"><h2>📺 ${tx(en, 'Predplatné', 'Subscription')}</h2>${until ? `<p class="accst ${active ? 'ok' : 'bad'}">${active ? `✅ ${tx(en, 'Predplatné aktívne do', 'Subscription active until')} <b>${fmtDate(until)}</b>` : `⛔ ${tx(en, 'Predplatné vypršalo', 'Subscription expired')} (${fmtDate(until)})`}</p><p class="hint">${esc(src)}</p>` : `<p>${tx(en, 'Zatiaľ nemáte aktívne predplatné.', 'No active subscription yet.')}</p>`}
-${active && days <= 7 ? `<div class="msg err">⏰ ${tx(en, `Predplatné končí o ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}.`, `Your subscription ends in ${days} day(s).`)}</div><p><a class="b" href="/platby">🔁 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : active ? `<p><a class="btnl" href="/platby">💳 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : `<p><a class="b" href="/platby">💳 ${tx(en, 'Kúpiť predplatné', 'Buy subscription')}</a></p>`}</div>`;
+    const sPub = await getSettings();
+    const buyHref = `/${encodeURIComponent(sPub.slug || 'tv')}#cennik`;
+    const lic = `<div class="card accard"><div class="acchead"><h2>📺 ${tx(en, 'Predplatné', 'Subscription')}</h2>${until ? `<span class="accbadge ${active ? 'ok' : 'bad'}">${active ? tx(en, 'Aktívne', 'Active') : tx(en, 'Vypršalo', 'Expired')}</span>` : `<span class="accbadge warn">${tx(en, 'Bez predplatného', 'No plan')}</span>`}</div>
+${until ? `<p class="accst ${active ? 'ok' : 'bad'}">${active ? `✅ ${tx(en, 'Platí do', 'Valid until')} <b>${fmtDate(until)}</b>` : `⛔ ${tx(en, 'Vypršalo', 'Expired')} (${fmtDate(until)})`}</p><p class="hint">${esc(src)}</p>` : `<p class="acclead">${tx(en, 'Zatiaľ nemáte aktívne predplatné.', 'No active subscription yet.')}</p>`}
+${active && days <= 7 ? `<div class="msg err">⏰ ${tx(en, `Predplatné končí o ${days} ${days === 1 ? 'deň' : days < 5 ? 'dni' : 'dní'}.`, `Your subscription ends in ${days} day(s).`)}</div><p><a class="b" href="${esc(buyHref)}">🔁 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : active ? `<p><a class="btnl" href="${esc(buyHref)}">💳 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : `<p><a class="b" href="${esc(buyHref)}">💳 ${tx(en, 'Kúpiť predplatné', 'Buy subscription')}</a></p><p class="hint">${tx(en, 'Presunieme vás na cenník – vyberte balík a spôsob platby.', 'We will take you to the price list – pick a plan and a payment method.')}</p>`}</div>`;
     const pc = await panelCfg();
-    const panelBox = `<div class="card"><h2>🔗 ${tx(en, 'Prepojenie s predplatným', 'Link your subscription')}</h2>${u.panel_user ? `<p>${tx(en, 'Prepojené meno', 'Linked username')}: <b>${esc(u.panel_user)}</b>${u.panel_synced_at ? ` · ${tx(en, 'overené', 'checked')} ${esc(fmtDT(u.panel_synced_at))}` : ''}</p>` : ''}
+    const panelBox = `<div class="card accard"><div class="acchead"><h2>🔗 ${tx(en, 'Prepojenie s predplatným', 'Link your subscription')}</h2></div>
+${u.panel_user ? `<p class="accpill">✅ ${tx(en, 'Prepojené meno', 'Linked username')}: <b>${esc(u.panel_user)}</b>${u.panel_synced_at ? ` <span class="hint">· ${tx(en, 'overené', 'checked')} ${esc(fmtDT(u.panel_synced_at))}</span>` : ''}</p>` : `<p class="hint">${tx(en, 'Prepojte účet so Software menom, aby ste tu videli stav predplatného.', 'Link your Software username to see subscription status here.')}</p>`}
 ${selfCheck(pc) ? `<form method="post" action="/ucet/panel" class="accf">${csrfField(req, res)}<p class="hint">${tx(en, 'Zadajte prihlasovacie údaje k predplatnému (z aplikácie v TV). Heslo slúži len na overenie a neukladá sa.', 'Enter your subscription login (from the TV app). The password is only used to verify and is never stored.')}</p>
 <label for="pu">${tx(en, 'Meno k predplatnému', 'Subscription username')}</label><input id="pu" name="panel_user" required maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
 <label for="pp">${tx(en, 'Heslo k predplatnému', 'Subscription password')}</label><input id="pp" name="panel_pass" type="password" required maxlength="128" autocomplete="off">
@@ -571,32 +582,43 @@ ${!u.panel_user ? `<form method="post" action="/ucet/panel-meno" class="accf">${
     const bi = await bonusInfo(u);
     let aff = '';
     if (bi) {
-      const link = `${origin(req)}/?ref=${u.ref_code}`, mx = AFF.matrix(bi.st.tiers, await packages());
-      const nx = bi.next, cur = bi.tier;
-      const shown = mx.packages.filter((m) => mx.rows.some((r) => r.bonus[m] || r.dev[m]));
-      const perPk = shown.map((m) => { const b = bi.bonus(m), d = bi.devFor(m), nb = nx ? AFF.bonusFor(nx.min, m, bi.st.tiers) : 0; return `<li>${esc(moLabel(m, en))}: <b>${b ? `+${esc(moLabel(b, en))} ${tx(en, 'zadarmo', 'free')}` : d ? '' : '–'}${d ? `${b ? ` ${tx(en, 'alebo', 'or')} ` : ''}🖥️ ${tx(en, '2. zariadenie zadarmo', '2nd device free')}` : ''}</b>${nb > b ? ` <span class="hint">(${tx(en, 'od', 'from')} ${nx.min} ${tx(en, 'aktívnych', 'active')}: +${nb})</span>` : ''}</li>`; }).join('');
+      const link = `${origin(req)}/?ref=${u.ref_code}`, plans = await plansList(), mx = AFF.matrix(bi.st.tiers, await packages());
+      const nx = bi.next, cur = bi.tier, cap = AFF.oneDevice12Price(plans);
+      const eligibleMonths = [...new Set(plans.filter((p) => AFF.bonusEligible({ months: +p.period || 1, amount: +p.price, devices: AFF.devicesOf(p) }, plans)).map((p) => +p.period || 1))].sort((a, b) => a - b);
+      const shown = eligibleMonths.filter((m) => mx.rows.some((r) => r.bonus[m] || r.dev[m]));
+      const perPk = shown.map((m) => { const b = bi.bonus(m), d = bi.devFor(m); return `<li><span>${esc(moLabel(m, en))}</span><b>${b ? `+${esc(moLabel(b, en))}` : d ? '' : '–'}${d ? `${b ? ` ${tx(en, 'alebo', 'or')} ` : ''}🖥️ 2.` : ''}</b></li>`; }).join('');
       const earned = (await pool.query(`SELECT COALESCE(sum(bonus_months) FILTER (WHERE kind='bonus'),0)::int m, count(*) FILTER (WHERE kind='device')::int d FROM acc_ledger WHERE user_id=$1`, [u.id])).rows[0];
       const devs = (await pool.query(`SELECT from_at,until_at,panel_user FROM acc_devices WHERE user_id=$1 ORDER BY id DESC LIMIT 10`, [u.id])).rows;
-      const pct = nx ? Math.min(100, Math.round((bi.active / nx.min) * 100)) : 100;
-      aff = `<div class="card"><h2>🤝 ${tx(en, 'Odporúčajte a získajte mesiace zadarmo', 'Refer friends, get free months')}</h2>
-<p>${tx(en, 'Váš odkaz', 'Your link')}:</p><div class="accl"><input id="reflink" readonly value="${esc(link)}" aria-label="Affiliate link"><button type="button" class="b sm" data-copy="reflink" data-ok="${tx(en, '✅ Skopírované', '✅ Copied')}">📋 ${tx(en, 'Kopírovať', 'Copy')}</button></div>
-<div class="accqr">${await qrSvg(link)}</div>
-<p>${tx(en, 'Aktívni odporučení', 'Active referrals')}: <b>${bi.active}</b> · ${tx(en, 'spolu', 'total')}: ${bi.total}</p>
-<p>${tx(en, 'Aktuálna úroveň', 'Current tier')}: <b>${cur ? '≥ ' + cur.min : tx(en, 'zatiaľ žiadna', 'none yet')}</b>${nx ? ` · ${tx(en, 'ďalšia úroveň', 'next tier')}: <b>${nx.min}</b> (${tx(en, 'chýba', 'missing')} ${nx.min - bi.active})` : ''}</p>
-<div class="accbar"><span class="w${Math.round(pct / 5) * 5}"></span></div>
-<p>${tx(en, 'Bonus k vášmu ďalšiemu nákupu (cena ostáva rovnaká)', 'Bonus on your next purchase (same price)')}:</p><ul class="accb">${perPk}</ul>
-${earned.m || earned.d ? `<p>${tx(en, 'Doteraz získané', 'Earned so far')}: <b>${esc(moLabel(earned.m, en))}</b>${earned.d ? ` + ${earned.d}× ${tx(en, 'druhé zariadenie', 'second device')}` : ''}</p>` : ''}
-${bi.device || u.aff_choice === 'device' ? `<form method="post" action="/ucet/volba" class="accf">${csrfField(req, res)}<p><b>${tx(en, 'Na vašej úrovni si môžete vybrať (pri balíkoch, kde je to možné)', 'At your tier you can choose (for packages where available)')}:</b></p>
+      const pct = nx ? Math.min(100, Math.round((bi.active / nx.min) * 100)) : (cur ? 100 : 0);
+      const tierCards = mx.rows.map((r) => {
+        const on = cur && cur.min === r.min, reached = bi.active >= r.min;
+        const bits = shown.map((m) => { const b = r.bonus[m], d = r.dev[m]; if (!b && !d) return null; return `<span class="afftchip">${esc(moLabel(m, en))}: <b>${b ? '+' + b : ''}${d ? (b ? ' / ' : '') + '🖥️' : ''}</b></span>`; }).filter(Boolean).join('');
+        return `<div class="afftier${on ? ' on' : ''}${reached ? ' hit' : ''}"><div class="afftn">≥ ${r.min}</div><div class="afftmeta">${tx(en, 'aktívnych', 'active')}</div><div class="afftbon">${bits || '–'}</div></div>`;
+      }).join('');
+      const ruleCap = cap != null ? (en ? `max the ${cap.toFixed(2).replace('.', ',')} € 12-month 1-device plan` : `najviac za cenu 12-mesačného balíka s 1 zariadením (${String(cap).replace('.', ',')} €)`) : (en ? 'the 12-month 1-device plan' : '12-mesačný balík s 1 zariadením');
+      aff = `<div class="card accard affcard"><div class="acchead"><h2>🤝 ${tx(en, 'Odporúčajte a získajte mesiace zadarmo', 'Refer friends, get free months')}</h2></div>
+<p class="affrule">${tx(en, 'Bonus months apply only to 1-device plans up to 12 months (', 'Bonusové mesiace platia iba pre balíky s 1 zariadením do 12 mesiacov (')}${esc(ruleCap)}). ${tx(en, '2-device and dearer plans get no bonus. Same price – free months on top.', '2 zariadenia a drahšie balíky bonus nedostanú. Cena ostáva rovnaká – mesiace navyše.')}</p>
+<div class="affshare"><label class="hint" for="reflink">${tx(en, 'Váš odkaz', 'Your link')}</label><div class="accl"><input id="reflink" readonly value="${esc(link)}" aria-label="Affiliate link"><button type="button" class="b sm" data-copy="reflink" data-ok="${tx(en, '✅ Skopírované', '✅ Copied')}">📋 ${tx(en, 'Kopírovať', 'Copy')}</button></div>
+<div class="affsharegrid"><div class="accqr">${await qrSvg(link)}</div>
+<div class="affstats"><div class="affstat"><span>${tx(en, 'Aktívni', 'Active')}</span><b>${bi.active}</b></div><div class="affstat"><span>${tx(en, 'Spolu', 'Total')}</span><b>${bi.total}</b></div>
+<div class="affstat wide"><span>${tx(en, 'Úroveň', 'Tier')}</span><b>${cur ? '≥ ' + cur.min : tx(en, 'zatiaľ žiadna', 'none yet')}</b>${nx ? `<small>${tx(en, 'ďalšia', 'next')} ≥ ${nx.min} · ${tx(en, 'chýba', 'need')} ${nx.min - bi.active}</small>` : ''}</div></div></div>
+<div class="accbar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div></div>
+<div class="afftiers" aria-label="${tx(en, 'Úrovne bonusov', 'Bonus tiers')}">${tierCards}</div>
+<div class="affnext"><h3>${tx(en, 'Bonus k vášmu ďalšiemu nákupu', 'Bonus on your next purchase')}</h3>
+${perPk ? `<ul class="accb afflist">${perPk}</ul>` : `<p class="hint">${tx(en, 'Zatiaľ žiadny bonus – získajte aktívnych odporučených.', 'No bonus yet – get active referrals.')}</p>`}
+<p class="hint">${tx(en, 'Cena balíka sa nemení. Musíte byť pri nákupe prihlásený.', 'Plan price stays the same. You must be logged in when buying.')}</p></div>
+${earned.m || earned.d ? `<p class="affearned">${tx(en, 'Doteraz získané', 'Earned so far')}: <b>${esc(moLabel(earned.m, en))}</b>${earned.d ? ` + ${earned.d}× ${tx(en, 'druhé zariadenie', 'second device')}` : ''}</p>` : ''}
+${bi.device || u.aff_choice === 'device' ? `<form method="post" action="/ucet/volba" class="accf affchoice">${csrfField(req, res)}<p><b>${tx(en, 'Na vašej úrovni si môžete vybrať (pri oprávnených balíkoch)', 'At your tier you can choose (on eligible plans)')}:</b></p>
 <label class="chk"><input type="radio" name="choice" value="months"${u.aff_choice !== 'device' ? ' checked' : ''}> ${tx(en, 'Bonusové mesiace', 'Bonus months')}</label>
-<label class="chk"><input type="radio" name="choice" value="device"${u.aff_choice === 'device' ? ' checked' : ''}> ${tx(en, 'Druhé zariadenie (na rovnaké obdobie ako kúpený balík)', 'Second device (same period as the package)')}</label>
-<p class="hint">${tx(en, 'Nepotrebujete 2 zariadenia? Druhé jednoducho dajte niekomu a máte pre seba zadarmo', "Don't need 2 devices? Simply give the second one to someone and yours is free")}</p><button class="btnl sm">${tx(en, 'Uložiť voľbu', 'Save choice')}</button></form>` : ''}
-${devs.length ? `<p>${tx(en, 'Druhé zariadenia', 'Second devices')}:</p><ul>${devs.map((d) => `<li>${fmtDate(d.from_at)} – ${fmtDate(d.until_at)}${d.panel_user ? ' · ' + esc(d.panel_user) : ` · <span class="hint">${tx(en, 'prístup vám pošle podpora', 'support will send the login')}</span>`}</li>`).join('')}</ul>` : ''}
-<details><summary>${tx(en, 'Pravidlá', 'Rules')}</summary><ul class="hint">
+<label class="chk"><input type="radio" name="choice" value="device"${u.aff_choice === 'device' ? ' checked' : ''}> ${tx(en, 'Druhé zariadenie (na rovnaké obdobie)', 'Second device (same period)')}</label>
+<p class="hint">${tx(en, 'Nepotrebujete 2 zariadenia? Druhé jednoducho dajte niekomu.', "Don't need 2 devices? Give the second one to someone.")}</p><button class="btnl sm">${tx(en, 'Uložiť voľbu', 'Save choice')}</button></form>` : ''}
+${devs.length ? `<p class="hint">${tx(en, 'Druhé zariadenia', 'Second devices')}:</p><ul class="affdevs">${devs.map((d) => `<li>${fmtDate(d.from_at)} – ${fmtDate(d.until_at)}${d.panel_user ? ' · ' + esc(d.panel_user) : ` · <span class="hint">${tx(en, 'prístup vám pošle podpora', 'support will send the login')}</span>`}</li>`).join('')}</ul>` : ''}
+<details class="affrules"><summary>${tx(en, 'Pravidlá', 'Rules')}</summary><ul>
 <li>${tx(en, 'Kto sa zaregistruje cez váš odkaz (platí 30 dní), je váš odporučený člen.', 'Anyone who signs up via your link (valid 30 days) becomes your referred member.')}</li>
 <li>${tx(en, 'Aktívny = má platné predplatné. Po vypršaní sa nepočíta, po predĺžení opäť áno.', 'Active = has a valid subscription. Expired members do not count until they renew.')}</li>
-<li>${tx(en, 'Bonus sa pripíše automaticky k balíku, ktorý si zaplatíte (cena sa nemení), podľa počtu aktívnych odporučených v čase nákupu. Musíte byť pri nákupe prihlásený.', 'The bonus is added automatically to the package you pay for (same price), based on active referrals at the time of purchase. You must be logged in when buying.')}</li>
-<li>${mx.rows.map((r) => `≥ ${r.min}: ${shown.filter((m) => r.bonus[m]).map((m) => `${m} m +${r.bonus[m]}`).join(', ') || '–'}${r.device ? ` (${tx(en, 'alebo 2. zariadenie', 'or 2nd device')})` : ''}`).join(' · ')}</li>
-<li>${tx(en, 'Odporúčanie seba samého (rovnaký účet alebo zariadenie) sa nepočíta.', 'Self-referrals (same account or device) do not count.')}</li></ul></details></div>`;
+<li>${tx(en, 'Bonus sa pripíše automaticky len k oprávnenému balíku (1 zariadenie, do 12 mesiacov, cena ≤ 12-mesačný 1-zar. balík).', 'The bonus is added automatically only to an eligible plan (1 device, up to 12 months, price ≤ the 12-month 1-device plan).')}</li>
+<li>${tx(en, 'Odporúčanie seba samého (rovnaký účet alebo zariadenie) sa nepočíta.', 'Self-referrals (same account or device) do not count.')}</li>
+</ul></details></div>`;
     }
     const orders = (await pool.query(`SELECT order_id,months,paid_at FROM acc_orders WHERE user_id=$1 ORDER BY paid_at DESC LIMIT 20`, [u.id])).rows;
     const ord = orders.length ? `<div class="card"><h2>🧾 ${tx(en, 'Zaplatené objednávky', 'Paid orders')}</h2><ul>${orders.map((o) => `<li>${fmtDate(o.paid_at)} · ${esc(moLabel(o.months, en))} · <code>${esc(o.order_id)}</code></li>`).join('')}</ul></div>` : '';
@@ -605,15 +627,21 @@ ${devs.length ? `<p>${tx(en, 'Druhé zariadenia', 'Second devices')}:</p><ul>${d
       const F = require('./pay/src/fulfill');
       const all = (global.__payOrders && typeof global.__payOrders.load === 'function') ? global.__payOrders.load() : {};
       const rows = F.listAccountOrders(all, u, req);
-      const tr = rows.map((r) => {
-        const st = en ? `${esc(r.status)} / ${esc(r.statusEn)}` : esc(r.status);
+      const cards = rows.map((r) => {
+        const stSk = esc(r.status), stEn = esc(r.statusEn || r.status);
+        const bad = /čaká|pending|await/i.test(String(r.status) + ' ' + String(r.statusEn || ''));
+        const ok = /zaplat|paid|potvrd|confirm/i.test(String(r.status) + ' ' + String(r.statusEn || ''));
+        const badge = ok ? 'ok' : bad ? 'warn' : 'bad';
         const link = r.confirmed
-          ? `<a href="${esc(r.path)}">${tx(en, 'Okno s údajmi', 'Credentials window')}</a>`
+          ? `<a class="btnl sm" href="${esc(r.path)}">${tx(en, 'Okno s údajmi', 'Credentials window')}</a>`
           : `<span class="hint">${tx(en, 'Dostupné po potvrdení', 'Available after confirmation')}</span>`;
-        return `<tr><td><code>${esc(r.orderId)}</code></td><td>${esc(r.amount != null ? r.amount + ' €' : '—')}</td><td>${st}</td><td>${link}</td></tr>`;
+        return `<article class="accard ordcard"><div class="acchead"><code class="ordid">${esc(r.orderId)}</code><span class="accbadge ${badge}">${en ? stEn : stSk}</span></div>
+<ul class="accmeta"><li><span>${tx(en, 'Suma', 'Amount')}</span><b>${esc(r.amount != null ? r.amount + ' €' : '—')}</b></li>
+<li><span>${tx(en, 'Stav', 'Status')}</span><b>${en ? `${stEn}` : stSk}</b></li></ul>
+<div class="ordact">${link}</div></article>`;
       }).join('');
-      checkoutOrd = `<div class="card"><h2>📦 ${tx(en, 'Moje objednávky', 'My orders')}</h2>
-${rows.length ? `<div style="overflow:auto"><table class="tbl"><thead><tr><th>${tx(en, 'Objednávka', 'Order')}</th><th>${tx(en, 'Suma', 'Amount')}</th><th>${tx(en, 'Stav', 'Status')}</th><th></th></tr></thead><tbody>${tr}</tbody></table></div>` : `<p class="hint">${tx(en, 'K tomuto účtu zatiaľ nie je priradená žiadna objednávka. Po vyplnení údajov pred platbou sa tu objavia.', 'No orders are linked to this account yet. They appear here after you enter your details at checkout.')}</p>`}
+      checkoutOrd = `<div class="card accard"><div class="acchead"><h2>📦 ${tx(en, 'Moje objednávky', 'My orders')}</h2></div>
+${rows.length ? `<div class="ordlist">${cards}</div>` : `<p class="hint">${tx(en, 'K tomuto účtu zatiaľ nie je priradená žiadna objednávka. Po vyplnení údajov pred platbou sa tu objavia.', 'No orders are linked to this account yet. They appear here after you enter your details at checkout.')}</p>`}
 <p class="hint">${tx(en, 'Súkromný odkaz k objednávke, ktorý ste dostali pri platbe, ostáva v platnosti.', 'The private order link from checkout stays valid.')}</p></div>`;
     } catch (e) { checkoutOrd = ''; }
     try {
@@ -637,14 +665,14 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
 <details${u.email ? '' : ' open'}><summary>${tx(en, u.email ? 'Zmeniť e-mail' : 'Doplniť e-mail', u.email ? 'Change e-mail' : 'Add e-mail')}</summary><form method="post" action="/ucet/email" class="accf">${csrfField(req, res)}
 <label for="ne">${tx(en, 'Nový e-mail', 'New e-mail')}</label><input id="ne" name="email" type="email" required maxlength="200" autocomplete="email">
 <label for="ep">${tx(en, 'Heslo na potvrdenie', 'Password to confirm')}</label><input id="ep" name="password" type="password" required autocomplete="current-password" maxlength="200"><button class="btnl sm">${tx(en, 'Uložiť e-mail', 'Save e-mail')}</button></form></details>`;
-    const sec = `<div class="card"><h2>⚙️ ${tx(en, 'Nastavenia účtu', 'Account settings')}</h2>${emailRow}<details><summary>${tx(en, 'Zmeniť heslo', 'Change password')}</summary><form method="post" action="/ucet/heslo" class="accf">${csrfField(req, res)}
+    const sec = `<div class="card accard"><h2>⚙️ ${tx(en, 'Nastavenia účtu', 'Account settings')}</h2>${emailRow}<details><summary>${tx(en, 'Zmeniť heslo', 'Change password')}</summary><form method="post" action="/ucet/heslo" class="accf">${csrfField(req, res)}
 <label for="op">${tx(en, 'Aktuálne heslo', 'Current password')}</label><input id="op" name="old" type="password" required autocomplete="current-password" maxlength="200">
 <label for="np">${tx(en, 'Nové heslo', 'New password')}</label><input id="np" name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password">
 <label for="np2">${tx(en, 'Nové heslo znova', 'Repeat new password')}</label><input id="np2" name="password2" type="password" required minlength="8" maxlength="72" autocomplete="new-password"><button class="btnl sm">${tx(en, 'Zmeniť heslo', 'Change password')}</button></form></details>
 <details><summary>${tx(en, 'Zrušiť účet', 'Delete account')}</summary><form method="post" action="/ucet/zrusit" class="accf">${csrfField(req, res)}<p class="hint">${tx(en, 'Účet sa natrvalo zmaže. Predplatné na serveri tým nezaniká.', 'The account is deleted permanently. Your subscription itself stays.')}</p>
 <label for="dp">${tx(en, 'Heslo na potvrdenie', 'Password to confirm')}</label><input id="dp" name="password" type="password" required autocomplete="current-password" maxlength="200"><button class="btnl sm">🗑️ ${tx(en, 'Zrušiť účet', 'Delete account')}</button></form></details>
 <form method="post" action="/odhlasenie" class="accout">${csrfField(req, res)}<button class="btnl sm">🚪 ${tx(en, 'Odhlásiť sa', 'Log out')}</button></form></div>`;
-    await pub(req, res, tx(en, 'Môj účet', 'My account'), `<h1 class="ph">👤 ${esc(u.username)}</h1>${msg(req)}${lic}${checkoutOrd}${aff}${panelBox}${ord}${sec}<script src="/static/acc.js?v=${ACC_V}" defer></script>`);
+    await pub(req, res, tx(en, 'Môj účet', 'My account'), `<header class="acchero"><p class="hint">${tx(en, 'Môj účet', 'My account')}</p><h1 class="ph">👤 ${esc(u.username)}</h1></header>${msg(req)}${lic}${checkoutOrd}${aff}${panelBox}${ord}${sec}<script src="/static/acc.js?v=${ACC_V}" defer></script>`);
   }));
   app.get('/ucet/objednavka/:id/foto/:i', wrap(async (req, res) => {
     const u = await fromReq(req); if (!u) return res.status(401).end();
@@ -855,10 +883,27 @@ ${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField
       for (const r of rows) for (const s of (r.slots || (r.username ? [{ username: r.username }] : []))) if (s.username) set.add(s.username);
       softwareUsers = [...set];
     } catch { /* */ }
+    const cap = AFF.oneDevice12Price(plans);
     res.json({ logged: true, username: u.username, email: u.email || '', active: bi ? bi.active : 0, device: dev, softwareUsers,
-      plans: Object.fromEntries(plans.map((p) => { const r = bi ? bi.reward(+p.period || 1) : { bonus: 0, device: false }; return [p.id, { months: +p.period || 1, bonus: r.bonus, device: r.device, label: r.device ? tx(en, '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, en)} ${tx(en, 'zadarmo', 'free')}` : '' }]; })) });
+      bonusCapEur: cap, bonusRule: en ? 'Bonus months apply only to 1-device plans up to 12 months (max the 12-month 1-device price).' : 'Bonusové mesiace platia iba pre balíky s 1 zariadením do 12 mesiacov (najviac za cenu 12-mesačného balíka s 1 zariadením).',
+      plans: Object.fromEntries(plans.map((p) => {
+        const months = +p.period || 1, amount = +p.price, devices = AFF.devicesOf(p);
+        const ok = bi && AFF.bonusEligible({ months, amount, devices }, plans);
+        const r = ok ? bi.reward(months) : { bonus: 0, device: false };
+        return [p.id, { months, bonus: r.bonus, device: !!r.device, eligible: !!ok, label: r.device ? tx(en, '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, en)} ${tx(en, 'zadarmo', 'free')}` : '' }];
+      })) });
   }));
-  ctx.accBonusForReq = async (req) => { const u = await fromReq(req); if (!u) return null; const bi = await bonusInfo(u); if (!bi) return null; return (m) => { const r = bi.reward(+m || 1); return r.device ? tx(req.lang === 'en', '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, req.lang === 'en')} ${tx(req.lang === 'en', 'zadarmo', 'free')}` : ''; }; };
+  ctx.accBonusForReq = async (req) => {
+    const u = await fromReq(req); if (!u) return null; const bi = await bonusInfo(u); if (!bi) return null;
+    const plans = await plansList();
+    return (m, plan) => {
+      const months = +m || 1;
+      const p = plan || plans.find((x) => (+x.period || 1) === months && AFF.devicesOf(x) === 1);
+      if (!p || !AFF.bonusEligible({ months, amount: +p.price, devices: AFF.devicesOf(p) }, plans)) return '';
+      const r = bi.reward(months);
+      return r.device ? tx(req.lang === 'en', '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, req.lang === 'en')} ${tx(req.lang === 'en', 'zadarmo', 'free')}` : '';
+    };
+  };
   // public, non-secret facts for the AI customer assistant (sitekb.js) – no panel URL/credentials
   ctx.accKbInfo = async () => { const c = await panelCfg(); return { on: await accOn(), panel: !!selfCheck(c), panelLinked: panelReady(c), mail: smtpOn(), packages: await packages() }; };
   ctx.accNavItem = (req) => { const en = req.lang === 'en'; return cookies(req)[C_SESS] ? ['/ucet', '👤', tx(en, 'Môj účet', 'My account')] : ['/prihlasenie', '🔑', tx(en, 'Prihlásenie / Moja objednávka', 'Log in / My order')]; };

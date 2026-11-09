@@ -1,3 +1,4 @@
+html{scroll-behavior:smooth}
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#1b120d;color:#f3e6d8;min-height:100vh}
 .w{max-width:520px;margin:0 auto;padding:40px 18px}h1{text-align:center;font-size:1.6rem;margin:0 0 8px}.bio{text-align:center;color:#c8ab8f;margin:0 0 28px;white-space:pre-line}
 .b{display:block;text-align:center;padding:16px;margin:0 0 14px;border-radius:14px;background:#2e1f16;border:1px solid #4a3324;color:#fff7ee;text-decoration:none;font-weight:600;font-size:1.05rem}
@@ -242,4 +243,49 @@ body.adapp main.w{grid-area:main;min-width:0;padding:20px 18px 48px;max-width:11
   body.ad-nav-open .adside{transform:none}
   body.adapp main.w{padding:16px 14px 40px;max-width:none}
   .adtop b{display:none}
+}
+
+
+/* /ucet redesign */
+.acc{max-width:760px;margin:0 auto;padding:0 4px 28px}
+.acchero{margin:0 0 14px}.acchero .ph{margin:2px 0 0;font-size:clamp(1.4rem,4vw,1.85rem)}
+.accard{position:relative;overflow:hidden}
+.acchead{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin:0 0 10px}
+.acchead h2{margin:0}
+.acclead{font-size:1.05rem;margin:4px 0 10px;color:#e2e8f0}
+.accpill{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 12px;border-radius:12px;background:rgba(22,163,74,.12);border:1px solid rgba(22,163,74,.35);margin:0 0 10px}
+.affcard .affrule{margin:0 0 14px;padding:10px 12px;border-radius:12px;background:rgba(229,9,20,.08);border:1px solid rgba(229,9,20,.25);color:#fecaca;font-size:.92rem;line-height:1.45}
+.affshare{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.affsharegrid{display:grid;grid-template-columns:auto 1fr;gap:14px;align-items:center;margin:8px 0 4px}
+@media (max-width:480px){.affsharegrid{grid-template-columns:1fr}.accqr{margin-left:auto;margin-right:auto}}
+.affstats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.affstat{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07)}
+.affstat span{display:block;font-size:.75rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em}
+.affstat b{font-size:1.25rem}.affstat.wide{grid-column:1/-1}.affstat small{display:block;color:#94a3b8;font-size:.8rem;margin-top:2px}
+.accbar{height:12px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin:10px 0 14px}
+.accbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#e50914,#f97316);transition:width .4s ease}
+.afftiers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:4px 0 16px}
+@media (min-width:640px){.afftiers{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.afftier{padding:12px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);min-width:0}
+.afftier.hit{border-color:rgba(34,197,94,.45);background:rgba(34,197,94,.08)}
+.afftier.on{border-color:#e50914;box-shadow:0 0 0 1px rgba(229,9,20,.35) inset}
+.afftn{font-size:1.2rem;font-weight:800}.afftmeta{font-size:.75rem;color:#94a3b8;margin-bottom:8px}
+.afftbon{display:flex;flex-direction:column;gap:4px}
+.afftchip{display:block;font-size:.8rem;padding:4px 7px;border-radius:8px;background:rgba(0,0,0,.25);overflow-wrap:anywhere}
+.affnext{margin:4px 0 8px;padding:12px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06)}
+.affnext h3{margin:0 0 8px;font-size:1rem}
+.afflist{list-style:none;padding:0;margin:0;display:grid;gap:6px}
+.afflist li{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:10px;background:rgba(0,0,0,.22)}
+.affearned{margin:10px 0 0}.affchoice{margin-top:12px}.affdevs{padding-left:18px}
+.affrules{margin-top:12px}.affrules summary{cursor:pointer;font-weight:600}.affrules ul{margin:8px 0 0;padding-left:18px;color:#94a3b8;font-size:.9rem;line-height:1.45}
+.ordlist{display:grid;gap:10px}
+.ordcard{padding:12px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07)}
+.ordid{font-size:.85rem;overflow-wrap:anywhere}.ordact{margin-top:10px}
+.accard .accmeta{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:6px}
+.accard .accmeta li{display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);font-size:.92rem}
+.accard .accmeta span{color:#94a3b8}
+@media (max-width:480px){
+  .acc .card,.accard{padding:14px}
+  .accl{flex-direction:column}.accl button{width:100%}
+  .ordid{font-size:.8rem}
 }
