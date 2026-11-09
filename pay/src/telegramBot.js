@@ -423,20 +423,23 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
     const fid = bestPhotoId(msg);
     if (fid) photo = await downloadFile(fid);
     if (!String(text || '').trim() && !photo) return false;
-    const r = await fulfill.attachDelivery(order, { text, photo, via: 'telegram', autoConfirm: true }, null);
+    const r = await fulfill.attachDelivery(order, { text, photo, via: 'telegram', autoConfirm: true, orders }, null);
     if (r.error) throw new Error(r.error);
     saveOrders(orders);
     pendingByMsg.set(msg.message_id, order.orderId);
     const card = r.card || {};
+    const soft = require('./softUser');
     const bits = [
       `✅ Doručené zákazníkovi · ${order.orderId}`,
-      card.username ? `Software username: ${card.username}` : '',
-      card.password ? 'Heslo: uložené (šifrovane)' : '',
+      card.username ? `Software username: ${soft.maskSecret(card.username)}` : '',
+      (card.password || card.passEnc) ? `Heslo: ${card.password ? soft.maskSecret(card.password) : 'uložené (šifrovane)'}` : '',
       card.until ? `Platné do: ${card.until}` : '',
+      r.expiryOnly ? 'Predĺženie: aktualizovaný len dátum (pôvodné meno a heslo zostávajú).' : '',
       card.ocrError ? `Upozornenie: ${card.ocrError}` : '',
-      card.source && String(card.source).startsWith('gemini') ? `Zdroj: ${card.source}` : (photo ? 'Snímka uložená' : ''),
+      card.source && String(card.source).startsWith('gemini') ? `Zdroj: ${card.source}` : (photo ? 'Snímka uložená (predchádzajúca fotka tohto mena nahradená)' : ''),
       'Zákazník to uvidí v /ucet a v súkromnom okne.',
     ].filter(Boolean).join('\n');
+    if (appendLog) appendLog(`FULFILL_ATTACH ${order.orderId} user=${soft.maskSecret(card.username || '')} until=${card.until || '-'} photo=${photo ? 1 : 0} expiryOnly=${r.expiryOnly ? 1 : 0}`);
     const extra = { reply_to_message_id: msg.message_id };
     if (card.until || card.username) extra.reply_markup = dateFixKeyboard(order.orderId);
     const ack = await sendMessage(loadAdminChatId(), bits, extra);
@@ -549,8 +552,9 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
       await sendMessage(
         chatId,
         'Odpovedzte na notifikáciu objednávky:\n' +
-          '• text (pokyny, username, heslo, dátum platné do)\n' +
-          '• a/alebo fotka/screenshot z panela (systém vyčíta meno, heslo a dátum)\n' +
+          '• 1. riadok = Software username, 2. riadok = heslo, ďalšie riadky = pokyny pre zákazníka\n' +
+          '• alebo „predĺžené do 12.03.2027“ (len nový dátum, meno a heslo zostanú)\n' +
+          '• a/alebo fotka/screenshot z panela (systém vyčíta meno, heslo a dátum; pri predĺžení stačí dátum)\n' +
           'Nezávisle potvrďte tlačidlom Potvrdiť / Zamietnuť (odpoveď nepotvrdenú objednávku automaticky potvrdí).\n\n' +
           'SEPA — formát (suma z objednávky):\n' +
           '<IBAN>\n<poznámka>\n[<meno príjemcu — voliteľné>]\n' +

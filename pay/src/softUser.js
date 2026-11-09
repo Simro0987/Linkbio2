@@ -126,17 +126,89 @@ function daysLeft(until) {
   return Math.ceil((end - Date.now()) / 86400e3);
 }
 
+function foldSk(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function maskSecret(v, n) {
+  const s = String(v == null ? '' : v);
+  const k = n == null ? 2 : n;
+  if (!s) return '';
+  if (s.length <= k) return '**';
+  return s.slice(0, k) + '…(' + s.length + ')';
+}
+
+function isExpiryPhrase(raw) {
+  const f = foldSk(String(raw || '').trim());
+  if (!f) return false;
+  if (parseDate(f)) {
+    const rest = f.replace(/\b20\d{2}-\d{1,2}-\d{1,2}\b/g, ' ').replace(/\b\d{1,2}[./-]\d{1,2}[./-]20\d{2}\b/g, ' ').replace(/\b\d{1,2}\.\s*[a-z]+\s*20\d{2}\b/g, ' ').replace(/\d{1,2}:\d{2}(?::\d{2})?/g, ' ').trim();
+    if (!rest || /^(predlzene|predlzena|predlzeny|predlzenie|platne\s*do|do|until|valid|expir\w*|extended|:|-)?$/i.test(rest)) return true;
+  }
+  return /^(predlzene|predlzena|predlzeny|predlzenie|platne(\s+do)?|extended(\s+until)?|valid(\s+until)?|expir(?:y|es|ation)?|until|do)\b/.test(f);
+}
+
+function dateFromExpiryPhrase(raw) {
+  const t = String(raw || '');
+  const f = foldSk(t);
+  const m = f.match(/(?:predlzene|predlzena|predlzeny|predlzenie|platne\s*do|valid\s*until|extended(?:\s+until)?|expir(?:y|es|ation)?|until|do\s*datumu)\s*(?:do|until)?\s*[:.]?\s*([^\n,;]+)/i);
+  if (m) return parseDate(m[1]) || parseDate(t) || '';
+  return parseDate(t) || '';
+}
+
+function looksUsernameLine(line) {
+  const u = cleanUser(line);
+  if (!u || /\s/.test(String(line || '').trim())) return false;
+  return RENEW_RE.test(u);
+}
+
 function parseCredsFromText(raw) {
   const t = String(raw || '').replace(/\r/g, '');
-  const out = { username: '', password: '', until: '' };
+  const out = { username: '', password: '', until: '', notes: '', expiryOnly: false };
   const until = parseDate(t) || (t.match(/(?:platn[ée]\s*do|valid until|expir(?:y|es|ation)?|do\s*d[áa]tumu)\s*[:.]?\s*([^\n,;]+)/i) || []);
   if (typeof until === 'string') out.until = until;
   else if (until[1]) out.until = parseDate(until[1]) || '';
+  if (!out.until) out.until = dateFromExpiryPhrase(t) || parseDate(t) || '';
   const um = t.match(/(?:software\s*)?(?:username|používateľské meno|pouzivatelske meno|meno|user(?:name)?|login)\s*[:.\s]+([A-Za-z0-9._@+-]{3,64})/i);
   if (um) out.username = cleanUser(um[1]);
   const pm = t.match(/(?:password|heslo|pass(?:word)?|pwd)\s*[:.\s]+(\S{3,128})/i);
   if (pm) out.password = String(pm[1]).trim();
-  if (!out.until) out.until = parseDate(t) || '';
+  const lines = t.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!out.username && !out.password && lines.length) {
+    const allExpiry = lines.every((l) => isExpiryPhrase(l) || !!parseDate(l));
+    if (allExpiry && (out.until || dateFromExpiryPhrase(t))) {
+      out.until = out.until || dateFromExpiryPhrase(t);
+      out.expiryOnly = true;
+      return out;
+    }
+    if (looksUsernameLine(lines[0]) && lines[1] && isExpiryPhrase(lines[1]) && !looksUsernameLine(lines[1])) {
+      out.username = cleanUser(lines[0]);
+      out.until = out.until || parseDate(lines[1]) || dateFromExpiryPhrase(lines[1]);
+      out.notes = lines.slice(2).join('\n');
+      out.expiryOnly = true;
+      return out;
+    }
+    if (looksUsernameLine(lines[0]) && lines[1] && !isExpiryPhrase(lines[1]) && String(lines[1]).length <= 128 && String(lines[1]).split(/\s+/).length <= 3) {
+      out.username = cleanUser(lines[0]);
+      out.password = String(lines[1]);
+      const rest = lines.slice(2);
+      if (!out.until) out.until = parseDate(rest.join('\n')) || dateFromExpiryPhrase(rest.join('\n')) || parseDate(t) || '';
+      out.notes = rest.filter((l) => !isExpiryPhrase(l) && !parseDate(l)).join('\n');
+      return out;
+    }
+  }
+  if (!out.username && !out.password && out.until) out.expiryOnly = true;
+  if (out.username || out.password) {
+    // Keep leftover non-label lines as notes when labeled creds were used
+    if (!out.notes) {
+      out.notes = lines.filter((l) => {
+        if (/(?:software\s*)?(?:username|používateľské meno|pouzivatelske meno|meno|user(?:name)?|login)\s*[:.\s]+/i.test(l)) return false;
+        if (/(?:password|heslo|pass(?:word)?|pwd)\s*[:.\s]+/i.test(l)) return false;
+        if (isExpiryPhrase(l) || parseDate(l)) return false;
+        return true;
+      }).join('\n');
+    }
+  }
   return out;
 }
 
@@ -155,5 +227,5 @@ function intentLabel(slots) {
 module.exports = {
   NEW_RE, RENEW_RE, planDevices, devicesForPlans, generateSoftwareUser, cleanUser,
   validateSlot, validateSlots, siteUsernameFromSlots, parseDate, untilEnd, daysLeft,
-  parseCredsFromText, formatSlotsLine, intentLabel,
+  parseCredsFromText, formatSlotsLine, intentLabel, maskSecret, isExpiryPhrase, dateFromExpiryPhrase, foldSk,
 };

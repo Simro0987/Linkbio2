@@ -330,7 +330,7 @@ function renderMessages(order, req) {
     }
     if (m.type === 'credsCard' || m.type === 'shot') {
       const card = Object.assign({}, m.card || {}, { password: m.card && m.card.passEnc ? openCreds(m.card.passEnc) : (m.card && m.card.password) || '' });
-      const shotUrl = (m.type === 'shot' && (m.shotEnc || m.mime)) ? `${base}/foto/${i}` : '';
+      const shotUrl = (m.type === 'shot' && m.shotEnc) ? `${base}/foto/${i}` : '';
       return cardHtml(card, shotUrl);
     }
     const text = m.textEnc ? (openCreds(m.textEnc) || '') : (m.text || '');
@@ -393,6 +393,7 @@ function findByToken(orders, token) {
 function mount(app, { loadOrders, saveOrders, appendLog = () => {} }) {
   const load = () => loadOrders();
   const save = (o) => saveOrders(o);
+  startShotSweep({ loadOrders: load, saveOrders: save, appendLog });
 
   app.get('/objednavka/navrat', (req, res) => { res.set('Cache-Control', 'no-store'); res.redirect(302, '/prihlasenie?next=/ucet'); });
   app.post('/objednavka/navrat', (req, res) => { res.set('Cache-Control', 'no-store'); res.redirect(303, '/prihlasenie?next=/ucet'); });
@@ -501,22 +502,218 @@ function customerNotify(order, req, summary) {
   // Telegram to the customer only if they already started the payments/support bot (we have a chat id).
 }
 
-async function attachDelivery(order, { text, photo, extracted, via, autoConfirm } = {}, req) {
+function latestUntilForUser(orders, username) {
+  const u = String(username || '').toLowerCase();
+  if (!u) return '';
+  let best = '';
+  const consider = (until) => {
+    const day = soft.parseDate(until) || (String(until || '').slice(0, 10));
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day) && day > best) best = day;
+  };
+  for (const o of Object.values(orders || {})) {
+    const f = o && o.fulfill;
+    if (!f) continue;
+    for (const s of [...(f.lines || []), ...(f.slots || [])]) {
+      if (s && s.username && String(s.username).toLowerCase() === u) consider(s.until);
+    }
+    for (const m of f.messages || []) {
+      const c = m && m.card;
+      if (c && c.username && String(c.username).toLowerCase() === u) consider(c.until);
+    }
+  }
+  try {
+    const A = global.__lnkAccounts;
+    if (A && typeof A.softwareByName === 'function') {
+      const row = A.softwareByName(u);
+      if (row && typeof row.then !== 'function') consider(row.until_at || row.until);
+    }
+  } catch { /* optional */ }
+  return best;
+}
+
+function findLatestCreds(orders, username) {
+  const u = String(username || '').toLowerCase();
+  const out = { username: username || '', password: '', passEnc: '', until: '' };
+  if (!u) return out;
+  let bestAt = '';
+  const take = (c, at) => {
+    if (!c) return;
+    const when = String(at || '');
+    if (c.until) {
+      const day = soft.parseDate(c.until) || String(c.until).slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(day) && day >= (out.until || '')) out.until = day;
+    }
+    const hasPw = !!(c.passEnc || c.password);
+    if (hasPw && when >= bestAt) {
+      bestAt = when;
+      if (c.passEnc) { out.passEnc = c.passEnc; out.password = ''; }
+      else if (c.password) { out.password = c.password; out.passEnc = ''; }
+    }
+  };
+  for (const o of Object.values(orders || {})) {
+    const f = o && o.fulfill;
+    if (!f) continue;
+    for (const s of [...(f.lines || []), ...(f.slots || [])]) {
+      if (s && s.username && String(s.username).toLowerCase() === u) take(s, f.credSentAt || o.updatedAt || '');
+    }
+    for (const m of f.messages || []) {
+      const c = m && m.card;
+      if (c && c.username && String(c.username).toLowerCase() === u) take(c, m.at || '');
+    }
+  }
+  return out;
+}
+
+function shotUsername(order, m) {
+  if (m && m.card && m.card.username) return String(m.card.username).trim();
+  const slots = slotList(order);
+  if (slots.length === 1 && slots[0].username) return String(slots[0].username).trim();
+  return '';
+}
+
+function removeShotBlobsForUser(orders, username, except) {
+  const u = String(username || '').toLowerCase();
+  if (!u) return 0;
+  let n = 0;
+  const exId = except && except.id;
+  const exOrder = except && except.orderId;
+  for (const o of Object.values(orders || {})) {
+    const msgs = o && o.fulfill && o.fulfill.messages;
+    if (!Array.isArray(msgs)) continue;
+    for (const m of msgs) {
+      if (!m || m.type !== 'shot' || !m.shotEnc) continue;
+      if (exId && m.id === exId && o.orderId === exOrder) continue;
+      const mu = String(shotUsername(o, m) || '').toLowerCase();
+      if (mu !== u) continue;
+      delete m.shotEnc;
+      delete m.mime;
+      m.shotReplacedAt = new Date().toISOString();
+      n++;
+    }
+  }
+  return n;
+}
+
+function scrubDrafts(order) {
+  const d = order && order.fulfill && order.fulfill.drafts;
+  if (!d) return false;
+  let changed = false;
+  for (const k of Object.keys(d)) {
+    const row = d[k];
+    if (!row || typeof row !== 'object') continue;
+    if (row.password) {
+      try { row.passEnc = sealCreds(row.password); row.hasPass = true; } catch { /* keep drop */ }
+      delete row.password;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+const fulfillCfg = sealed.create('fulfill-settings', { shotRetainDays: 90, lastSweepAt: '' });
+let retainDaysVal = 90;
+function clampRetain(n) {
+  const v = Math.round(Number(n));
+  if (!Number.isFinite(v)) return 90;
+  return Math.min(90, Math.max(60, v));
+}
+function retainDays() { return retainDaysVal; }
+function setRetainDays(n) { retainDaysVal = clampRetain(n == null ? 90 : n); return retainDaysVal; }
+
+function sweepExpiredShots(orders, now) {
+  const when = now instanceof Date ? now : new Date(now || Date.now());
+  const days = retainDays();
+  const ms = days * 86400e3;
+  let n = 0;
+  const latest = Object.create(null);
+  const bump = (username, until) => {
+    const u = String(username || '').toLowerCase();
+    const day = soft.parseDate(until) || String(until || '').slice(0, 10);
+    if (!u || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+    if (!latest[u] || day > latest[u]) latest[u] = day;
+  };
+  for (const o of Object.values(orders || {})) {
+    const f = o && o.fulfill;
+    if (!f) continue;
+    for (const s of [...(f.lines || []), ...(f.slots || [])]) if (s) bump(s.username, s.until);
+    for (const m of f.messages || []) if (m && m.card) bump(m.card.username, m.card.until);
+  }
+  for (const o of Object.values(orders || {})) {
+    const msgs = o && o.fulfill && o.fulfill.messages;
+    if (!Array.isArray(msgs)) continue;
+    for (const m of msgs) {
+      if (!m || m.type !== 'shot' || !m.shotEnc) continue;
+      const u = shotUsername(o, m);
+      const until = (u && latest[String(u).toLowerCase()]) || (m.card && m.card.until) || '';
+      const end = soft.untilEnd(until);
+      if (!end) continue;
+      if (when.getTime() < end.getTime() + ms) continue;
+      delete m.shotEnc;
+      delete m.mime;
+      m.shotPurgedAt = when.toISOString();
+      n++;
+    }
+  }
+  return { n, days };
+}
+
+function startShotSweep({ loadOrders, saveOrders, appendLog = () => {} } = {}) {
+  const tick = async () => {
+    try {
+      await fulfillCfg.load().catch(() => {});
+      retainDaysVal = clampRetain((fulfillCfg.get() || {}).shotRetainDays);
+      const last = (fulfillCfg.get() || {}).lastSweepAt;
+      if (last && Date.now() - Date.parse(last) < 20 * 3600e3) return;
+      const orders = loadOrders ? loadOrders() : {};
+      const r = sweepExpiredShots(orders);
+      if (r.n) {
+        if (saveOrders) saveOrders(orders);
+        appendLog('SHOT_SWEEP purged=' + r.n + ' days=' + r.days);
+      }
+      await fulfillCfg.save({ lastSweepAt: new Date().toISOString(), shotRetainDays: retainDaysVal }).catch(() => {});
+    } catch (e) { appendLog('SHOT_SWEEP_ERR ' + ((e && e.message) || 'fail')); }
+  };
+  fulfillCfg.load().then(() => { retainDaysVal = clampRetain((fulfillCfg.get() || {}).shotRetainDays); }).catch(() => {});
+  setTimeout(tick, Number(process.env.SHOT_SWEEP_FIRST_MS) || 180e3).unref();
+  setInterval(tick, 6 * 3600e3).unref();
+}
+
+async function attachDelivery(order, { text, photo, extracted, via, autoConfirm, orders } = {}, req) {
   if (!order) return { error: 'Objednávka sa nenašla.' };
   const f = ensure(order);
   if (autoConfirm || via === 'telegram') confirm(order, via || 'telegram');
   if (!isConfirmed(order)) return { error: 'Objednávka ešte nie je potvrdená.' };
   const at = new Date().toISOString();
   f.messages = f.messages || [];
+  const bag = orders && typeof orders === 'object' ? orders : { [order.orderId]: order };
+  if (!bag[order.orderId]) bag[order.orderId] = order;
   const cap = String(text || '').trim();
   let card = extracted ? { username: extracted.username || '', password: extracted.password || '', until: extracted.until || extracted.expiry || '' } : { username: '', password: '', until: '' };
-  if (cap) {
-    const fromText = soft.parseCredsFromText(cap);
-    if (!card.username) card.username = fromText.username;
-    if (!card.password) card.password = fromText.password;
-    if (!card.until) card.until = fromText.until;
-    f.messages.push({ id: crypto.randomBytes(8).toString('hex'), at, from: 'admin', type: 'text', textEnc: sealCreds(cap) });
+  const fromText = cap ? soft.parseCredsFromText(cap) : { username: '', password: '', until: '', notes: '', expiryOnly: false };
+  if (!card.username) card.username = fromText.username;
+  if (!card.password) card.password = fromText.password;
+  if (!card.until) card.until = fromText.until;
+  let expiryOnly = !!(fromText.expiryOnly && !card.password && !(extracted && extracted.password));
+  if (photo && !extracted && !card.username && !card.password && card.until) expiryOnly = true;
+  if (!card.username) {
+    const slots = slotList(order);
+    if (slots.length === 1) card.username = slots[0].username || '';
+    else if (expiryOnly && slots[0]) card.username = slots[0].username || f.username || '';
   }
+  if (expiryOnly || (card.until && !card.password && !fromText.password && !(extracted && extracted.password))) {
+    const prev = findLatestCreds(bag, card.username || (f.username || ''));
+    if (!card.username && prev.username) card.username = prev.username;
+    if (!card.password && !card.passEnc) {
+      if (prev.passEnc) card.passEnc = prev.passEnc;
+      else if (prev.password) card.password = prev.password;
+    }
+    if (!card.password && !extracted) expiryOnly = true;
+  }
+  const textToStore = (fromText.username || fromText.password || fromText.expiryOnly) ? String(fromText.notes || '').trim() : cap;
+  if (textToStore) {
+    f.messages.push({ id: crypto.randomBytes(8).toString('hex'), at, from: 'admin', type: 'text', textEnc: sealCreds(textToStore) });
+  }
+  let newShot = null;
   if (photo && photo.buf && photo.buf.length) {
     if (!extracted) {
       try {
@@ -526,35 +723,48 @@ async function attachDelivery(order, { text, photo, extracted, via, autoConfirm 
         if (!card.until) card.until = got.until;
         card.source = got.source;
         card.ocrError = got.error || '';
+        if (!card.username && !card.password && card.until) {
+          expiryOnly = true;
+          const slots = slotList(order);
+          if (!card.username && slots[0]) card.username = slots[0].username || '';
+          const prev = findLatestCreds(bag, card.username);
+          if (prev.passEnc) card.passEnc = prev.passEnc;
+          else if (prev.password) card.password = prev.password;
+        }
       } catch (e) { card.ocrError = e.message; }
     }
     const c = await panelOcr.compress(photo.buf, photo.mime || panelOcr.sniff(photo.buf));
-    f.messages.push({
+    newShot = {
       id: crypto.randomBytes(8).toString('hex'), at, from: 'admin', type: 'shot',
       mime: c.mime, shotEnc: sealCreds(c.buf.toString('base64')),
-      card: { username: card.username || '', until: card.until || '', passEnc: card.password ? sealCreds(card.password) : '' },
-    });
-  } else if (card.username || card.password || card.until) {
+      card: { username: card.username || '', until: card.until || '', passEnc: card.password ? sealCreds(card.password) : (card.passEnc || '') },
+    };
+    f.messages.push(newShot);
+    const u = card.username || shotUsername(order, newShot);
+    if (u) removeShotBlobsForUser(bag, u, { id: newShot.id, orderId: order.orderId });
+  } else if (card.username || card.password || card.passEnc || card.until) {
     f.messages.push({
       id: crypto.randomBytes(8).toString('hex'), at, from: 'admin', type: 'credsCard',
-      card: { username: card.username || '', until: card.until || '', passEnc: card.password ? sealCreds(card.password) : '' },
+      card: { username: card.username || '', until: card.until || '', passEnc: card.password ? sealCreds(card.password) : (card.passEnc || '') },
     });
   }
-  if (card.until || card.username || card.password) {
+  if (card.until || card.username || card.password || card.passEnc) {
     f.lines = slotList(order).map((s) => ({ ...s }));
     const hit = f.lines.find((s) => card.username && s.username.toLowerCase() === String(card.username).toLowerCase()) || f.lines[0];
     if (hit) {
       if (card.username) hit.username = card.username;
       if (card.until) hit.until = card.until;
       if (card.password) hit.passEnc = sealCreds(card.password);
+      else if (card.passEnc) hit.passEnc = card.passEnc;
     }
   }
   f.credSentAt = at;
   if (card.until) applyExpiry(order, card);
   customerNotify(order, req, [card.username && ('Username: ' + card.username), card.until && ('Platné do: ' + card.until)].filter(Boolean).join('\n'));
   notify(`🔑 Údaje odoslané pre ${f.username || order.orderId} (${order.orderId})` + (via ? ' cez ' + via : ''));
-  return { ok: true, card, confirmed: isConfirmed(order) };
+  return { ok: true, card, confirmed: isConfirmed(order), expiryOnly: !!expiryOnly };
 }
+
 
 function setLineUntil(order, until, username) {
   const day = soft.parseDate(until) || (String(until || '').slice(0, 10));
@@ -607,6 +817,8 @@ module.exports = {
   mailReady, sealCreds, openCreds, pathFor, urlFor, paidUrl, deliver, attachDelivery, setLineUntil,
   slotList, renderMessages, cardHtml, photoBytes, daysPhrase, applyExpiry,
   adminList, mount, contactMatches,
+  findLatestCreds, latestUntilForUser, removeShotBlobsForUser, sweepExpiredShots,
+  retainDays, setRetainDays, clampRetain, scrubDrafts, startShotSweep,
 };
 
 function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, saveOrders }) {
@@ -620,13 +832,20 @@ function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, s
       return `<tr><td><a href="/admin/objednavky/${esc(o.orderId)}">${esc(o.orderId)}</a></td><td>${esc(o.amountExact || o.amountEur || '—')} €</td><td>${esc(names)}</td><td>${esc(contact)}</td><td>${esc(st)}</td></tr>`;
     }).join('') || '<tr><td colspan="5">Zatiaľ žiadne objednávky s údajmi.</td></tr>';
     res.send(page('Objednávky a prihlásenie', `<h1>📦 Objednávky a prihlásenie</h1>
-<p class="hint">Meno, kontakt a heslo zadá zákazník ešte pred platbou. Prihlasovacie údaje odošlete až po potvrdení objednávky (automaticky po platbe, alebo ručne tlačidlom Potvrdiť). Údaje sú šifrované a zákazník ich vidí v súkromnom okne alebo vo svojom účte.</p>
+<p class="hint">Meno, kontakt a heslo zadá zákazník ešte pred platbou. Hlavný spôsob plnenia: odpoveď v Telegrame na notifikáciu objednávky. Prihlasovacie údaje odošlete až po potvrdení. Údaje sú šifrované. Snímka sa u zákazníka zobrazí, kým predplatné nepredĺži – potom sa fotka zmaže až po nastavenom počte dní od dátumu expirácie (text a údaje ostávajú).</p>
+<form method="post" action="/admin/objednavky/nastavenia" class="card" style="margin-bottom:14px">${hid(req)}
+<label>Zmazať snímky predplatného (len fotky) toľko dní po expirácii, ak účet nie je predĺžený (60–90, predvolené 90)</label>
+<input name="shotRetainDays" type="number" min="60" max="90" step="1" value="${esc(String(retainDays()))}" style="max-width:8rem">
+<button class="sm">Uložiť</button>
+</form>
 <div class="card" style="overflow:auto"><table class="tbl"><thead><tr><th>Objednávka</th><th>Suma</th><th>Meno</th><th>Kontakt</th><th>Stav</th></tr></thead><tbody>${tr}</tbody></table></div>`, 'a adm'));
   };
   admin.get('/objednavky', needAuth, wrap(async (req, res) => listPage(req, res)));
   admin.get('/objednavky/:id', needAuth, wrap(async (req, res) => {
-    const o = loadOrders()[req.params.id];
+    const orders = loadOrders();
+    const o = orders[req.params.id];
     if (!o) return res.status(404).send(page('Nenájdené', '<h1>Objednávka sa nenašla</h1><p><a href="/admin/objednavky">← Zoznam</a></p>', 'a adm'));
+    if (scrubDrafts(o)) saveOrders(orders);
     const f = o.fulfill || {};
     const st = statusLabel(o);
     const m = req.query.m === 'ok' ? '<div class="msg">Údaje boli odoslané do okna zákazníka.</div>' : (req.query.m === 'conf' ? '<div class="msg">Objednávka bola potvrdená.</div>' : (req.query.m && req.query.m !== 'ok' && req.query.m !== 'conf' ? `<div class="msg err">${esc(req.query.m)}</div>` : ''));
@@ -643,7 +862,10 @@ function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, s
 <form method="post" action="/admin/objednavky/${esc(o.orderId)}/udaje-slot" enctype="multipart/form-data">${hid(req)}
 <input type="hidden" name="slot" value="${i}">
 <label>Software username</label><input name="username" value="${esc(draft.username || s.username)}" maxlength="64" autocomplete="off">
-<label>Heslo / password do Software</label><input name="password" type="password" maxlength="128" autocomplete="new-password" value="">
+<label>Heslo / password do Software</label>
+<input type="hidden" name="passEnc" value="${esc(draft.passEnc || '')}">
+<input name="password" type="password" maxlength="128" autocomplete="new-password" value="" placeholder="${draft.hasPass || draft.passEnc ? 'načítané z fotky (ponechajte prázdne alebo prepíšte)' : ''}">
+${draft.hasPass || draft.passEnc ? '<p class="hint">Heslo z fotky je uložené šifrovane – pole nechajte prázdne, ak ho chcete ponechať.</p>' : ''}
 <label>Platné do</label><input name="until" type="date" value="${esc((draft.until || s.until || '').slice(0,10))}">
 <label>Screenshot z panela (voliteľné) – systém sa pokúsi vyčítať meno, heslo a dátum</label>
 <input type="file" name="image" accept="image/png,image/jpeg,image/webp">
@@ -667,6 +889,11 @@ ${mailOpt}
 ${f.submittedAt ? `<p class="hint">Údaje zadané ${esc(f.submittedAt)}. Súkromné okno: <a href="${esc(pathFor(o))}" target="_blank" rel="noopener">${esc(pathFor(o))}</a></p>` : ''}
 ${confirmForm}${sendForm}
 </div>`, 'a adm'));
+  }));
+  admin.post('/objednavky/nastavenia', needAuth, csrf, wrap(async (req, res) => {
+    const v = setRetainDays(req.body && req.body.shotRetainDays);
+    try { await fulfillCfg.save({ shotRetainDays: v }); } catch { /* file/db optional */ }
+    res.redirect(303, '/admin/objednavky?m=ok');
   }));
   admin.post('/objednavky/:id/potvrdit', needAuth, csrf, wrap(async (req, res) => {
     const orders = loadOrders(); const o = orders[req.params.id];
@@ -709,12 +936,18 @@ ${confirmForm}${sendForm}
       }
       o.fulfill = o.fulfill || {};
       o.fulfill.drafts = o.fulfill.drafts || {};
-      o.fulfill.drafts[i] = extracted;
+      const draft = { username: extracted.username || '', until: extracted.until || '', hasPass: false };
+      if (extracted.password) {
+        try { draft.passEnc = sealCreds(extracted.password); draft.hasPass = true; } catch { /* drop plaintext */ }
+      }
+      o.fulfill.drafts[i] = draft;
       saveOrders(orders);
       return res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent('Načítané z fotky – skontrolujte a odošlite.'));
     }
-    const extracted = { username, password, until: soft.parseDate(until) || until };
-    const r = await attachDelivery(o, { text: '', photo: file, extracted, via: 'admin', autoConfirm: false }, req);
+    const draft = (o.fulfill && o.fulfill.drafts && o.fulfill.drafts[i]) || {};
+    const pw = password || (draft.passEnc ? openCreds(draft.passEnc) : '') || ((req.body && req.body.passEnc) ? openCreds(req.body.passEnc) : '');
+    const extracted = { username, password: pw, until: soft.parseDate(until) || until };
+    const r = await attachDelivery(o, { text: '', photo: file, extracted, via: 'admin', autoConfirm: false, orders }, req);
     if (r.error) return res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent(r.error));
     if (o.fulfill && o.fulfill.drafts) delete o.fulfill.drafts[i];
     saveOrders(orders);

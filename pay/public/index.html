@@ -629,6 +629,18 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
 .fulfill-step .gen{flex:0 0 auto;margin:0;padding:8px 12px;border:0;border-radius:10px;background:#334155;color:#fff;font-weight:700;cursor:pointer;white-space:nowrap;font-size:14px}
 .fulfill-step .prev{width:100%;margin:.3rem 0;background:#0b1220;border:1px solid #334155;border-radius:10px;color:#e8eef9;padding:8px;font:16px/1.4 system-ui}
 .slot-box{margin:.8rem 0;padding:.7rem;border:1px dashed #334155;border-radius:12px}
+
+.fulfill-step .field-err{margin:.25rem 0 .15rem;color:#fca5a5;font-size:.82rem;line-height:1.4;font-weight:600}
+.fulfill-step .field-err .en{display:block;font-weight:500;color:#fbcfe8;font-size:.92em;margin-top:1px}
+.fulfill-step input.invalid{border-color:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.25)}
+.intent-pick{display:flex;flex-direction:column;gap:.45rem;margin:.35rem 0 .55rem}
+.intent-pick label.intent-opt{display:flex;align-items:flex-start;gap:.7rem;margin:0;padding:.8rem .85rem;border:2px solid #334155;border-radius:14px;background:#0b1220;color:#e8eef9;font-weight:700;cursor:pointer;line-height:1.3}
+.intent-pick label.intent-opt input{position:absolute;opacity:0;width:1px;height:1px;pointer-events:none}
+.intent-pick .tick{flex:0 0 28px;width:28px;height:28px;border-radius:50%;border:2px solid #475569;background:#0b1220;color:transparent;display:flex;align-items:center;justify-content:center;font-size:1.1rem;font-weight:800;line-height:1}
+.intent-pick .intent-txt .en{display:block;font-weight:500;color:#93a0b8;font-size:.82em;margin-top:2px}
+.intent-pick label.intent-opt:has(input:checked){border-color:#22c55e;background:#052e16;box-shadow:0 0 0 2px rgba(34,197,94,.4)}
+.intent-pick label.intent-opt:has(input:checked) .tick{background:#22c55e;border-color:#16a34a;color:#052e16}
+.intent-pick label.intent-opt:has(input:checked) .intent-txt .en{color:#bbf7d0}
 </style>
   <link rel="stylesheet" href="/tv-theme.css?v=20261026" />
 </head>
@@ -701,40 +713,50 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
         <h2>Vaše údaje k predplatnému</h2>
         <p class="why">Na tento kontakt ti po potvrdení platby pošleme prihlasovacie údaje.<span class="en">We’ll send your login details to this contact after payment is confirmed.</span></p>
         <p class="hint"><b>Aspoň jeden kontakt</b> / At least one contact:</p>
-        <div class="contacts">
+        <div class="contacts" id="contactFields">
           <div><label for="fe">E-mail</label><input id="fe" name="fulfill_email" type="email" maxlength="254" autocomplete="email" placeholder="vas@email.com"></div>
           <div><label for="ft">Telegram</label><input id="ft" name="telegram" maxlength="200" placeholder="@meno" autocapitalize="none" spellcheck="false"></div>
           <div><label for="ff">Facebook</label><input id="ff" name="facebook" maxlength="200" placeholder="odkaz alebo meno"></div>
         </div>
-        <fieldset class="choice" style="border:0;padding:0">
-          <legend style="color:#93a0b8;font-size:.9rem;margin-bottom:.35rem">Typ objednávky / <span class="en" style="display:inline;font-weight:400">Order type</span></legend>
-          <label><input type="radio" name="intent" id="intentRenew" value="renew"> Predĺženie existujúceho účtu<span class="en" style="display:block;font-weight:400;color:#93a0b8">Renewal of an existing account</span></label>
-          <label><input type="radio" name="intent" id="intentNew" value="new" checked> Nový zákazník<span class="en" style="display:block;font-weight:400;color:#93a0b8">New customer</span></label>
-        </fieldset>
-        <p class="hint" id="intentWhy">Ak ešte nemáte Software username do TV, zadajte meno, ktoré chcete mať (min. 8 znakov), alebo kliknite na Vygenerovať – vytvoríme náhodné čitateľné 8-znakové meno.<span class="en" style="display:block">If you don’t have a TV Software username yet, enter the name you want (min. 8 characters) or tap Generate – we’ll create a readable random 8-character name.</span></p>
+        <p class="field-err" id="err-contact" hidden></p>
+        <p class="hint" id="intentWhy">Pri každom zariadení vyberte, či ide o predĺženie existujúceho Software účtu, alebo o nového zákazníka. Vybraná možnosť má zelené orámovanie a fajku ✓.<span class="en" style="display:block">For each device choose renewal of an existing Software account, or new customer. The selected option shows a green border and a ✓ checkmark.</span></p>
         <p class="hint">Software username je meno do TV aplikácie, nie prihlásenie na túto stránku. Na stránku (Prihlásenie / Moja objednávka) použijete e-mail alebo toto prvé meno a heslo nižšie.<span class="en" style="display:block">The Software username is for the TV app, not for this website. To sign in here (Log in / My order) use your e-mail or this first username plus the password below.</span></p>
         <div id="slot1" class="slot-box">
+          <p class="hint" style="margin:0 0 .4rem;font-weight:700;color:#e8eef9">Zariadenie 1 · typ objednávky / <span class="en" style="font-weight:500;color:#93a0b8">Device 1 · order type</span></p>
+          <div class="intent-pick" data-slot="1">
+            <label class="intent-opt"><input type="radio" name="intent1" id="intent1Renew" value="renew"><span class="tick" aria-hidden="true">✓</span><span class="intent-txt">Predĺženie existujúceho účtu<span class="en">Renewal of an existing account</span></span></label>
+            <label class="intent-opt"><input type="radio" name="intent1" id="intent1New" value="new" checked><span class="tick" aria-hidden="true">✓</span><span class="intent-txt">Nový zákazník<span class="en">New customer</span></span></label>
+          </div>
           <label for="fu">Software username / <span class="en" style="display:inline;font-weight:400">TV Software username</span></label>
           <select id="prevUsers" class="prev" hidden></select>
           <div class="sw-row">
             <input id="fu" name="username" minlength="8" maxlength="64" pattern="[A-Za-z0-9._\-]{8,64}" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="min. 8 znakov">
             <button type="button" class="gen" id="gen1">Vygenerovať</button>
           </div>
+          <p class="field-err" id="err-fu" hidden></p>
         </div>
         <div id="slot2" class="slot-box" hidden>
+          <p class="hint" style="margin:0 0 .4rem;font-weight:700;color:#e8eef9">Zariadenie 2 · typ objednávky / <span class="en" style="font-weight:500;color:#93a0b8">Device 2 · order type</span></p>
+          <div class="intent-pick" data-slot="2">
+            <label class="intent-opt"><input type="radio" name="intent2" id="intent2Renew" value="renew"><span class="tick" aria-hidden="true">✓</span><span class="intent-txt">Predĺženie existujúceho účtu<span class="en">Renewal of an existing account</span></span></label>
+            <label class="intent-opt"><input type="radio" name="intent2" id="intent2New" value="new" checked><span class="tick" aria-hidden="true">✓</span><span class="intent-txt">Nový zákazník<span class="en">New customer</span></span></label>
+          </div>
           <label for="fu2">2. zariadenie – Software username / <span class="en" style="display:inline;font-weight:400">2nd device</span></label>
           <p class="hint">Tento balík je pre 2 zariadenia – zadajte druhé, iné meno (tiež môžete vygenerovať).<span class="en" style="display:block">This package is for 2 devices – enter a second, different username (you can generate one).</span></p>
           <div class="sw-row">
             <input id="fu2" name="username2" minlength="8" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="min. 8 znakov">
             <button type="button" class="gen" id="gen2">Vygenerovať</button>
           </div>
+          <p class="field-err" id="err-fu2" hidden></p>
         </div>
         <div id="pwFields">
           <p class="why" style="margin-top:1rem">S týmto heslom sa kedykoľvek vrátiš k objednávke a prihlasovacím údajom (prihlásenie e-mailom alebo prvým Software username).<span class="en">With this password you can return to the order and your login details (sign in with e-mail or the first Software username).</span></p>
           <label for="fpw">Heslo / <span class="en" style="display:inline;font-weight:400">Password</span></label>
           <input id="fpw" name="password" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="min. 8 znakov">
+          <p class="field-err" id="err-fpw" hidden></p>
           <label for="fpw2">Heslo znova / <span class="en" style="display:inline;font-weight:400">Repeat password</span></label>
           <input id="fpw2" name="password2" type="password" minlength="8" maxlength="72" autocomplete="new-password">
+          <p class="field-err" id="err-fpw2" hidden></p>
         </div>
         <p class="hint" id="loggedHint" hidden>Ste prihlásený – objednávka sa priradí k vášmu účtu. Heslo tu zadávať nemusíte.<span class="en" style="display:block">You are signed in – this order will be linked to your account. You don’t need to set a password here.</span></p>
         <p class="hint" id="fulfillErr" hidden></p>
@@ -946,8 +968,8 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     const fulfillStep = document.getElementById('fulfillStep');
     const fulfillErr = document.getElementById('fulfillErr');
     const slot2 = document.getElementById('slot2');
-    const intentNew = document.getElementById('intentNew');
-    const intentRenew = document.getElementById('intentRenew');
+    const intentNew = document.getElementById('intent1New');
+    const intentRenew = document.getElementById('intent1Renew');
     const intentWhy = document.getElementById('intentWhy');
     const prevUsers = document.getElementById('prevUsers');
     let checkoutLogged = false;
@@ -963,21 +985,16 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
       const a = new Uint8Array(8); crypto.getRandomValues(a);
       return Array.from(a, (x) => GEN_ALPH[x % GEN_ALPH.length]).join('');
     }
-    function currentIntent() { return (intentRenew && intentRenew.checked) ? 'renew' : 'new'; }
+    function currentIntent(slot) {
+      const n = slot === 2 ? 2 : 1;
+      const r = document.getElementById('intent' + n + 'Renew');
+      return (r && r.checked) ? 'renew' : 'new';
+    }
     function updateIntentWhy() {
-      if (!intentWhy) return;
-      if (currentIntent() === 'renew') {
-        intentWhy.innerHTML = 'Zadajte existujúce Software username, ktoré chcete predĺžiť (to z TV aplikácie, min. 8 znakov).<span class="en" style="display:block">Enter the existing TV Software username you want to renew (min. 8 characters).</span>';
-      } else {
-        intentWhy.innerHTML = 'Ak ešte nemáte Software username do TV, zadajte meno, ktoré chcete mať (min. 8 znakov), alebo kliknite na Vygenerovať – vytvoríme náhodné čitateľné 8-znakové meno.<span class="en" style="display:block">If you don’t have a TV Software username yet, enter the name you want (min. 8 characters) or tap Generate – we’ll create a readable random 8-character name.</span>';
-      }
-      const showGen = currentIntent() === 'new';
       const g1 = document.getElementById('gen1'), g2 = document.getElementById('gen2');
-      if (g1) g1.hidden = !showGen;
-      if (g2) g2.hidden = !showGen;
-      if (prevUsers) {
-        prevUsers.hidden = !(currentIntent() === 'renew' && prevSoftware.length);
-      }
+      if (g1) g1.hidden = currentIntent(1) !== 'new';
+      if (g2) g2.hidden = currentIntent(2) !== 'new';
+      if (prevUsers) prevUsers.hidden = !(currentIntent(1) === 'renew' && prevSoftware.length);
     }
     function syncSlots() {
       let n = 1;
@@ -1008,15 +1025,17 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     function fulfillValues() {
       let telegram = (ftEl && ftEl.value || '').trim();
       if (telegram && !telegram.startsWith('@') && !/^https?:/i.test(telegram)) telegram = '@' + telegram.replace(/^@/, '');
-      const intent = currentIntent();
-      const u1 = (fuEl && fuEl.value || '').trim().replace(/^@/, '');
-      const u2 = (fu2El && fu2El.value || '').trim().replace(/^@/, '');
-      const username = intent === 'new' ? u1.toLowerCase() : u1;
+      const i1 = currentIntent(1);
+      const i2 = currentIntent(2);
+      const u1raw = (fuEl && fuEl.value || '').trim().replace(/^@/, '');
+      const u2raw = (fu2El && fu2El.value || '').trim().replace(/^@/, '');
+      const u1 = i1 === 'new' ? u1raw.toLowerCase() : u1raw;
+      const u2 = i2 === 'new' ? u2raw.toLowerCase() : u2raw;
       return {
-        intent,
-        username,
-        username2: needSlots >= 2 ? (intent === 'new' ? u2.toLowerCase() : u2) : '',
-        slots: [{ intent, username: intent === 'new' ? u1.toLowerCase() : u1 }].concat(needSlots >= 2 ? [{ intent, username: intent === 'new' ? u2.toLowerCase() : u2 }] : []),
+        intent: i1,
+        username: u1,
+        username2: needSlots >= 2 ? u2 : '',
+        slots: [{ intent: i1, username: u1 }].concat(needSlots >= 2 ? [{ intent: i2, username: u2 }] : []),
         email: (feEl && feEl.value || '').trim(),
         telegram,
         facebook: (ffEl && ffEl.value || '').trim(),
@@ -1026,34 +1045,69 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     }
     function fulfillCheck() {
       const v = fulfillValues();
-      const re = currentIntent() === 'renew' ? RENEW_RE : USER_RE;
-      const msgNew = 'Software username musí mať 8–24 znakov (malé písmená, číslice, . _ -). Alebo kliknite na Vygenerovať.';
-      const msgRen = 'Zadajte existujúce Software username, ktoré chcete predĺžiť (min. 8 znakov, bez medzier).';
-      if (!re.test(v.username)) return { error: currentIntent() === 'renew' ? msgRen : msgNew };
-      if (needSlots >= 2) {
-        if (!re.test(v.username2)) return { error: 'Zadajte druhé Software username pre 2. zariadenie (iné ako prvé).' };
-        if (String(v.username).toLowerCase() === String(v.username2).toLowerCase()) return { error: 'Dve Software username pre 2 zariadenia musia byť rôzne.' };
+      const msgNew = { sk: 'Zadajte Software username (8–24 znakov, malé písmená, číslice, . _ -) alebo kliknite na Vygenerovať.', en: 'Enter a Software username (8–24 characters, lowercase, digits, . _ -) or tap Generate.' };
+      const msgRen = { sk: 'Zadajte existujúce Software username, ktoré chcete predĺžiť (min. 8 znakov, bez medzier).', en: 'Enter the existing Software username you want to renew (min. 8 characters, no spaces).' };
+      const re1 = currentIntent(1) === 'renew' ? RENEW_RE : USER_RE;
+      if (!re1.test(v.username)) {
+        const m = currentIntent(1) === 'renew' ? msgRen : msgNew;
+        return { error: m.sk, en: m.en, field: 'fu' };
       }
-      if (v.email && !F_EMAIL_RE.test(v.email)) return { error: 'Zadajte platný e-mail, alebo nechajte pole prázdne a vyplňte Telegram či Facebook.' };
-      if (v.telegram && !F_TG_RE.test(v.telegram)) return { error: 'Zadajte Telegram v tvare @meno (5–32 znakov), alebo vyplňte e-mail či Facebook.' };
-      if (v.facebook && v.facebook.length < 3) return { error: 'Zadajte odkaz na Facebook alebo meno (min. 3 znaky).' };
-      if (!v.email && !v.telegram && !v.facebook) return { error: 'Vyplňte aspoň jeden kontakt: e-mail, Telegram alebo Facebook.' };
+      if (needSlots >= 2) {
+        const re2 = currentIntent(2) === 'renew' ? RENEW_RE : USER_RE;
+        if (!re2.test(v.username2)) return { error: 'Zadajte druhé Software username pre 2. zariadenie (iné ako prvé).', en: 'Enter a second Software username for the 2nd device (different from the first).', field: 'fu2' };
+        if (String(v.username).toLowerCase() === String(v.username2).toLowerCase()) return { error: 'Dve Software username pre 2 zariadenia musia byť rôzne.', en: 'The two Software usernames for 2 devices must be different.', field: 'fu2' };
+      }
+      if (v.email && !F_EMAIL_RE.test(v.email)) return { error: 'Zadajte platný e-mail, alebo nechajte pole prázdne a vyplňte Telegram či Facebook.', en: 'Enter a valid e-mail, or leave it empty and fill in Telegram or Facebook.', field: 'fe' };
+      if (v.telegram && !F_TG_RE.test(v.telegram)) return { error: 'Zadajte Telegram v tvare @meno (5–32 znakov), alebo vyplňte e-mail či Facebook.', en: 'Enter Telegram as @username (5–32 characters), or fill in e-mail or Facebook.', field: 'ft' };
+      if (v.facebook && v.facebook.length < 3) return { error: 'Zadajte odkaz na Facebook alebo meno (min. 3 znaky).', en: 'Enter a Facebook link or name (min. 3 characters).', field: 'ff' };
+      if (!v.email && !v.telegram && !v.facebook) return { error: 'Vyplňte aspoň jeden kontakt: e-mail, Telegram alebo Facebook.', en: 'Fill in at least one contact: e-mail, Telegram or Facebook.', field: 'contact' };
       if (!checkoutLogged) {
         if (!v.password || v.password.length < 8 || v.password.length > 72 || v.password.toLowerCase() === String(v.username).toLowerCase()) {
-          return { error: 'Heslo musí mať 8–72 znakov a nesmie byť rovnaké ako Software username.' };
+          return { error: 'Heslo musí mať 8–72 znakov a nesmie byť rovnaké ako Software username.', en: 'Password must be 8–72 characters and must not match the Software username.', field: 'fpw' };
         }
-        if (v.password !== v.password2) return { error: 'Heslá sa nezhodujú.' };
+        if (v.password !== v.password2) return { error: 'Heslá sa nezhodujú.', en: 'The passwords do not match.', field: 'fpw2' };
       }
       return { ok: true, values: v };
     }
     function fulfillOk() { return !!fulfillCheck().ok; }
-    function showFulfillErr(msg) {
+    function showFulfillErr(msg, en) {
       if (!fulfillErr) return;
       if (!msg) { fulfillErr.hidden = true; fulfillErr.textContent = ''; fulfillErr.className = 'hint'; return; }
       fulfillErr.hidden = false;
       fulfillErr.className = 'hint';
       fulfillErr.style.color = '#fca5a5';
-      fulfillErr.textContent = msg;
+      fulfillErr.textContent = msg + (en ? ' / ' + en : '');
+    }
+    function clearFulfillFieldErrs() {
+      ['err-fu','err-fu2','err-contact','err-fpw','err-fpw2'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) { el.hidden = true; el.textContent = ''; }
+      });
+      [fuEl, fu2El, feEl, ftEl, ffEl, fpwEl, fpw2El].forEach((el) => { if (el) el.classList.remove('invalid'); });
+    }
+    function setFulfillFieldErr(field, sk, en) {
+      const map = { fu: 'err-fu', fu2: 'err-fu2', contact: 'err-contact', fe: 'err-contact', ft: 'err-contact', ff: 'err-contact', fpw: 'err-fpw', fpw2: 'err-fpw2' };
+      const err = document.getElementById(map[field] || ('err-' + field));
+      if (err) {
+        err.hidden = !sk;
+        err.innerHTML = sk ? (sk.replace(/</g,'') + (en ? '<span class="en">' + String(en).replace(/</g,'') + '</span>' : '')) : '';
+      }
+      const input = field === 'contact' ? (feEl || ftEl || ffEl) : document.getElementById(field);
+      if (input) input.classList.add('invalid');
+      return input || (field === 'contact' ? document.getElementById('contactFields') : null);
+    }
+    function revealFulfillGaps(opts) {
+      const scroll = !opts || opts.scroll !== false;
+      clearFulfillFieldErrs();
+      const c = fulfillCheck();
+      if (c.ok) { showFulfillErr(''); return null; }
+      showFulfillErr(c.error, c.en);
+      const el = setFulfillFieldErr(c.field || 'fu', c.error, c.en);
+      if (scroll && el && el.scrollIntoView) {
+        try { if (el.focus) el.focus({ preventScroll: true }); } catch (e) {}
+        requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+      }
+      return c;
     }
     function refreshDevicesFromAmount() {
       if (plan && Number(plan.devices) >= 2) { syncSlots(); return; }
@@ -1130,18 +1184,14 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
 
     function syncGoButton(p) {
       const selected = p || providers.find((x) => x.id === providerEl.value);
-      const canAttempt = !!selected && isSelectable(selected);
-      goBtn.disabled = !canAttempt;
       const shown = syncFulfillStep();
-      if (selected && isSelectable(selected) && hasAmountLink(selected) && fulfillOk()) {
-        goBtn.textContent = 'Pokračovať k platbe →';
-      } else if (selected && isSelectable(selected) && shown && !fulfillOk()) {
-        goBtn.textContent = 'Pokračovať – vyplniť údaje →';
-      } else if (selected && isSelectable(selected)) {
-        goBtn.textContent = 'Pokračovať k platbe: ' + displayName(selected).replace(/\s*★.*$/, '') + ' →';
-      } else {
-        goBtn.textContent = 'Pokračovať →';
-      }
+      const methodOk = !!selected && isSelectable(selected);
+      const ready = methodOk && formReady(selected) && fulfillOk();
+      goBtn.disabled = !ready;
+      if (!methodOk) goBtn.textContent = 'Pokračovať →';
+      else if (!fulfillOk()) goBtn.textContent = 'Vyplňte údaje k predplatnému →';
+      else if (hasAmountLink(selected)) goBtn.textContent = 'Zaplatiť →';
+      else goBtn.textContent = 'Pokračovať k platbe: ' + displayName(selected).replace(/\s*★.*$/, '') + ' →';
     }
 
     function updateSelectionCallout(p) {
@@ -1217,6 +1267,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     }
 
     function clearFieldAlerts() {
+      clearFulfillFieldErrs();
       emailEl.classList.remove('field-error');
       amountEl.classList.remove('field-error');
       if (countryEl) countryEl.classList.remove('field-error');
@@ -1264,6 +1315,10 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
           emailHintEl.className = 'hint error-msg';
           emailHintEl.textContent = message;
         }
+      } else if (field === 'fulfill' || field === 'fu' || field === 'fu2' || field === 'contact' || field === 'fe' || field === 'ft' || field === 'ff' || field === 'fpw' || field === 'fpw2') {
+        syncFulfillStep();
+        const c = revealFulfillGaps({ scroll: false });
+        el = setFulfillFieldErr((c && c.field) || field, message, (c && c.en) || '');
       }
       statusEl.className = 'status error';
       statusEl.textContent = message;
@@ -1293,7 +1348,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
         // Provider e-mail is no longer mandatory when the contact step has Telegram/Facebook (or e-mail).
       }
       const fc = fulfillCheck();
-      if (!fc.ok) return { field: 'fulfill', msg: fc.error };
+      if (!fc.ok) return { field: fc.field || 'fulfill', msg: fc.error, en: fc.en || '' };
       return null;
     }
 
@@ -1827,26 +1882,33 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     });
 
     function onFulfillInput() {
-      if (currentIntent() === 'new') {
-        [fuEl, fu2El].forEach((el) => {
-          if (el && el.value && el.value !== el.value.toLowerCase()) {
-            const s = el.selectionStart, e = el.selectionEnd;
-            el.value = el.value.toLowerCase();
-            try { el.setSelectionRange(s, e); } catch (err) {}
-          }
-        });
+      if (currentIntent(1) === 'new' && fuEl && fuEl.value && fuEl.value !== fuEl.value.toLowerCase()) {
+        const s0 = fuEl.selectionStart, e0 = fuEl.selectionEnd;
+        fuEl.value = fuEl.value.toLowerCase();
+        try { fuEl.setSelectionRange(s0, e0); } catch (err) {}
+      }
+      if (currentIntent(2) === 'new' && fu2El && fu2El.value && fu2El.value !== fu2El.value.toLowerCase()) {
+        const s0 = fu2El.selectionStart, e0 = fu2El.selectionEnd;
+        fu2El.value = fu2El.value.toLowerCase();
+        try { fu2El.setSelectionRange(s0, e0); } catch (err) {}
       }
       const c = fulfillCheck();
-      showFulfillErr(c.ok ? '' : (fuEl && fuEl.value ? c.error : ''));
+      if (c.ok) { clearFulfillFieldErrs(); showFulfillErr(''); }
+      else if ((fuEl && fuEl.value) || (feEl && feEl.value) || (ftEl && ftEl.value) || (ffEl && ffEl.value)) {
+        revealFulfillGaps({ scroll: false });
+      }
       if (c.ok && statusEl) { statusEl.className = 'status'; statusEl.textContent = ''; }
       if (c.ok && c.values.email && emailEl && !emailEl.value) emailEl.value = c.values.email;
       syncGoButton();
     }
     [fuEl, fu2El, feEl, ftEl, ffEl, fpwEl, fpw2El].forEach((el) => { if (el) el.addEventListener('input', onFulfillInput); });
-    [intentNew, intentRenew].forEach((el) => { if (el) el.addEventListener('change', () => { updateIntentWhy(); onFulfillInput(); }); });
-    function bindGen(btn, input) { if (btn && input) btn.addEventListener('click', () => { input.value = genUser(); if (intentNew) intentNew.checked = true; updateIntentWhy(); onFulfillInput(); }); }
-    bindGen(document.getElementById('gen1'), fuEl);
-    bindGen(document.getElementById('gen2'), fu2El);
+    ['intent1New','intent1Renew','intent2New','intent2Renew'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', () => { updateIntentWhy(); onFulfillInput(); });
+    });
+    function bindGen(btn, input, slot) { if (btn && input) btn.addEventListener('click', () => { input.value = genUser(); const n = document.getElementById(slot === 2 ? 'intent2New' : 'intent1New'); if (n) n.checked = true; updateIntentWhy(); onFulfillInput(); }); }
+    bindGen(document.getElementById('gen1'), fuEl, 1);
+    bindGen(document.getElementById('gen2'), fu2El, 2);
 
     emailEl.addEventListener('input', () => {
       if (emailOk()) clearEmailAlert();
@@ -1895,12 +1957,10 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
 
       const missing = firstMissingField();
       if (missing) {
-        if (missing.field === 'fulfill') {
+        showFieldAlert(missing.field, missing.msg);
+        if (['fulfill','fu','fu2','contact','fe','ft','ff','fpw','fpw2'].indexOf(missing.field) >= 0) {
           syncFulfillStep();
-          showFulfillErr(missing.msg);
-          if (fulfillStep) fulfillStep.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } else {
-          showFieldAlert(missing.field, missing.msg);
+          revealFulfillGaps({ scroll: true });
         }
         return;
       }

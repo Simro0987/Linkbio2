@@ -232,3 +232,138 @@ t('telegram date-fix callback round-trip and order id from notify', () => {
 });
 
 Promise.all(_pending).then(() => { if (process.exitCode) process.exit(process.exitCode); }).catch((e) => { console.error(e); process.exit(1); });
+
+t('unlabeled first line username, second password, extra notes; predlzene do is expiry-only', () => {
+  const a = soft.parseCredsFromText('tvmeno01\nTajne.123\nNainštalujte TiviMate.');
+  assert.strictEqual(a.username, 'tvmeno01');
+  assert.strictEqual(a.password, 'Tajne.123');
+  assert.ok(/TiviMate/.test(a.notes));
+  assert.ok(!a.expiryOnly);
+  const b = soft.parseCredsFromText('tvmeno01\nTajne.123\n1.12.2026');
+  assert.strictEqual(b.username, 'tvmeno01');
+  assert.strictEqual(b.password, 'Tajne.123');
+  assert.strictEqual(b.until, '2026-12-01');
+  assert.strictEqual(b.notes, '');
+  const c = soft.parseCredsFromText('predĺžené do 12.03.2027');
+  assert.strictEqual(c.until, '2027-03-12');
+  assert.ok(c.expiryOnly);
+  assert.ok(!c.username && !c.password);
+  const d = soft.parseCredsFromText('predlzene do 12.3.2027');
+  assert.strictEqual(d.until, '2027-03-12');
+  assert.ok(d.expiryOnly);
+  const e = soft.parseCredsFromText('olduser12\npredĺžené do 12.03.2027');
+  assert.strictEqual(e.username, 'olduser12');
+  assert.ok(e.expiryOnly);
+  assert.strictEqual(e.until, '2027-03-12');
+  assert.strictEqual(soft.maskSecret('Tajne.123'), 'Ta…(9)');
+});
+
+t('attachDelivery unlabeled lines fills card and does not store plaintext password', () => {
+  process.env.DATA_ENC_KEY = process.env.DATA_ENC_KEY || 'ab'.repeat(32);
+  const o = { orderId: 'ord_ul', status: 'pending', fulfill: { submittedAt: '2026-11-09', username: 'tvmeno01', slots: [{ intent: 'new', username: 'tvmeno01' }] } };
+  return f.attachDelivery(o, { text: 'tvmeno01\nAbcdefgh\n1.12.2026', via: 'telegram', autoConfirm: true }, null).then((r) => {
+    assert.ok(r.ok, r.error);
+    assert.strictEqual(r.card.username, 'tvmeno01');
+    assert.strictEqual(r.card.until, '2026-12-01');
+    const blob = JSON.stringify(o);
+    assert.ok(!blob.includes('Abcdefgh'));
+    const msgs = o.fulfill.messages || [];
+    assert.ok(msgs.some((m) => m.type === 'credsCard' && m.card && m.card.until === '2026-12-01' && m.card.passEnc));
+    assert.ok(!msgs.some((m) => m.type === 'text' && f.openCreds(m.textEnc).includes('Abcdefgh')));
+  });
+});
+
+t('expiry-only reply keeps previous password and updates until', () => {
+  process.env.DATA_ENC_KEY = process.env.DATA_ENC_KEY || 'ab'.repeat(32);
+  const prev = { orderId: 'ord_old', fulfill: { username: 'olduser12', slots: [{ intent: 'renew', username: 'olduser12' }], lines: [{ username: 'olduser12', until: '2026-01-01', passEnc: f.sealCreds('OldPass99') }], messages: [{ type: 'credsCard', at: '2026-01-01', card: { username: 'olduser12', until: '2026-01-01', passEnc: f.sealCreds('OldPass99') } }] } };
+  const o = { orderId: 'ord_ren', status: 'pending', fulfill: { submittedAt: '2026-11-09', username: 'olduser12', slots: [{ intent: 'renew', username: 'olduser12' }] } };
+  const bag = { ord_old: prev, ord_ren: o };
+  return f.attachDelivery(o, { text: 'predĺžené do 12.03.2027', via: 'telegram', autoConfirm: true, orders: bag }, null).then((r) => {
+    assert.ok(r.ok, r.error);
+    assert.ok(r.expiryOnly);
+    assert.strictEqual(r.card.until, '2027-03-12');
+    assert.strictEqual(r.card.username, 'olduser12');
+    const card = (o.fulfill.messages || []).find((m) => m.type === 'credsCard').card;
+    assert.strictEqual(f.openCreds(card.passEnc), 'OldPass99');
+    assert.ok(!JSON.stringify(o).includes('OldPass99'));
+  });
+});
+
+t('new photo for a username deletes the previous screenshot blob across orders; 2nd slot is kept', () => {
+  process.env.DATA_ENC_KEY = process.env.DATA_ENC_KEY || 'ab'.repeat(32);
+  const jpeg = Buffer.from('/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==', 'base64');
+  const shot = (user, tag) => ({
+    id: 's' + user + tag, type: 'shot', mime: 'image/jpeg',
+    shotEnc: f.sealCreds(jpeg.toString('base64')),
+    card: { username: user, until: '2027-01-01', passEnc: f.sealCreds('Secret12') },
+  });
+  const a = { orderId: 'ord_a', fulfill: { username: 'tvmeno01', slots: [{ intent: 'new', username: 'tvmeno01' }], messages: [shot('tvmeno01', '1')] } };
+  const two = { orderId: 'ord_two', status: 'paid', fulfill: { submittedAt: '2026-11-09', username: 'tvmeno01', slots: [{ intent: 'new', username: 'tvmeno01' }, { intent: 'new', username: 'tvmeno02' }], messages: [shot('tvmeno01', 'x'), shot('tvmeno02', 'y')] } };
+  const bag = { ord_a: a, ord_two: two };
+  return f.attachDelivery(two, { photo: { buf: jpeg, mime: 'image/jpeg' }, extracted: { username: 'tvmeno01', password: 'Secret12', until: '2027-06-01' }, via: 'telegram', autoConfirm: true, orders: bag }, null).then((r) => {
+    assert.ok(r.ok, r.error);
+    assert.ok(!a.fulfill.messages[0].shotEnc, 'old order shot must be removed');
+    const m1 = two.fulfill.messages.find((m) => m.card && m.card.username === 'tvmeno01' && m.shotReplacedAt);
+    const m2 = two.fulfill.messages.find((m) => m.card && m.card.username === 'tvmeno02');
+    const fresh = two.fulfill.messages.filter((m) => m.type === 'shot' && m.shotEnc && m.card && m.card.username === 'tvmeno01');
+    assert.strictEqual(fresh.length, 1);
+    assert.ok(m2 && m2.shotEnc, 'other device screenshot must stay');
+    const html = f.renderMessages(two, { get: () => 'lnkbio.onrender.com' });
+    const fotos = html.match(/\/foto\//g) || [];
+    assert.strictEqual(fotos.length, 2); // latest for user1 + kept user2
+  });
+});
+
+t('sweepExpiredShots deletes only images 90 days after latest expiry unless renewed', () => {
+  process.env.DATA_ENC_KEY = process.env.DATA_ENC_KEY || 'ab'.repeat(32);
+  f.setRetainDays(90);
+  const jpeg = Buffer.from('aaaa', 'utf8').toString('base64');
+  const mk = (id, user, until, extra) => ({
+    orderId: id,
+    fulfill: {
+      username: user,
+      slots: [{ username: user, until, ...extra }],
+      lines: [{ username: user, until }],
+      messages: [{ type: 'shot', mime: 'image/jpeg', shotEnc: f.sealCreds(jpeg), card: { username: user, until, passEnc: f.sealCreds('Xxxxxx12') } }, { type: 'credsCard', card: { username: user, until, passEnc: f.sealCreds('Xxxxxx12') } }],
+    },
+  });
+  const expired = mk('ord_e', 'userone1', '2025-01-01');
+  const renewed = mk('ord_r', 'usertwo2', '2025-01-01');
+  renewed.fulfill.lines[0].until = '2028-01-01';
+  renewed.fulfill.messages[1].card.until = '2028-01-01';
+  const bag = { ord_e: expired, ord_r: renewed };
+  const r = f.sweepExpiredShots(bag, new Date('2026-11-09T12:00:00Z'));
+  assert.ok(r.n >= 1);
+  assert.ok(!expired.fulfill.messages[0].shotEnc, 'expired shot removed');
+  assert.ok(expired.fulfill.messages[1].card.passEnc, 'credentials stay');
+  assert.ok(renewed.fulfill.messages[0].shotEnc, 'renewed username shot stays');
+  f.setRetainDays(90);
+});
+
+t('admin OCR drafts do not keep a plaintext password', () => {
+  process.env.DATA_ENC_KEY = process.env.DATA_ENC_KEY || 'ab'.repeat(32);
+  const o = { orderId: 'ord_d', fulfill: { drafts: { 0: { username: 'tvmeno01', password: 'PlainPass1', until: '2027-01-01' } } } };
+  assert.ok(f.scrubDrafts(o));
+  assert.ok(!o.fulfill.drafts[0].password);
+  assert.ok(o.fulfill.drafts[0].passEnc);
+  assert.strictEqual(f.openCreds(o.fulfill.drafts[0].passEnc), 'PlainPass1');
+  assert.ok(!JSON.stringify(o).includes('PlainPass1'));
+});
+
+t('validateCheckout rejects missing contact or username with an error (API 400)', () => {
+  const noUser = f.validateCheckout({ telegram: '@meno_abc' });
+  assert.ok(noUser.error);
+  const noContact = f.validateCheckout({ slots: [{ intent: 'new', username: 'tvmeno01' }] });
+  assert.ok(noContact.error);
+  assert.ok(/kontakt/i.test(noContact.error));
+  const ok = f.validateCheckout({ slots: [{ intent: 'new', username: 'tvmeno01' }], email: 'a@b.sk' });
+  assert.ok(!ok.error, ok.error);
+});
+
+t('retain days clamp 60–90 default 90', () => {
+  assert.strictEqual(f.clampRetain(90), 90);
+  assert.strictEqual(f.clampRetain(60), 60);
+  assert.strictEqual(f.clampRetain(45), 60);
+  assert.strictEqual(f.clampRetain(120), 90);
+  f.setRetainDays(90);
+});
