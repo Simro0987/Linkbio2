@@ -1,0 +1,14 @@
+'use strict';
+const assert = require('assert');
+const ui = require('../adminui');
+assert.ok(ui.GROUPS.some((g) => g.id === 'kontakt'));
+assert.ok(ui.searchIndex().some((t) => t.href === '/admin/kontakt' && /email|telegram/i.test(t.q)));
+const html = ui.dashboard({ slug: 'tv', msg: '' });
+assert.ok(html.includes('Kontaktné údaje'));
+assert.ok(html.includes('/admin/kontakt'));
+assert.ok(!/tokigo/i.test(html));
+const sh = ui.shell({ title: 'Admin', body: '<h1>x</h1>', cssV: '1' });
+assert.ok(sh.includes('adside') && sh.includes('adSearch'));
+const login = ui.shell({ title: 'Prihlásenie', body: '<form>', cls: 'adm login', cssV: '1' });
+assert.ok(!login.includes('adside'));
+console.log('ok adminui');

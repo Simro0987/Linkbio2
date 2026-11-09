@@ -236,14 +236,33 @@ ${li(WG.paygate, '💳 Karta / Apple Pay / Google Pay – PayGate.to', pg ? (pg.
 <fieldset class="pmfs"><legend>Logo</legend><div class="pmlibs">${lib}</div><p class="hint">Vlastné logo nahrajte cez „Upraviť“ pri vlastnom spôsobe platby, alebo použite knižnicu.</p></fieldset>
 <label class="ck"><input type="checkbox" name="enabled" value="1"${!e || e.enabled ? ' checked' : ''}> Zapnutá (zobraziť zákazníkom)</label>
 <p class="row"><button>💾 ${e ? 'Uložiť zmeny' : 'Pridať kartu'}</button>${e ? `<a class="btnl g2" href="${GC}">Zrušiť</a>` : ''}</p></form>`;
-    return `<h1>🎁 Darčekové karty</h1>${msgOf(req)}<p class="hint">Karty, ktoré si zákazník môže kúpiť (SK/CZ) a zaplatiť kódom. Poradie tu = poradie na platobnej stránke v skupine „Poukážky / darčekové karty“.</p>
+    return `<h1>🎁 Darčekové karty</h1>${msgOf(req)}<p class="hint">Zákazník vidí jednu voľbu „Darčeková karta“. Systém vyberie najvýhodnejšiu kombináciu Azteco (Lightning / Onchain / Azteco) alebo Amazon DE podľa sumy. Azteco má prednosť, ak nie je drahšie o viac ako nastavený prah (predvolene 0,70 €). Poplatky sa zákazníkovi nezobrazujú. Ceny nižšie zadajte len ak poznáte skutočnú nákupnú cenu – inak sa berie nominálna hodnota karty.</p>
+${v.pick || ''}
 <div class="card pmw"><h2>Zoznam (${n})</h2><ul class="pml0">${rows || '<li class="hint">Žiadne karty.</li>'}</ul>
 <form method="post" action="${GC}/obnovit" class="pmf" data-confirm="Obnoviť predvolený zoznam kariet? Vaše zmeny sa stratia.">${tok}<button class="sm g2">♻️ Obnoviť predvolené</button></form></div>${form}`;
+  }
+  const callGp = (action, extra) => call(action, extra, 30000, '/api/admin-bridge/giftpick');
+  function pickForm(req, gp) {
+    if (!gp) return '';
+    const tok = hid(req);
+    const rows = (gp.rows || []).map((r) => `<tr><td>${esc(r.label)}</td><td>${esc(r.faceEur)} €</td><td><input name="price_${esc(r.id)}" value="${r.priceEur != null ? esc(r.priceEur) : ''}" inputmode="decimal" placeholder="${esc(r.faceEur)}" style="width:6rem"></td></tr>`).join('');
+    return `<form method="post" action="${GC}/prah" class="card">${tok}<h2>Inteligentný výber Azteco vs Amazon</h2>
+<p class="hint">Ak Azteco stojí najviac o tento prah viac ako Amazon, vyberie sa Azteco. Prázdna nákupná cena = použije sa nominál (nesmú sa vymýšľať ceny).</p>
+<label>Prah v € (predvolene 0,70)</label><input name="threshold" value="${esc(gp.threshold)}" inputmode="decimal" required>
+<div style="overflow:auto"><table class="tbl"><thead><tr><th>Karta</th><th>Nominál</th><th>Nákupná cena €</th></tr></thead><tbody>${rows}</tbody></table></div>
+<button>Uložiť prah a ceny</button></form>`;
   }
   admin.get('/platobne-metody/darcekove-karty', needAuth, wrap(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     let v; try { v = await callGc('gc_list'); } catch (e) { return res.send(shellPage(req, 'Darčekové karty', `<h1>🎁 Darčekové karty</h1>${offBox(e)}`)); }
+    let gp = null; try { gp = await callGp('gp_get'); } catch { /* optional */ }
+    v.pick = pickForm(req, gp);
     res.send(shellPage(req, 'Darčekové karty', gcPage(req, v, String(req.query.upravit || '').slice(0, 60))));
+  }));
+  admin.post('/platobne-metody/darcekove-karty/prah', needAuth, csrf, wrap(async (req, res) => {
+    const b = req.body || {}, prices = {};
+    for (const [k, val] of Object.entries(b)) if (k.startsWith('price_')) prices[k.slice(6)] = val;
+    try { await callGp('gp_save', { threshold: b.threshold, prices }); await audit(req, 'giftpick_save', String(b.threshold || '')); res.redirect(303, GC + '?m=saved'); } catch (e) { fail(req, res, e, GC); }
   }));
   const gcPost = (sub, action, pick, m) => admin.post('/platobne-metody/darcekove-karty/' + sub, needAuth, csrf, wrap(async (req, res) => {
     const b = req.body || {};

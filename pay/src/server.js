@@ -32,6 +32,8 @@ const cryptoDirect = require('./cryptoDirect');
 const blink = require('./blink');
 const methodCoins = require('./methodCoins');
 const giftCards = require('./giftCards');
+const giftPick = require('./giftPick');
+const fulfill = require('./fulfill');
 const oxapay = require('./oxapay');
 const walletGw = require('./walletGateway');
 const changelly = require('./changelly');
@@ -148,6 +150,7 @@ function loadOrders() {
 function saveOrders(orders) {
   try { if (global.__lnkAccounts) setImmediate(global.__lnkAccounts.kick); } catch { /* accounts optional */ }
   try { for (const o of Object.values(orders || {})) require('./statusLinks').ensureOrder(o); } catch (e) { appendLog('STATUS_TOKEN_FAIL ' + e.message); }
+  try { for (const o of Object.values(orders || {})) if (fulfill.isPaid(o)) fulfill.ensure(o); } catch (e) { appendLog('FULFILL_TOKEN_FAIL ' + e.message); }
   if (orderDb.enabled()) { orderDb.save(orders, appendLog); return; } // Neon is the store – no extra in-memory/disk copies
   Object.keys(memoryOrders).forEach((k) => delete memoryOrders[k]);
   Object.assign(memoryOrders, orders);
@@ -159,7 +162,7 @@ function saveOrders(orders) {
   }
 }
 
-global.__payOrders = { load: () => loadOrders() };
+global.__payOrders = { load: () => loadOrders(), save: (o) => saveOrders(o) };
 function appendLog(line) {
   const stamp = new Date().toISOString();
   const msg = `[${stamp}] ${line}`;
@@ -1081,7 +1084,7 @@ function buildExtraProviders() {
 
 /** Built-in methods + admin overrides (logo / on-off / name / order) + admin-added custom payment links. */
 function groupProviders(chainProviders) {
-  const res = payMethods.apply(walletGw.inject(oxapay.inject(giftCards.inject(groupProvidersBase(chainProviders)))), METHOD_GROUPS.map((g) => ({ key: g.key, label: g.label, color: g.color || null })));
+  const res = giftPick.collapse(payMethods.apply(walletGw.inject(oxapay.inject(giftCards.inject(groupProvidersBase(chainProviders)))), METHOD_GROUPS.map((g) => ({ key: g.key, label: g.label, color: g.color || null }))));
   // Per-amount payment links: expose only the matching amounts (never URLs) so the UI can go amount-only on an exact match.
   const al = amountLinks.amountsByMethod();
   const tag = (it) => { if (it && al[it.id]) it.amountLinks = al[it.id]; };
@@ -1418,6 +1421,8 @@ cryptoDirect.mount(app, { loadOrders, saveOrders, appendLog });
 // Public: ⚡ Blink Lightning invoice page (/blink-pay) + admin bridge /api/admin-bridge/blink
 blink.mount(app, { loadOrders, saveOrders, appendLog });
 giftCards.mount(app, { appendLog });
+giftPick.mount(app);
+fulfill.mount(app, { loadOrders, saveOrders, appendLog });
 // 🪙 OxaPay invoices (/oxapay-pay, /oxapay/callback) + 💳 Card2Crypto / PayGate.to card payments (/wg-pay, /wg-callback) – hidden until configured in admin
 oxapay.mount(app, { loadOrders, saveOrders, appendLog });
 walletGw.mount(app, { loadOrders, saveOrders, appendLog });
@@ -5243,6 +5248,7 @@ async function payBoot() {
   await step('METHOD_RANK', () => methodRank.init({ appendLog, pool: () => orderDb.pool(), loadOrders }));
   await step('WALLETS', () => wallets.init(appendLog));
   await step('GIFTCARDS', () => giftCards.init(appendLog));
+  await step('GIFTPICK', () => giftPick.init(appendLog));
   await step('OXAPAY', () => oxapay.init(appendLog));
   await step('WALLET_GW', () => walletGw.init(appendLog));
   await step('AMOUNT_LINKS', () => amountLinks.init(appendLog, { methods: amountLinkMethods }));

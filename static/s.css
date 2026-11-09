@@ -210,3 +210,32 @@ button.sm,.btnl.sm{padding:6px 10px;font-size:.85rem;min-height:34px}
 .galed{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:8px 0}.gale{border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:8px}.gale img,.gprev{display:block;max-width:100%;height:auto;border-radius:8px}
 .secedit input[type=color]{width:56px;height:34px;padding:2px;vertical-align:middle}.sech2{font-size:1.05rem;margin:18px 0 6px;opacity:.9}
 @media(max-width:820px){.dli .dact{flex-basis:100%}}
+
+/* admin dashboard – sidebar, search, tiles */
+.visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+body.adapp{display:grid;grid-template-columns:230px minmax(0,1fr);grid-template-rows:auto auto 1fr;grid-template-areas:"top top" "hits hits" "side main";min-height:100vh;align-items:stretch}
+.adside{grid-area:side;position:sticky;top:0;height:calc(100vh - 0px);overflow:auto;padding:14px 10px 24px;background:rgba(11,13,24,.96);border-right:1px solid #263052;z-index:8}
+.adlogo{display:flex;align-items:center;gap:8px;color:#e6e9f5;text-decoration:none;font-weight:700;margin:0 8px 14px}
+.adside ul{list-style:none;margin:0;padding:0}
+.adside a{display:block;padding:9px 10px;border-radius:8px;color:#c9d4ff;text-decoration:none;font-weight:600;font-size:.92rem}
+.adside a:hover,.adside a.on{background:rgba(229,9,20,.16);color:#fff}
+.adside-foot{margin:16px 10px 0;font-size:.8rem}
+.adtop{grid-area:top;display:flex;align-items:center;gap:10px;padding:10px 16px;background:rgba(11,13,24,.96);border-bottom:1px solid #263052;position:sticky;top:0;z-index:9;width:auto}
+body.adapp main.w{grid-area:main;min-width:0;padding:20px 18px 48px;max-width:1100px}
+.adburger{display:none;background:#263052;color:#fff;border:0;border-radius:8px;width:40px;height:40px;font-size:1.2rem;cursor:pointer}
+.adsearch{flex:1;min-width:0;margin:0 8px}
+.adsearch input{width:100%;box-sizing:border-box;margin:0;padding:9px 12px;border-radius:999px;background:#07080f;border:1px solid #2c3760;color:#e6e9f5}
+.adhits{grid-area:hits;padding:8px 16px;background:#0f1424;border-bottom:1px solid #263052;z-index:5}
+.adhits a{display:block;padding:8px 10px;border-radius:8px;color:#e6e9f5;text-decoration:none}
+.adhits a:hover{background:rgba(255,255,255,.06)}
+.adhits span{display:block;font-size:.8rem;opacity:.7}
+.adm .adg{margin:22px 0}
+.adm .adg .tiles{margin-top:10px}
+@media(max-width:820px){
+  body.adapp{display:block}
+  .adburger{display:inline-grid;place-items:center}
+  .adside{position:fixed;left:0;top:0;transform:translateX(-105%);transition:transform .22s;height:100vh;width:min(78vw,300px);box-shadow:8px 0 24px #0008}
+  body.ad-nav-open .adside{transform:none}
+  body.adapp main.w{padding:16px 14px 40px;max-width:none}
+  .adtop b{display:none}
+}

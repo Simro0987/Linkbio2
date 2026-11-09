@@ -338,7 +338,11 @@ app.get('/theme.css', wrap(async (req, res) => {
   res.send(themeCss(s));
 }));
 
-const page = (title, body, cls = '', desc = '', extra = '') => `<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(desc || title)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head><body${/\badm\b/.test(cls) ? ' class="adm"' : ''}>${/\badm\b/.test(cls) ? '<header class="ah"><span class="bl">▶</span><b>TV Software</b><span class="at">Admin</span></header>' : ''}<main class="w ${cls}">${body}</main></body></html>`;
+const adminui = require('./adminui');
+const page = (title, body, cls = '', desc = '', extra = '') => {
+  if (/\badm\b/.test(cls)) return adminui.shell({ title, body, cls, desc, extra, cssV: CSS_V });
+  return `<!doctype html><html lang="sk"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(desc || title)}"><meta property="og:title" content="${esc(title)}"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head><body><main class="w ${cls}">${body}</main></body></html>`;
+};
 
 const CHAT_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 'chat.js')) + fs.readFileSync(path.join(__dirname, 'static', 'chat.css'))).digest('hex').slice(0, 10);
 // short one-word payment link
@@ -371,7 +375,8 @@ const admin = express.Router();
 admin.use(session);
 admin.use((req, res, next) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Robots-Tag', 'noindex'); next(); });
 const hid = req => `<input type="hidden" name="_csrf" value="${esc(req.sess.csrf)}">`;
-const ok = (res, m = 'ok', a = '') => res.redirect(303, '/admin?m=' + m + (a ? '#' + a : ''));
+const safeNext = (v, def = '/admin') => { const x = String(v || '').trim(); return /^\/admin(?:\/[A-Za-z0-9\/_-]*)?$/.test(x) ? x : def; };
+const ok = (res, m = 'ok', a = '') => res.redirect(303, ((res.locals && res.locals.okTo) || '/admin') + '?m=' + m + (a ? '#' + a : ''));
 
 admin.get('/login', (req, res) => {
   if (req.sess.auth) return res.redirect(303, '/admin');
@@ -402,7 +407,32 @@ const MSGS = { ok: 'Uložené.', pmok: '💳 Platobné metódy boli aktualizovan
   badpw: 'Aktuálne heslo nie je správne.', shortpw: 'Nové heslo musí mať aspoň 12 znakov.', pwmismatch: 'Nové heslá sa nezhodujú.', pwok: 'Heslo bolo zmenené.', lock: 'Príliš veľa pokusov. Skúste neskôr.' };
 const sel = (name, opts, cur) => `<select name="${name}">${Object.entries(opts).map(([k, v]) => `<option value="${k}"${k === cur ? ' selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
 
+
 admin.get('/', needAuth, wrap(async (req, res) => {
+  const s = await getSettings();
+  const m = MSGS[req.query.m] ? `<div class="msg ${/^(ok|pwok|restored|pmok)$/.test(req.query.m) ? '' : 'err'}">${esc(MSGS[req.query.m])}</div>` : '';
+  const extras = `${payMethods.dashCard ? payMethods.dashCard() : ''}${walletsAdmin.dashCard ? walletsAdmin.dashCard() : ''}${features.accountsAdminCard ? features.accountsAdminCard() : ''}${payCard()}
+<p class="hint"><a href="/admin/nastavenia">Všetky pôvodné formuláre na jednej stránke</a></p>`;
+  res.send(page('Admin', adminui.dashboard({ msg: m, slug: s.slug, extras }), 'a adm', '', payMethods.HEAD));
+}));
+admin.get('/kontakt', needAuth, wrap(async (req, res) => {
+  const s = await getSettings();
+  const m = MSGS[req.query.m] ? `<div class="msg ${/^(ok|pwok|restored|pmok)$/.test(req.query.m) ? '' : 'err'}">${esc(MSGS[req.query.m])}</div>` : '';
+  const form = `<form method="post" action="/admin/social" class="card">${hid(req)}<input type="hidden" name="_next" value="/admin/kontakt"><h2>Kontaktné údaje</h2>
+<p class="hint">Tieto údaje sa zobrazujú na verejnej stránke <b>Kontakt</b>. Prázdne pole = nezobrazí sa. Rozdelenie: <b>Skupiny</b> (skupiny, kanály, komunity) a <b>Priame kontakty</b> (osoba / podpora, e-mail).</p>
+${SOCIALS.map(([k, n, e]) => `<label>${e} ${n}</label><input name="${k}" value="${esc(s['soc_' + k])}" maxlength="${k === 'email' ? 254 : 2000}" ${k === 'email' ? 'type="email" placeholder="meno@domena.sk"' : k === 'tg_group' ? 'type="url" placeholder="https://t.me/…"' : k === 'fb_group' ? 'type="url" placeholder="https://www.facebook.com/groups/…"' : 'type="url" placeholder="https://"'}>${SOC_TOGGLE.includes(k) ? `<label class="ck"><input type="checkbox" name="on_${k}" value="1"${s['socon_' + k] !== '0' ? ' checked' : ''}> Zobraziť ${esc(n)}</label>` : ''}<div class="sgrp"><label for="grp_${k}">Zaradiť do</label><select id="grp_${k}" name="grp_${k}">${[['', 'Automaticky (' + (socAuto(k, s['soc_' + k]) === 'g' ? 'Skupiny' : 'Priame kontakty') + ')'], ['g', 'Skupiny'], ['p', 'Priame kontakty']].map(([v, l]) => `<option value="${v}"${(s['socgrp_' + k] || '') === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>`).join('')}
+<button>Uložiť kontaktné údaje</button></form>`;
+  res.send(page('Kontaktné údaje', `<h1>☎️ Kontaktné údaje</h1>${m}<p class="row"><a class="btnl" href="/admin">← Prehľad</a></p>${form}`, 'a adm'));
+}));
+const adminAlias = (from, to) => admin.get(from, needAuth, (req, res) => res.redirect(303, to));
+adminAlias('/stranka', '/admin/nastavenia#texts');
+adminAlias('/tlacidla', '/admin/nastavenia');
+adminAlias('/kanaly-text', '/admin/nastavenia#kanaly');
+adminAlias('/heslo', '/admin/nastavenia');
+adminAlias('/zaloha', '/admin/nastavenia');
+adminAlias('/kos', '/admin/nastavenia#trash');
+
+admin.get('/nastavenia', needAuth, wrap(async (req, res) => {
   const s = await getSettings(); const bs = await getButtons();
   const m = MSGS[req.query.m] ? `<div class="msg ${/^(ok|pwok|restored|pmok)$/.test(req.query.m) ? '' : 'err'}">${esc(MSGS[req.query.m])}</div>` : '';
   const chk = (n, v, t) => `<label class="ck"><input type="checkbox" name="${n}" value="1"${v ? ' checked' : ''}> ${t}</label>`;
@@ -426,7 +456,7 @@ ${i < bs.length - 1 ? `<form method="post" action="/admin/buttons/${b.id}/move">
 <form method="post" action="/admin/image/${k}" enctype="multipart/form-data">${hid(req)}<input type="file" name="image" accept="image/png,image/jpeg,image/webp" required><p class="hint">PNG, JPG alebo WebP, max 2 MB.</p><button>Nahrať</button></form>
 ${s.img[k] ? `<form method="post" action="/admin/image/${k}/delete">${hid(req)}<button class="d">Odstrániť</button></form>` : ''}</div>`;
   const color = (k, t) => `<div><label>${t}</label><input type="color" name="${k}" value="${esc(hex(s[k], DEFAULTS[k]))}"></div>`;
-  res.send(page('Admin', `<h1>Admin</h1>${m}<p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/sekcie">🧩 Sekcie a poradie stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a><a class="btnl" href="/admin/platobne-metody/darcekove-karty">🎁 Darčekové karty</a>${walletsAdmin.links()}<a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
+  res.send(page('Ďalšie nastavenia', `<h1>Ďalšie nastavenia</h1>${m}<p class="row"><a class="btnl" href="/admin">← Prehľad</a><a class="btnl" href="/admin/kontakt">☎️ Kontaktné údaje</a></p><p class="row"><a class="btnl" href="/admin/2fa">🔐 2FA${s.totp_on === '1' ? ' ✅' : ''}</a><a class="btnl" href="/admin/cennik">🏷️ Cenník</a><a class="btnl" href="/admin/kluce">🔑 API kľúče</a><a class="btnl" href="/admin/stav">📡 Stav služieb</a><a class="btnl" href="/admin/texty">✏️ Texty stránky</a><a class="btnl" href="/admin/sekcie">🧩 Sekcie a poradie stránky</a><a class="btnl" href="/admin/kanaly-katalog">📺 Katalóg kanálov</a><a class="btnl" href="/admin/epg">🗓 TV program</a><a class="btnl" href="/admin/platobne-metody">💳 Platobné metódy</a><a class="btnl" href="/admin/platobne-metody/darcekove-karty">🎁 Darčekové karty</a>${walletsAdmin.links()}<a class="btnl" href="#kanaly">📺 Kanály</a><a class="btnl" href="#trash">🗑️ Kôš</a></p><p>Verejná stránka: <a href="/${esc(s.slug)}" rel="noopener noreferrer" target="_blank">/${esc(s.slug)}</a></p>
 ${payMethods.dashCard()}
 ${walletsAdmin.dashCard()}
 ${features.accountsAdminCard ? features.accountsAdminCard() : ''}
@@ -491,7 +521,7 @@ admin.post('/settings', needAuth, csrf, wrap(async (req, res) => {
   if (!SLUG_RE.test(slug) || RESERVED.has(slug)) return ok(res, 'badslug');
   await setSettings({ title: clean(req.body.title, 80) || 'Odkazy', bio: clean(String(req.body.bio || '').replace(/\r/g, ''), 300), slug,
     title_en: clean(req.body.title_en, 80), bio_en: clean(String(req.body.bio_en || '').replace(/\r/g, ''), 300), meta_title: clean(req.body.meta_title, 80), meta_desc: clean(String(req.body.meta_desc || '').replace(/\s+/g, ' '), 300), footer: clean(req.body.footer, 200) });
-  ok(res);
+  res.locals.okTo = safeNext(req.body && req.body._next, '/admin/stranka'); ok(res);
 }));
 admin.post('/preset', needAuth, csrf, wrap(async (req, res) => {
   const p = PRESETS[req.body.preset]; if (!p) return ok(res);
@@ -518,7 +548,7 @@ admin.post('/social', needAuth, csrf, wrap(async (req, res) => {
   }
   for (const k of SOC_TOGGLE) o['socon_' + k] = req.body['on_' + k] ? '1' : '0';
   for (const [k] of SOCIALS) { const g = String(req.body['grp_' + k] || ''); o['socgrp_' + k] = g === 'g' || g === 'p' ? g : ''; }
-  await setSettings(o); ok(res);
+  await setSettings(o); res.locals.okTo = safeNext(req.body && req.body._next, '/admin/kontakt'); ok(res);
 }));
 admin.post('/image/:k(logo|bg)', needAuth, (req, res, next) => upload(req, res, e => {
   if (e) return ok(res, e.code === 'LIMIT_FILE_SIZE' ? 'big' : 'badimg');
@@ -1009,6 +1039,14 @@ require('./xpubadmin')(features);
 require('./mailer').install(features);
 require('./sitekb').install(Object.assign(features, { getList, SOCIALS, socOn, socGrp, PAGES, LNK_PUBLIC, chTree, NAV_ICONS }));
 require('./accounts').install(Object.assign(features, { encrypt, decrypt, getList }));
+
+try {
+  require('./pay/src/fulfill').mountAdmin(admin, {
+    needAuth, csrf, wrap, page, hid, esc,
+    loadOrders: () => (global.__payOrders && global.__payOrders.load && global.__payOrders.load()) || {},
+    saveOrders: (o) => { if (global.__payOrders && global.__payOrders.save) global.__payOrders.save(o); },
+  });
+} catch (e) { console.error('[fulfill-admin]', e && e.message); }
 app.use('/admin', admin);
 
 // ---- short links ----

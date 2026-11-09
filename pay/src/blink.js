@@ -290,7 +290,7 @@ function page(o) {
 <main class="card bl-card" id="bl" data-order="${esc(o.orderId)}" data-state="${esc(s.status)}" data-exp="${esc(s.expiresAt || '')}" data-now="${esc(s.now)}" data-qk="${esc(s.qrKey)}">
 <div class="bl-head"><span class="bl-logos"><img src="/logos/lightning.svg?v=20261027" alt="Lightning" width="34" height="34"><img src="/logos/bitcoin.svg?v=20261027" alt="Bitcoin" width="34" height="34"></span><span class="bl-t">Bitcoin Lightning</span></div>
 <div class="bl-amt"><div class="bl-k">Suma na úhradu</div><div class="bl-eur"><b id="blEur">${esc(s.amountEur)}</b> EUR</div><div class="bl-sats"><span id="blSats">${esc(sats)}</span> sats</div></div>
-<section class="bl-paid" id="blPaid"${s.status === 'paid' ? '' : ' hidden'}><div class="bl-ok">✓</div><h2>Zaplatené</h2><p>Ďakujeme, platba bola prijatá a potvrdená.</p><p class="bl-small">Objednávka ${esc(o.orderId)}</p></section>
+<section class="bl-paid" id="blPaid"${s.status === 'paid' ? '' : ' hidden'}><div class="bl-ok">✓</div><h2>Zaplatené</h2><p>Ďakujeme, platba bola prijatá a potvrdená.</p><p class="bl-small">Objednávka ${esc(o.orderId)}</p>${o.status === 'paid' ? `<p><a class="btn" href="/?paid=${encodeURIComponent(o.orderId)}">Pokračovať – zadať meno a kontakt</a></p>` : ''}</section>
 <section class="bl-pay" id="blPay"${s.status === 'paid' ? ' hidden' : ''}>
 <div class="bl-grid"><div class="bl-qr"><img id="blQr" src="/api/blink-pay/${esc(o.orderId)}/qr.png?k=${esc(s.qrKey)}" alt="QR kód Lightning faktúry" width="280" height="280"><div class="bl-exp" id="blExp" aria-live="polite">Faktúra platí ešte <b id="blCd">–:–</b></div></div>
 <div class="bl-side"><div class="bl-k">Lightning faktúra</div><code class="bl-pr" id="blPr">${esc(s.paymentRequest || '')}</code>
