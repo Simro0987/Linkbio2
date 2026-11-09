@@ -2,7 +2,18 @@
 const assert = require('assert');
 const f = require('../pay/src/fulfill');
 
-function t(name, fn) { try { fn(); console.log('ok', name); } catch (e) { console.error('FAIL', name, e); process.exitCode = 1; } }
+const _pending = [];
+function t(name, fn) {
+  try {
+    const r = fn();
+    if (r && typeof r.then === 'function') {
+      _pending.push(r.then(() => console.log('ok', name)).catch((e) => { console.error('FAIL', name, e); process.exitCode = 1; }));
+      return;
+    }
+    console.log('ok', name);
+  } catch (e) { console.error('FAIL', name, e); process.exitCode = 1; }
+}
+
 
 t('username must be at least 8 chars', () => {
   const r = f.validateFulfill({ username: 'short', email: 'a@b.sk' });
@@ -133,3 +144,91 @@ t('listAccountOrders only returns orders for that account id', () => {
   const mine = f.listAccountOrders(orders, { id: 1, username: 'one', email: 'one@x.sk' });
   assert.deepStrictEqual(mine.map((x) => x.orderId).sort(), ['a', 'c']);
 });
+
+const soft = require('../pay/src/softUser');
+
+t('generateSoftwareUser is 8 readable chars', () => {
+  const u = soft.generateSoftwareUser();
+  assert.strictEqual(u.length, 8);
+  assert.ok(/^[abcdefghjkmnpqrstuvwxyz23456789]{8}$/.test(u));
+  assert.notStrictEqual(u, soft.generateSoftwareUser());
+});
+
+t('planDevices detects 2-device packages by name', () => {
+  assert.strictEqual(soft.planDevices({ name: '12 mesiacov – 2 zariadenia', price: 129.99 }), 2);
+  assert.strictEqual(soft.planDevices({ name: '12 mesiacov', name_en: '12 months' }), 1);
+  assert.strictEqual(soft.devicesForPlans([{ name: '12 months – 2 devices' }]), 2);
+});
+
+t('validateSlots renew + new and two distinct names', () => {
+  const one = soft.validateSlots([{ intent: 'new', username: 'MojeMeno1' }], 1);
+  assert.ok(!one.error, one.error);
+  assert.strictEqual(one.slots[0].username, 'mojemeno1');
+  const two = soft.validateSlots([{ intent: 'renew', username: 'OldUser12' }, { intent: 'new', username: 'abcdefgh' }], 2);
+  assert.ok(!two.error, two.error);
+  const same = soft.validateSlots([{ intent: 'new', username: 'sameuser1' }, { intent: 'new', username: 'sameuser1' }], 2);
+  assert.ok(same.error);
+  const miss = soft.validateSlots([{ intent: 'new', username: 'onlyone1' }], 2);
+  assert.ok(miss.error);
+});
+
+t('validateCheckout accepts slots and keeps first username for site login', () => {
+  const r = f.validateCheckout({ slots: [{ intent: 'new', username: 'tvmeno01' }], telegram: '@meno_abc' });
+  assert.ok(!r.error, r.error);
+  assert.strictEqual(r.username, 'tvmeno01');
+  assert.strictEqual(r.slots.length, 1);
+  const two = f.validateCheckout({ intent: 'new', username: 'tvmeno01', username2: 'tvmeno02', telegram: '@meno_abc' }, { devices: 2 });
+  assert.ok(!two.error, two.error);
+  assert.strictEqual(two.slots.length, 2);
+});
+
+t('applyCheckout stores slots and does not put a password on the order', () => {
+  const v = f.validateCheckout({ intent: 'renew', username: 'olduser1', telegram: '@meno_abc' });
+  const o = { orderId: 'ord_slot', status: 'pending', amountEur: 10 };
+  f.applyCheckout(o, v, { amount: 10, provider: 'revolut' });
+  assert.strictEqual(o.fulfill.slots[0].intent, 'renew');
+  assert.strictEqual(o.fulfill.username, 'olduser1');
+  assert.ok(!JSON.stringify(o).includes('password'));
+});
+
+t('parseCredsFromText and parseDate (SK/ISO)', () => {
+  assert.strictEqual(soft.parseDate('15.11.2026'), '2026-11-15');
+  assert.strictEqual(soft.parseDate('2026-11-15'), '2026-11-15');
+  assert.strictEqual(soft.parseDate('15. november 2026'), '2026-11-15');
+  const c = soft.parseCredsFromText('Username: tvmeno01\nHeslo: Tajne.123\nPlatné do: 15.11.2027');
+  assert.strictEqual(c.username, 'tvmeno01');
+  assert.strictEqual(c.password, 'Tajne.123');
+  assert.strictEqual(c.until, '2026-11-15'.replace('2026', '2027'));
+});
+
+t('attachDelivery seals text and expiry card; unconfirmed refused without autoConfirm', () => {
+  process.env.DATA_ENC_KEY = process.env.DATA_ENC_KEY || 'ab'.repeat(32);
+  const o = { orderId: 'ord_del', status: 'pending', fulfill: { submittedAt: '2026-11-09', username: 'tvmeno01', slots: [{ intent: 'new', username: 'tvmeno01' }] } };
+  const no = f.attachDelivery(o, { text: 'Username: tvmeno01\nHeslo: Abcdefgh\nPlatné do: 20.12.2027', via: 'admin' }, null);
+  return Promise.resolve(no).then((r) => {
+    assert.ok(r.error);
+    return f.attachDelivery(o, { text: 'Username: tvmeno01\nHeslo: Abcdefgh\nPlatné do: 20.12.2027', via: 'telegram', autoConfirm: true }, null);
+  }).then((r) => {
+    assert.ok(r.ok, r.error);
+    assert.ok(f.isConfirmed(o));
+    assert.strictEqual(r.card.until, '2027-12-20');
+    const blob = JSON.stringify(o);
+    assert.ok(!blob.includes('Abcdefgh'));
+    const msgs = f.renderMessages(o, { get: () => 'lnkbio.onrender.com' });
+    assert.ok(/tvmeno01/.test(msgs));
+    assert.ok(/2027-12-20/.test(msgs));
+  });
+});
+
+t('telegram date-fix callback round-trip and order id from notify', () => {
+  const tg = require('../pay/src/telegramBot');
+  process.env.TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || 'test-secret-value-32chars-xxxxx';
+  const kb = tg.dateFixKeyboard('ord_abc123def456');
+  const data = kb.inline_keyboard[0][0].callback_data;
+  const p = tg.parseDateFix(data);
+  assert.ok(p && p.ref === 'ord_abc123def456');
+  assert.ok(!tg.parseDateFix('f:d:ord_abc123def456:xxxxxxxxxxxxxxxx'));
+  assert.strictEqual(tg.orderIdFromNotifyText('🆕 Nová objednávka\nObjednávka: ord_deadbeef00\nTyp: nový'), 'ord_deadbeef00');
+});
+
+Promise.all(_pending).then(() => { if (process.exitCode) process.exit(process.exitCode); }).catch((e) => { console.error(e); process.exit(1); });

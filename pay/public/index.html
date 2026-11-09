@@ -621,6 +621,14 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
 .fulfill-step input:focus{outline:2px solid #e50914;border-color:#e50914}
 .fulfill-step .contacts{display:grid;gap:.2rem}
 @media(min-width:560px){.fulfill-step .contacts{grid-template-columns:1fr 1fr 1fr;gap:.6rem}}
+.fulfill-step .choice{display:flex;flex-direction:column;gap:.45rem;margin:.6rem 0}
+.fulfill-step .choice label{display:flex;gap:.55rem;align-items:flex-start;margin:0;color:#e8eef9;font-weight:600;cursor:pointer}
+.fulfill-step .choice input{width:auto;margin-top:4px}
+.fulfill-step .sw-row{display:flex;gap:.45rem;align-items:center}
+.fulfill-step .sw-row input{flex:1}
+.fulfill-step .gen{flex:0 0 auto;margin:0;padding:10px 12px;border:0;border-radius:10px;background:#334155;color:#fff;font-weight:700;cursor:pointer;white-space:nowrap}
+.fulfill-step .prev{width:100%;margin:.3rem 0;background:#0b1220;border:1px solid #334155;border-radius:10px;color:#e8eef9;padding:8px;font:16px/1.4 system-ui}
+.slot-box{margin:.8rem 0;padding:.7rem;border:1px dashed #334155;border-radius:12px}
 </style>
   <link rel="stylesheet" href="/tv-theme.css?v=20261026" />
 </head>
@@ -691,19 +699,38 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
 
       <div id="fulfillStep" class="fulfill-step" hidden>
         <h2>Vaše údaje k predplatnému</h2>
-        <p class="why">Na tento kontakt ti po potvrdení platby pošleme prihlasovacie údaje. Username si zapamätaj – podľa neho sa vrátiš k objednávke a overíš predplatné.<span class="en">We’ll send your login details to this contact after payment is confirmed. Remember your username – you’ll use it to return to the order and check your subscription.</span></p>
-        <p class="hint">Používateľské meno (8–24 znakov, malé písmená) a aspoň jeden kontakt – e-mail, Telegram alebo Facebook. E-mail nie je povinný. Tieto údaje zadávate ešte pred platbou.<br><span class="en">Username (8–24 characters, lowercase) and at least one contact – e-mail, Telegram or Facebook. E-mail is optional. You enter this before payment.</span></p>
-        <label for="fu">Používateľské meno / <span class="en" style="display:inline;font-weight:400">Username</span></label>
-        <input id="fu" name="username" minlength="8" maxlength="24" pattern="[a-z0-9][a-z0-9._\-]{7,23}" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="8–24 znakov, malé písmená">
-        <p class="hint">Malé písmená, číslice, bodka, podčiarkovník, pomlčka. Bez medzier. Začína písmenom alebo číslicou.</p>
+        <p class="why">Na tento kontakt ti po potvrdení platby pošleme prihlasovacie údaje.<span class="en">We’ll send your login details to this contact after payment is confirmed.</span></p>
         <p class="hint"><b>Aspoň jeden kontakt</b> / At least one contact:</p>
         <div class="contacts">
           <div><label for="fe">E-mail</label><input id="fe" name="fulfill_email" type="email" maxlength="254" autocomplete="email" placeholder="vas@email.com"></div>
           <div><label for="ft">Telegram</label><input id="ft" name="telegram" maxlength="200" placeholder="@meno" autocapitalize="none" spellcheck="false"></div>
           <div><label for="ff">Facebook</label><input id="ff" name="facebook" maxlength="200" placeholder="odkaz alebo meno"></div>
         </div>
+        <fieldset class="choice" style="border:0;padding:0">
+          <legend style="color:#93a0b8;font-size:.9rem;margin-bottom:.35rem">Typ objednávky / <span class="en" style="display:inline;font-weight:400">Order type</span></legend>
+          <label><input type="radio" name="intent" id="intentRenew" value="renew"> Predĺženie existujúceho účtu<span class="en" style="display:block;font-weight:400;color:#93a0b8">Renewal of an existing account</span></label>
+          <label><input type="radio" name="intent" id="intentNew" value="new" checked> Nový zákazník<span class="en" style="display:block;font-weight:400;color:#93a0b8">New customer</span></label>
+        </fieldset>
+        <p class="hint" id="intentWhy">Ak ešte nemáte Software username do TV, zadajte meno, ktoré chcete mať (min. 8 znakov), alebo kliknite na Vygenerovať – vytvoríme náhodné čitateľné 8-znakové meno.<span class="en" style="display:block">If you don’t have a TV Software username yet, enter the name you want (min. 8 characters) or tap Generate – we’ll create a readable random 8-character name.</span></p>
+        <p class="hint">Software username je meno do TV aplikácie, nie prihlásenie na túto stránku. Na stránku (Prihlásenie / Moja objednávka) použijete e-mail alebo toto prvé meno a heslo nižšie.<span class="en" style="display:block">The Software username is for the TV app, not for this website. To sign in here (Log in / My order) use your e-mail or this first username plus the password below.</span></p>
+        <div id="slot1" class="slot-box">
+          <label for="fu">Software username / <span class="en" style="display:inline;font-weight:400">TV Software username</span></label>
+          <select id="prevUsers" class="prev" hidden></select>
+          <div class="sw-row">
+            <input id="fu" name="username" minlength="8" maxlength="64" pattern="[A-Za-z0-9._\-]{8,64}" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="min. 8 znakov">
+            <button type="button" class="gen" id="gen1">Vygenerovať</button>
+          </div>
+        </div>
+        <div id="slot2" class="slot-box" hidden>
+          <label for="fu2">2. zariadenie – Software username / <span class="en" style="display:inline;font-weight:400">2nd device</span></label>
+          <p class="hint">Tento balík je pre 2 zariadenia – zadajte druhé, iné meno (tiež môžete vygenerovať).<span class="en" style="display:block">This package is for 2 devices – enter a second, different username (you can generate one).</span></p>
+          <div class="sw-row">
+            <input id="fu2" name="username2" minlength="8" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="min. 8 znakov">
+            <button type="button" class="gen" id="gen2">Vygenerovať</button>
+          </div>
+        </div>
         <div id="pwFields">
-          <p class="why" style="margin-top:1rem">S týmto heslom sa kedykoľvek vrátiš k objednávke a prihlasovacím údajom.<span class="en">With this password you can return to the order and your login details at any time.</span></p>
+          <p class="why" style="margin-top:1rem">S týmto heslom sa kedykoľvek vrátiš k objednávke a prihlasovacím údajom (prihlásenie e-mailom alebo prvým Software username).<span class="en">With this password you can return to the order and your login details (sign in with e-mail or the first Software username).</span></p>
           <label for="fpw">Heslo / <span class="en" style="display:inline;font-weight:400">Password</span></label>
           <input id="fpw" name="password" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="min. 8 znakov">
           <label for="fpw2">Heslo znova / <span class="en" style="display:inline;font-weight:400">Repeat password</span></label>
@@ -908,6 +935,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     }
 
     const fuEl = document.getElementById('fu');
+    const fu2El = document.getElementById('fu2');
     const feEl = document.getElementById('fe');
     const ftEl = document.getElementById('ft');
     const ffEl = document.getElementById('ff');
@@ -917,27 +945,78 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     const loggedHint = document.getElementById('loggedHint');
     const fulfillStep = document.getElementById('fulfillStep');
     const fulfillErr = document.getElementById('fulfillErr');
+    const slot2 = document.getElementById('slot2');
+    const intentNew = document.getElementById('intentNew');
+    const intentRenew = document.getElementById('intentRenew');
+    const intentWhy = document.getElementById('intentWhy');
+    const prevUsers = document.getElementById('prevUsers');
     let checkoutLogged = false;
+    let prevSoftware = [];
+    let bonusPlans = {};
+    let needSlots = 1;
     const USER_RE = /^[a-z0-9][a-z0-9_.-]{7,23}$/;
+    const RENEW_RE = /^[A-Za-z0-9._-]{8,64}$/;
     const F_EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/i;
     const F_TG_RE = /^@[A-Za-z0-9_]{5,32}$/;
+    const GEN_ALPH = 'abcdefghjkmnpqrstuvwxyz23456789';
+    function genUser() {
+      const a = new Uint8Array(8); crypto.getRandomValues(a);
+      return Array.from(a, (x) => GEN_ALPH[x % GEN_ALPH.length]).join('');
+    }
+    function currentIntent() { return (intentRenew && intentRenew.checked) ? 'renew' : 'new'; }
+    function updateIntentWhy() {
+      if (!intentWhy) return;
+      if (currentIntent() === 'renew') {
+        intentWhy.innerHTML = 'Zadajte existujúce Software username, ktoré chcete predĺžiť (to z TV aplikácie, min. 8 znakov).<span class="en" style="display:block">Enter the existing TV Software username you want to renew (min. 8 characters).</span>';
+      } else {
+        intentWhy.innerHTML = 'Ak ešte nemáte Software username do TV, zadajte meno, ktoré chcete mať (min. 8 znakov), alebo kliknite na Vygenerovať – vytvoríme náhodné čitateľné 8-znakové meno.<span class="en" style="display:block">If you don’t have a TV Software username yet, enter the name you want (min. 8 characters) or tap Generate – we’ll create a readable random 8-character name.</span>';
+      }
+      const showGen = currentIntent() === 'new';
+      const g1 = document.getElementById('gen1'), g2 = document.getElementById('gen2');
+      if (g1) g1.hidden = !showGen;
+      if (g2) g2.hidden = !showGen;
+      if (prevUsers) {
+        prevUsers.hidden = !(currentIntent() === 'renew' && prevSoftware.length);
+      }
+    }
+    function syncSlots() {
+      let n = 1;
+      if (plan && Number(plan.devices) >= 2) n = 2;
+      const amt = Number(amountEl && amountEl.value);
+      if (n < 2 && plan && bonusPlans[plan.id] && bonusPlans[plan.id].device) n = 2;
+      needSlots = n;
+      if (slot2) slot2.hidden = n < 2;
+      updateIntentWhy();
+    }
     fetch('/api/ucet-bonus', { credentials: 'same-origin' }).then((r) => r.json()).then((j) => {
       if (j && j.logged) {
         checkoutLogged = true;
         if (pwFields) pwFields.hidden = true;
         if (loggedHint) loggedHint.hidden = false;
-        if (fuEl && !fuEl.value && j.username && USER_RE.test(String(j.username).toLowerCase())) fuEl.value = String(j.username).toLowerCase();
         if (fpwEl) { fpwEl.required = false; fpwEl.removeAttribute('minlength'); }
         if (fpw2El) { fpw2El.required = false; fpw2El.removeAttribute('minlength'); }
+        prevSoftware = Array.isArray(j.softwareUsers) ? j.softwareUsers : [];
+        bonusPlans = j.plans || {};
+        if (prevUsers && prevSoftware.length) {
+          prevUsers.innerHTML = '<option value="">— vyberte predchádzajúce meno —</option>' + prevSoftware.map((u) => '<option value="'+u.replace(/"/g,'')+'">'+u.replace(/</g,'')+'</option>').join('');
+          prevUsers.addEventListener('change', () => { if (prevUsers.value && fuEl) { fuEl.value = prevUsers.value; onFulfillInput(); } });
+        }
+        syncSlots();
         syncGoButton();
       }
     }).catch(() => {});
     function fulfillValues() {
       let telegram = (ftEl && ftEl.value || '').trim();
       if (telegram && !telegram.startsWith('@') && !/^https?:/i.test(telegram)) telegram = '@' + telegram.replace(/^@/, '');
-      const username = (fuEl && fuEl.value || '').trim().replace(/^@/, '').toLowerCase();
+      const intent = currentIntent();
+      const u1 = (fuEl && fuEl.value || '').trim().replace(/^@/, '');
+      const u2 = (fu2El && fu2El.value || '').trim().replace(/^@/, '');
+      const username = intent === 'new' ? u1.toLowerCase() : u1;
       return {
+        intent,
         username,
+        username2: needSlots >= 2 ? (intent === 'new' ? u2.toLowerCase() : u2) : '',
+        slots: [{ intent, username: intent === 'new' ? u1.toLowerCase() : u1 }].concat(needSlots >= 2 ? [{ intent, username: intent === 'new' ? u2.toLowerCase() : u2 }] : []),
         email: (feEl && feEl.value || '').trim(),
         telegram,
         facebook: (ffEl && ffEl.value || '').trim(),
@@ -947,14 +1026,21 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     }
     function fulfillCheck() {
       const v = fulfillValues();
-      if (!USER_RE.test(v.username)) return { error: 'Používateľské meno musí mať 8–24 znakov (malé písmená, číslice, . _ -) a začínať písmenom alebo číslicou.' };
+      const re = currentIntent() === 'renew' ? RENEW_RE : USER_RE;
+      const msgNew = 'Software username musí mať 8–24 znakov (malé písmená, číslice, . _ -). Alebo kliknite na Vygenerovať.';
+      const msgRen = 'Zadajte existujúce Software username, ktoré chcete predĺžiť (min. 8 znakov, bez medzier).';
+      if (!re.test(v.username)) return { error: currentIntent() === 'renew' ? msgRen : msgNew };
+      if (needSlots >= 2) {
+        if (!re.test(v.username2)) return { error: 'Zadajte druhé Software username pre 2. zariadenie (iné ako prvé).' };
+        if (String(v.username).toLowerCase() === String(v.username2).toLowerCase()) return { error: 'Dve Software username pre 2 zariadenia musia byť rôzne.' };
+      }
       if (v.email && !F_EMAIL_RE.test(v.email)) return { error: 'Zadajte platný e-mail, alebo nechajte pole prázdne a vyplňte Telegram či Facebook.' };
       if (v.telegram && !F_TG_RE.test(v.telegram)) return { error: 'Zadajte Telegram v tvare @meno (5–32 znakov), alebo vyplňte e-mail či Facebook.' };
       if (v.facebook && v.facebook.length < 3) return { error: 'Zadajte odkaz na Facebook alebo meno (min. 3 znaky).' };
       if (!v.email && !v.telegram && !v.facebook) return { error: 'Vyplňte aspoň jeden kontakt: e-mail, Telegram alebo Facebook.' };
       if (!checkoutLogged) {
-        if (!v.password || v.password.length < 8 || v.password.length > 72 || v.password.toLowerCase() === v.username) {
-          return { error: 'Heslo musí mať 8–72 znakov a nesmie byť rovnaké ako používateľské meno.' };
+        if (!v.password || v.password.length < 8 || v.password.length > 72 || v.password.toLowerCase() === String(v.username).toLowerCase()) {
+          return { error: 'Heslo musí mať 8–72 znakov a nesmie byť rovnaké ako Software username.' };
         }
         if (v.password !== v.password2) return { error: 'Heslá sa nezhodujú.' };
       }
@@ -968,6 +1054,16 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
       fulfillErr.className = 'hint';
       fulfillErr.style.color = '#fca5a5';
       fulfillErr.textContent = msg;
+    }
+    function refreshDevicesFromAmount() {
+      if (plan && Number(plan.devices) >= 2) { syncSlots(); return; }
+      const amt = Number(amountEl && amountEl.value);
+      if (!amt) { syncSlots(); return; }
+      fetch('/api/plan?amount=' + encodeURIComponent(amt)).then((r) => r.json()).then((j) => {
+        if (j && Number(j.devices) >= 2) { if (!plan) plan = { devices: 2 }; else plan.devices = Math.max(plan.devices || 1, 2); }
+        else if (!plan) { /* keep 1 */ }
+        syncSlots(); syncGoButton();
+      }).catch(() => syncSlots());
     }
     function syncFulfillStep() {
       const selected = providers.find((x) => x.id === providerEl.value);
@@ -1598,6 +1694,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error || 'Plán sa nepodarilo načítať.');
         plan = j;
+        syncSlots();
         document.getElementById('planName').textContent = (document.documentElement.lang === 'en' && plan.name_en) || plan.name;
         document.getElementById('planAmt').textContent = eur(plan.amount);
         amountEl.value = plan.amount.toFixed(2); amountEl.readOnly = true; amountEl.classList.add('locked');
@@ -1730,10 +1827,14 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     });
 
     function onFulfillInput() {
-      if (fuEl && fuEl.value && fuEl.value !== fuEl.value.toLowerCase()) {
-        const s = fuEl.selectionStart, e = fuEl.selectionEnd;
-        fuEl.value = fuEl.value.toLowerCase();
-        try { fuEl.setSelectionRange(s, e); } catch (e) {}
+      if (currentIntent() === 'new') {
+        [fuEl, fu2El].forEach((el) => {
+          if (el && el.value && el.value !== el.value.toLowerCase()) {
+            const s = el.selectionStart, e = el.selectionEnd;
+            el.value = el.value.toLowerCase();
+            try { el.setSelectionRange(s, e); } catch (err) {}
+          }
+        });
       }
       const c = fulfillCheck();
       showFulfillErr(c.ok ? '' : (fuEl && fuEl.value ? c.error : ''));
@@ -1741,7 +1842,11 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
       if (c.ok && c.values.email && emailEl && !emailEl.value) emailEl.value = c.values.email;
       syncGoButton();
     }
-    [fuEl, feEl, ftEl, ffEl, fpwEl, fpw2El].forEach((el) => { if (el) el.addEventListener('input', onFulfillInput); });
+    [fuEl, fu2El, feEl, ftEl, ffEl, fpwEl, fpw2El].forEach((el) => { if (el) el.addEventListener('input', onFulfillInput); });
+    [intentNew, intentRenew].forEach((el) => { if (el) el.addEventListener('change', () => { updateIntentWhy(); onFulfillInput(); }); });
+    function bindGen(btn, input) { if (btn && input) btn.addEventListener('click', () => { input.value = genUser(); if (intentNew) intentNew.checked = true; updateIntentWhy(); onFulfillInput(); }); }
+    bindGen(document.getElementById('gen1'), fuEl);
+    bindGen(document.getElementById('gen2'), fu2El);
 
     emailEl.addEventListener('input', () => {
       if (emailOk()) clearEmailAlert();
@@ -1768,6 +1873,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
       }
       suggestG2aForAmount();
       { const sp = providers.find((x) => x.id === providerEl.value); if (sp && Array.isArray(sp.amountLinks)) syncDeferredFieldHints(sp); }
+      refreshDevicesFromAmount();
       syncGoButton();
     });
 
@@ -1821,6 +1927,9 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
             plan_id: plan ? plan.id : undefined,
             email: isElectrocoinSepa(selectedP) && !SEPA_GUIDED ? (fv.email || '') : email,
             username: fv.username,
+            username2: fv.username2 || undefined,
+            intent: fv.intent,
+            slots: fv.slots,
             telegram: fv.telegram,
             facebook: fv.facebook,
             password: checkoutLogged ? undefined : fv.password,

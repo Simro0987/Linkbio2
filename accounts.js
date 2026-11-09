@@ -79,6 +79,9 @@ function install(ctx) {
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_ledger (id serial PRIMARY KEY, user_id int NOT NULL, order_id text, kind text NOT NULL, package_months int NOT NULL DEFAULT 0, bonus_months int NOT NULL DEFAULT 0,
       active_count int NOT NULL DEFAULT 0, tier_min int NOT NULL DEFAULT 0, note text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now(), UNIQUE (order_id, kind))`);
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_devices (id serial PRIMARY KEY, user_id int NOT NULL, order_id text UNIQUE, from_at timestamptz NOT NULL, until_at timestamptz NOT NULL, panel_user text NOT NULL DEFAULT '', created_at timestamptz NOT NULL DEFAULT now())`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS acc_software (username text PRIMARY KEY, display text NOT NULL DEFAULT '', user_id int, order_id text, until_at timestamptz NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS acc_software_user ON acc_software (user_id)`);
+
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_panel_cfg (k text PRIMARY KEY, v text NOT NULL)`);
     await pool.query(`CREATE TABLE IF NOT EXISTS acc_panel_lines (id serial PRIMARY KEY, username text NOT NULL, pass_enc text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS acc_panel_lines_user ON acc_panel_lines (lower(username))`);
@@ -274,7 +277,7 @@ function install(ctx) {
   setInterval(remindTick, 30 * 60e3).unref();
   setTimeout(remindTick, Number(process.env.ACC_REMIND_FIRST_MS) || 120e3).unref(); // first pass soon after (re)deploy
 
-  global.__lnkAccounts = { fromReq, planByAmount, kick, registerFromCheckout: (...a) => registerFromCheckout(...a) };
+  global.__lnkAccounts = { fromReq, planByAmount, kick, registerFromCheckout: (...a) => registerFromCheckout(...a), applySoftwareExpiry: (...a) => applySoftwareExpiry(...a) };
 
   // ================= public pages =================
   const noStore = (res) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Robots-Tag', 'noindex'); };
@@ -435,6 +438,35 @@ ${ref ? `<p class="hint">🤝 ${tx(en, 'Odporučil vás', 'Referred by')}: <b>${
     return { ok: true, user: { id: user.id, username: user.username, email: user.email || '' }, created: true };
   }
 
+  async function applySoftwareExpiry({ username, until, userId, orderId }) {
+    const un = String(username || '').trim();
+    const at = until instanceof Date ? until : new Date(until);
+    if (!un || !at || Number.isNaN(+at)) return { ok: false };
+    const key = un.toLowerCase();
+    await pool.query(
+      `INSERT INTO acc_software (username, display, user_id, order_id, until_at, updated_at) VALUES ($1,$2,$3,$4,$5,now())
+       ON CONFLICT (username) DO UPDATE SET display=EXCLUDED.display, user_id=COALESCE(EXCLUDED.user_id, acc_software.user_id), order_id=COALESCE(EXCLUDED.order_id, acc_software.order_id), until_at=GREATEST(acc_software.until_at, EXCLUDED.until_at), updated_at=now()`,
+      [key, un, userId || null, orderId || null, at]
+    );
+    if (userId) {
+      const cur = (await pool.query(`SELECT licence_until FROM acc_users WHERE id=$1`, [userId])).rows[0];
+      const prev = cur && cur.licence_until ? new Date(cur.licence_until) : null;
+      if (!prev || at > prev) await pool.query(`UPDATE acc_users SET licence_until=$2 WHERE id=$1`, [userId, at]);
+      const u = (await pool.query(`SELECT panel_user FROM acc_users WHERE id=$1`, [userId])).rows[0];
+      if (u && !u.panel_user) await pool.query(`UPDATE acc_users SET panel_pending=COALESCE(panel_pending,$2) WHERE id=$1`, [userId, un]);
+    }
+    return { ok: true };
+  }
+  async function softwareByName(name) {
+    const key = String(name || '').trim().toLowerCase();
+    if (!key) return null;
+    return (await pool.query(`SELECT display, until_at, user_id, order_id FROM acc_software WHERE username=$1`, [key])).rows[0] || null;
+  }
+  if (global.__lnkAccounts) {
+    global.__lnkAccounts.applySoftwareExpiry = applySoftwareExpiry;
+    global.__lnkAccounts.softwareByName = softwareByName;
+  }
+
   app.post('/registracia', wrap(async (req, res) => {
     const back = (m) => res.redirect(303, '/registracia?m=' + m);
     if (!(await accOn())) return back('off');
@@ -547,6 +579,22 @@ ${devs.length ? `<p>${tx(en, 'Druhé zariadenia', 'Second devices')}:</p><ul>${d
 ${rows.length ? `<div style="overflow:auto"><table class="tbl"><thead><tr><th>${tx(en, 'Objednávka', 'Order')}</th><th>${tx(en, 'Suma', 'Amount')}</th><th>${tx(en, 'Stav', 'Status')}</th><th></th></tr></thead><tbody>${tr}</tbody></table></div>` : `<p class="hint">${tx(en, 'K tomuto účtu zatiaľ nie je priradená žiadna objednávka. Po vyplnení údajov pred platbou sa tu objavia.', 'No orders are linked to this account yet. They appear here after you enter your details at checkout.')}</p>`}
 <p class="hint">${tx(en, 'Súkromný odkaz k objednávke, ktorý ste dostali pri platbe, ostáva v platnosti.', 'The private order link from checkout stays valid.')}</p></div>`;
     } catch (e) { checkoutOrd = ''; }
+    try {
+      const F = require('./pay/src/fulfill');
+      const all = (global.__payOrders && global.__payOrders.load) ? global.__payOrders.load() : {};
+      const mine = Object.values(all).filter((o) => o && ((o.acct && o.acct.id === u.id) || (o.fulfill && o.fulfill.accountId === u.id)) && o.fulfill && o.fulfill.credSentAt && F.isConfirmed(o));
+      if (mine.length) {
+        const body = mine.map((o) => {
+          const msgs = F.renderMessages(o, req).replace(/src="\/objednavka\/[^"]+\/foto\/(\d+)"/g, 'src="/ucet/objednavka/' + encodeURIComponent(o.orderId) + '/foto/$1"');
+          return `<div class="card"><h3>${tx(en, 'Údaje k objednávke', 'Details for order')} <code>${esc(o.orderId)}</code></h3>
+<p class="hint">${tx(en, 'Prihlasovacie údaje do TV Software (nie na túto stránku).', 'These are logins for the TV software, not for this website.')}</p>
+<div class="msgs">${msgs}</div>
+<p class="hint"><a href="${esc(F.pathFor(o))}">${tx(en, 'Súkromné okno', 'Private window')}</a></p></div>`;
+        }).join('');
+        checkoutOrd += body;
+      }
+    } catch (e) { /* */ }
+
     const emailRow = `<p>E-mail: ${u.email ? `<b>${esc(u.email)}</b> ${u.email_verified ? `<span class="accok">✅ ${tx(en, 'overený', 'verified')}</span>` : `<span class="hint">(${tx(en, 'neoverený', 'not verified')})</span>`}` : `<span class="msg err inl">${tx(en, 'chýba – doplňte ho, inak nebude možné obnoviť heslo', 'missing – add it, otherwise password reset is impossible')}</span>`}</p>
 ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/overit-email" class="accout">${csrfField(req, res)}<button class="btnl sm">📧 ${tx(en, 'Poslať overovací odkaz', 'Send verification link')}</button></form>` : ''}
 <details${u.email ? '' : ' open'}><summary>${tx(en, u.email ? 'Zmeniť e-mail' : 'Doplniť e-mail', u.email ? 'Change e-mail' : 'Add e-mail')}</summary><form method="post" action="/ucet/email" class="accf">${csrfField(req, res)}
@@ -561,7 +609,19 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
 <form method="post" action="/odhlasenie" class="accout">${csrfField(req, res)}<button class="btnl sm">🚪 ${tx(en, 'Odhlásiť sa', 'Log out')}</button></form></div>`;
     await pub(req, res, tx(en, 'Môj účet', 'My account'), `<h1 class="ph">👤 ${esc(u.username)}</h1>${msg(req)}${lic}${checkoutOrd}${aff}${panelBox}${ord}${sec}<script src="/static/acc.js?v=${ACC_V}" defer></script>`);
   }));
-  const needUser = async (req, res) => { const u = await fromReq(req); if (!u) { res.redirect(303, '/prihlasenie'); return null; } if (!csrfOk(req)) { res.redirect(303, '/ucet?m=csrf'); return null; } return u; };
+  app.get('/ucet/objednavka/:id/foto/:i', wrap(async (req, res) => {
+    const u = await fromReq(req); if (!u) return res.status(401).end();
+    const F = require('./pay/src/fulfill');
+    const all = (global.__payOrders && global.__payOrders.load) ? global.__payOrders.load() : {};
+    const o = all[req.params.id];
+    if (!o || !((o.acct && o.acct.id === u.id) || (o.fulfill && o.fulfill.accountId === u.id))) return res.status(404).end();
+    const m = o.fulfill && o.fulfill.messages && o.fulfill.messages[Number(req.params.i)];
+    const ph = F.photoBytes(m);
+    if (!ph) return res.status(404).end();
+    res.set('Cache-Control', 'no-store');
+    res.type(ph.mime).send(ph.buf);
+  }));
+    const needUser = async (req, res) => { const u = await fromReq(req); if (!u) { res.redirect(303, '/prihlasenie'); return null; } if (!csrfOk(req)) { res.redirect(303, '/ucet?m=csrf'); return null; } return u; };
   app.post('/ucet/heslo', wrap(async (req, res) => {
     const u = await needUser(req, res); if (!u) return;
     if (L.hit('pwc:' + u.id, 10, 3600e3)) return res.redirect(303, '/ucet?m=locked');
@@ -716,11 +776,11 @@ ${kind !== 'active' ? `<p><a class="b" href="/platby">🔁 ${tx(en, 'Predĺžiť
         : tx(en, 'Zadajte meno a heslo k predplatnému (z aplikácie v TV). Heslo sa nikde neukladá – slúži len na overenie, že predplatné je vaše.', 'Enter your subscription username and password (from the TV app). The password is never stored – it only proves the subscription is yours.');
     const needPw = selfCheck(c) && !userOnly;
     await pub(req, res, tx(en, 'Kontrola platnosti predplatného', 'Subscription validity check'), `<h1 class="ph">🔎 ${tx(en, 'Kontrola platnosti predplatného', 'Subscription validity check')}</h1>${out}
-${(selfCheck(c) || canLookup(c)) ? `<form method="post" action="/overit-predplatne" class="card accf">${csrfField(req, res)}<input type="hidden" name="t" value="${esc(formTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
+${`<form method="post" action="/overit-predplatne" class="card accf">${csrfField(req, res)}<input type="hidden" name="t" value="${esc(formTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
 <p class="hint">${hint}</p>
 <label for="cu">${tx(en, 'Meno', 'Username')}</label><input id="cu" name="u" required maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
 <label for="cp">${tx(en, 'Heslo', 'Password')}${needPw ? '' : ' (' + tx(en, 'voliteľné', 'optional') + ')'}</label><input id="cp" name="p" type="password"${needPw ? ' required' : ''} maxlength="128" autocomplete="off">
-<button class="b">${tx(en, 'Overiť', 'Check')}</button></form>` : msgOf('paneloff', en)}`);
+<button class="b">${tx(en, 'Overiť', 'Check')}</button></form>`}`);
   }
   app.get('/overit-predplatne', wrap(async (req, res) => checkPage(req, res, null)));
   app.post('/overit-predplatne', wrap(async (req, res) => {
@@ -741,6 +801,13 @@ ${(selfCheck(c) || canLookup(c)) ? `<form method="post" action="/overit-predplat
       if (!r && canLookup(c)) r = await panelApi.lookup(pcConf(c), pu).catch(() => null);
       else if (!r && selfCheck(c)) return fail('panelbad');
     }
+    if (!r || r.error || !r.found) {
+      const rec = await softwareByName(pu);
+      if (rec && rec.until_at) {
+        const exp = new Date(rec.until_at);
+        return checkPage(req, res, { found: true, active: exp > new Date(), expiry: exp, status: exp > new Date() ? 'active' : 'expired' });
+      }
+    }
     if (!r || r.error) return fail('paneloff');
     return checkPage(req, res, { found: r.found, active: r.active, expiry: r.expiry, status: r.status, connections: r.connections });
   }));
@@ -750,7 +817,18 @@ ${(selfCheck(c) || canLookup(c)) ? `<form method="post" action="/overit-predplat
     noStore(res); const u = await fromReq(req); if (!u) return res.json({ logged: false });
     const bi = await bonusInfo(u), plans = await plansList(), en = req.lang === 'en';
     const dev = !!(bi && bi.device && u.aff_choice === 'device');
-    res.json({ logged: true, username: u.username, active: bi ? bi.active : 0, device: dev,
+    let softwareUsers = [];
+    try {
+      const F = require('./pay/src/fulfill');
+      const all = (global.__payOrders && global.__payOrders.load) ? global.__payOrders.load() : {};
+      const rows = F.listAccountOrders(all, u, req);
+      const set = new Set();
+      if (u.panel_user) set.add(u.panel_user);
+      if (u.panel_pending) set.add(u.panel_pending);
+      for (const r of rows) for (const s of (r.slots || (r.username ? [{ username: r.username }] : []))) if (s.username) set.add(s.username);
+      softwareUsers = [...set];
+    } catch { /* */ }
+    res.json({ logged: true, username: u.username, email: u.email || '', active: bi ? bi.active : 0, device: dev, softwareUsers,
       plans: Object.fromEntries(plans.map((p) => { const r = bi ? bi.reward(+p.period || 1) : { bonus: 0, device: false }; return [p.id, { months: +p.period || 1, bonus: r.bonus, device: r.device, label: r.device ? tx(en, '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, en)} ${tx(en, 'zadarmo', 'free')}` : '' }]; })) });
   }));
   ctx.accBonusForReq = async (req) => { const u = await fromReq(req); if (!u) return null; const bi = await bonusInfo(u); if (!bi) return null; return (m) => { const r = bi.reward(+m || 1); return r.device ? tx(req.lang === 'en', '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, req.lang === 'en')} ${tx(req.lang === 'en', 'zadarmo', 'free')}` : ''; }; };

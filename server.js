@@ -244,9 +244,10 @@ app.use((req, res, next) => {
 });
 // 💶 merged payment module (former checkout) – PAY_MODULE=off|shadow|live|on; mounted before compression/helmet,
 // it keeps its own CSP (nonce), body parsers and compression. Only its own paths are handed over (pay/index.js).
+const softUser = require('./pay/src/softUser');
 const pay = require('./pay').install(app, {
   isAdmin: async (req) => { const x = readSess(req); if (!x || !x.auth) return false; return String(x.pv || '0') === (await getSettings()).pwver; },
-  getPlan: async (id) => { const p = (await getList('plans')).find(x => x.id === Number(id)); return p ? { id: p.id, name: p.name, name_en: p.name_en, amount: Number(p.price), period: Number(p.period) || 1, active: !!p.active } : null; },
+  getPlan: async (id) => { const p = (await getList('plans')).find(x => x.id === Number(id)); return p ? { id: p.id, name: p.name, name_en: p.name_en, amount: Number(p.price), period: Number(p.period) || 1, active: !!p.active, devices: softUser.planDevices(p) } : null; },
 });
 if (pay) for (const seg of pay.segments) RESERVED.add(seg);
 const payCard = () => {
@@ -352,8 +353,14 @@ app.get('/api/plans/:id(\\d{1,9})', wrap(async (req, res) => {
   const p = (await getList('plans')).find(x => x.id === Number(req.params.id));
   res.setHeader('Cache-Control', 'no-store');
   if (!p || !p.active) return res.status(404).json({ error: 'not found' });
-  res.json({ id: p.id, name: p.name, name_en: p.name_en, amount: Number(p.price), currency: 'EUR', period: Number(p.period) || 1, active: true });
+  res.json({ id: p.id, name: p.name, name_en: p.name_en, amount: Number(p.price), currency: 'EUR', period: Number(p.period) || 1, active: true, devices: softUser.planDevices(p) });
 }));
+global.__lnkbioPlansByAmount = async (amount) => {
+  const a = Math.round(Number(amount) * 100);
+  if (!Number.isFinite(a) || a <= 0) return { devices: 1, plans: [] };
+  const list = (await getList('plans')).filter((p) => p.active && Math.round(Number(p.price) * 100) === a);
+  return { devices: softUser.devicesForPlans(list), plans: list.map((p) => ({ id: p.id, name: p.name, devices: softUser.planDevices(p) })) };
+};
 // public site info for the support chatbot knowledge base (only data already shown on public pages)
 app.get('/api/site-info', wrap(async (req, res) => {
   const s = await getSettings(), base = LNK_PUBLIC + '/' + s.slug;

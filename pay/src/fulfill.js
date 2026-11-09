@@ -1,14 +1,14 @@
 'use strict';
 /**
- * Before payment the customer enters a username (min. 8) and at least one contact
- * (e-mail OR Telegram OR Facebook). The order is created with those fields; Ryan is notified.
- * After payment, a private page (token link) is where credentials are delivered.
- * Return: private token, or username + the same contact. E-mail alone is not enough —
- * when mail is configured we send a one-time code / magic link; otherwise username + contact.
- * Site accounts (/ucet) see matching orders only after the account e-mail is verified.
+ * Before payment: contact + site password, then Software username(s) (renew vs new; 2 for
+ * two-device packages). Site login = e-mail or the first Software username + password.
+ * Ryan is notified on the payments Telegram bot (reply with text/photo to fulfil).
+ * Credentials + screenshots are sealed (AES-256-GCM) and shown on /ucet and the token link.
  */
 const crypto = require('crypto');
 const sealed = require('./sealedStore');
+const soft = require('./softUser');
+const panelOcr = require('./panelOcr');
 
 const USER_RE = /^[A-Za-z0-9._-]{8,64}$/;
 const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/i;
@@ -58,16 +58,27 @@ function validateFulfill(b) {
   return { username, contact: c.contact };
 }
 
-/** New checkout: 8–24 chars, lowercase, compatible with /ucet accounts. */
-const CHECKOUT_USER_RE = /^[a-z0-9][a-z0-9_.-]{7,23}$/;
-function validateCheckout(b) {
-  const username = normUser(b && b.username).toLowerCase();
-  if (!CHECKOUT_USER_RE.test(username)) {
-    return { error: 'Používateľské meno musí mať 8–24 znakov (malé písmená, číslice, . _ -) a začínať písmenom alebo číslicou.' };
-  }
+const CHECKOUT_USER_RE = soft.NEW_RE;
+function slotsFromBody(b) {
+  if (Array.isArray(b && b.slots) && b.slots.length) return b.slots;
+  const intent = b && String(b.intent || '').toLowerCase() === 'renew' ? 'renew' : 'new';
+  const a = [];
+  if (b && (b.username || b.softwareUsername)) a.push({ intent: b.intent1 || intent, username: b.softwareUsername || b.username });
+  if (b && (b.username2 || b.softwareUsername2)) a.push({ intent: b.intent2 || intent, username: b.softwareUsername2 || b.username2 });
+  return a;
+}
+
+function validateCheckout(b, opts = {}) {
+  const want = (opts && opts.devices >= 2) ? 2 : 1;
+  const sl = soft.validateSlots(slotsFromBody(b || {}), want);
+  if (sl.error) return sl;
   const c = validateContact(b || {});
   if (c.error) return c;
-  return { username, contact: c.contact };
+  const username = soft.siteUsernameFromSlots(sl.slots) || sl.slots[0].username.toLowerCase();
+  if (!CHECKOUT_USER_RE.test(username)) {
+    return { error: 'Prvé Software username slúži aj ako prihlásenie na stránku (8–24 znakov, malé písmená). U nového mena použite Vygenerovať, alebo zadajte aj e-mail.' };
+  }
+  return { username, slots: sl.slots, intent: sl.slots[0].intent, contact: c.contact };
 }
 
 function validatePassword(pw, pw2, username) {
@@ -141,8 +152,11 @@ function applyCheckout(order, v, extra = {}) {
   if (!order || !v || !v.username || !v.contact) return null;
   const f = ensure(order);
   const first = !f.submittedAt;
+  const slots = (v.slots && v.slots.length) ? v.slots : [{ intent: v.intent || 'new', username: v.username }];
   Object.assign(f, {
-    username: v.username,
+    username: slots[0].username,
+    slots,
+    intent: slots[0].intent,
     email: v.contact.email || f.email,
     telegram: v.contact.telegram || f.telegram,
     facebook: v.contact.facebook || f.facebook,
@@ -159,7 +173,12 @@ function applyCheckout(order, v, extra = {}) {
     const who = [f.email, f.telegram, f.facebook].filter(Boolean).join(', ');
     const amt = extra.amount != null ? extra.amount : (order.amountExact || order.amountEur || '');
     const method = extra.provider || order.providerAlias || order.provider || order.methodId || '';
-    notify(`🆕 Nová objednávka (pred platbou)\nObjednávka: ${order.orderId}\nUsername: ${f.username}\nKontakt: ${who}\nSuma: ${amt} €\nMetóda: ${method}\nPo zaplatení odošlite prihlásenie: /admin/objednavky/${order.orderId}`);
+    const typ = soft.intentLabel(slots);
+    const users = soft.formatSlotsLine(slots);
+    const text = `🆕 Nová objednávka (pred platbou)\nObjednávka: ${order.orderId}\nTyp: ${typ}\nSoftware username: ${users}\nKontakt: ${who}\nSuma: ${amt} €\nMetóda: ${method}\n\nOdpovedzte na túto správu textom (údaje, dátum, pokyny) a/alebo fotkou z panela – zákazník to uvidí vo svojom účte.\nAlebo /admin/objednavky/${order.orderId}`;
+    // Prefer the payments bot so Ryan can Reply on the same message (inline Potvrdiť / Zamietnuť).
+    const sent = (() => { try { const b = global.__telegramBot; if (b && b.notifyFulfillOrder) { Promise.resolve(b.notifyFulfillOrder(order, text)).catch(() => notify(text)); return true; } } catch {} return false; })();
+    if (!sent) notify(text);
   }
   return f;
 }
@@ -195,6 +214,8 @@ function accountOrderView(order, req) {
     paid: isPaid(order),
     confirmed,
     username: f.username || '',
+    slots: Array.isArray(f.slots) ? f.slots : (f.username ? [{ intent: f.intent || 'new', username: f.username }] : []),
+    intent: f.intent || '',
     path: pathFor(order),
     url: urlFor(order, req),
     createdAt: order.createdAt || f.submittedAt || '',
@@ -275,22 +296,60 @@ ${err ? `<div class="err">${esc(err)}</div>` : ''}
 </div>`);
 }
 
-function chatHtml(order, req, flash) {
+function slotList(order) {
+  const f = order && order.fulfill;
+  if (f && Array.isArray(f.slots) && f.slots.length) return f.slots;
+  if (f && f.username) return [{ intent: f.intent || 'new', username: f.username }];
+  return [];
+}
+
+function daysPhrase(until) {
+  const n = soft.daysLeft(until);
+  if (n == null) return '';
+  if (n < 0) return `Vypršalo pred ${-n} d.`;
+  if (n === 0) return 'Platí do dnes';
+  return `Zostáva ${n} d.`;
+}
+
+function cardHtml(card, shotUrl) {
+  if (!card) return '';
+  const pw = card.password || (card.passEnc ? openCreds(card.passEnc) : '');
+  const until = card.until || '';
+  const days = until ? daysPhrase(until) : '';
+  return `<div class="msg creds"><b>Prihlasovacie údaje do Software (TV)</b>
+${card.username ? `Username: <b>${esc(card.username)}</b>\n` : ''}${pw ? `Heslo / password: <b>${esc(pw)}</b>\n` : ''}${until ? `Platné do: <b>${esc(until)}</b>${days ? ' · ' + esc(days) : ''}\n` : ''}${shotUrl ? `</div><p><img src="${esc(shotUrl)}" alt="Screenshot z panela" style="max-width:100%;border-radius:12px;border:1px solid #243044">` : ''}</div>`;
+}
+
+function renderMessages(order, req) {
   const f = order.fulfill || {};
-  const msgs = (f.messages || []).map((m) => {
+  const base = pathFor(order);
+  return (f.messages || []).map((m, i) => {
     if (m.type === 'creds') {
-      const t = openCreds(m.credEnc) || '(údaje sa nepodarilo zobraziť – použite súkromný odkaz ešte raz, alebo nám napíšte)';
+      const t = openCreds(m.credEnc) || '(údaje sa nepodarilo zobraziť)';
       return `<div class="msg creds"><b>Prihlasovacie údaje</b>\n${esc(t)}</div>`;
     }
-    return `<div class="msg ${m.from === 'admin' ? 'admin' : ''}">${esc(m.text || '')}</div>`;
+    if (m.type === 'credsCard' || m.type === 'shot') {
+      const card = Object.assign({}, m.card || {}, { password: m.card && m.card.passEnc ? openCreds(m.card.passEnc) : (m.card && m.card.password) || '' });
+      const shotUrl = (m.type === 'shot' && (m.shotEnc || m.mime)) ? `${base}/foto/${i}` : '';
+      return cardHtml(card, shotUrl);
+    }
+    const text = m.textEnc ? (openCreds(m.textEnc) || '') : (m.text || '');
+    return `<div class="msg ${m.from === 'admin' ? 'admin' : ''}">${esc(text)}</div>`;
   }).join('');
+}
+
+function chatHtml(order, req, flash) {
+  const f = order.fulfill || {};
+  const msgs = renderMessages(order, req);
   const st = statusLabel(order);
+  const softLine = slotList(order).map((s) => `${s.username} (${s.intent === 'renew' ? 'predĺženie' : 'nový'})`).join(', ') || f.username || '';
   return pageShell('Vaše údaje k predplatnému', `<div class="card"><h1>Okno k objednávke</h1>
 ${flash ? `<div class="ok">${esc(flash)}</div>` : ''}
 <p>Stav: <b>${esc(st.sk)}</b> <span class="hint">/ ${esc(st.en)}</span></p>
-<p>Meno: <b>${esc(f.username)}</b></p>
-<p class="hint">Uložte si tento súkromný odkaz – kedykoľvek sa sem viete vrátiť (funguje aj s menom a kontaktom, ktorý ste zadali):<br><a class="link" href="${esc(urlFor(order, req))}">${esc(urlFor(order, req))}</a></p>
-<div class="msgs">${msgs || '<p class="hint">Zatiaľ tu nie sú prihlasovacie údaje. Akonáhle ich odošleme, uvidíte ich na tomto mieste.</p>'}</div>
+<p>Software username: <b>${esc(softLine)}</b></p>
+<p class="hint">Tieto údaje sú do TV Software, nie na prihlásenie na našu stránku. Na stránku sa hlásite e-mailom alebo týmto menom a heslom, ktoré ste si nastavili pred platbou.</p>
+<p class="hint">Uložte si tento súkromný odkaz – kedykoľvek sa sem viete vrátiť:<br><a class="link" href="${esc(urlFor(order, req))}">${esc(urlFor(order, req))}</a></p>
+<div class="msgs">${msgs || '<p class="hint">Zatiaľ tu nie sú prihlasovacie údaje. Akonáhle ich odošleme (alebo príde odpoveď v Telegrame), uvidíte ich na tomto mieste.</p>'}</div>
 <form method="post" action="${esc(pathFor(order))}/sprava">
 <label for="t">Správa pre podporu (voliteľné)</label>
 <textarea id="t" name="text" rows="3" maxlength="2000" required></textarea>
@@ -352,6 +411,16 @@ function mount(app, { loadOrders, saveOrders, appendLog = () => {} }) {
     res.type('html').send(chatHtml(o, req));
   });
 
+  app.get('/objednavka/:token/foto/:i', (req, res) => {
+    res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' });
+    const o = findByToken(load(), req.params.token);
+    if (!o || !isConfirmed(o)) return res.status(404).end();
+    const m = (o.fulfill && o.fulfill.messages || [])[Number(req.params.i)];
+    const ph = photoBytes(m);
+    if (!ph) return res.status(404).end();
+    res.type(ph.mime).send(ph.buf);
+  });
+
   app.post('/objednavka/:token', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const orders = load(); const o = findByToken(orders, req.params.token);
@@ -396,6 +465,108 @@ function mount(app, { loadOrders, saveOrders, appendLog = () => {} }) {
   });
 }
 
+
+function photoBytes(m) {
+  if (!m || !m.shotEnc) return null;
+  const raw = openCreds(m.shotEnc);
+  if (!raw) return null;
+  return { mime: m.mime || 'image/jpeg', buf: Buffer.from(raw, 'base64') };
+}
+
+function applyExpiry(order, card) {
+  if (!card || !card.until) return;
+  const until = soft.untilEnd(card.until);
+  if (!until) return;
+  const user = card.username || (order.fulfill && order.fulfill.username);
+  try {
+    const A = global.__lnkAccounts;
+    if (A && typeof A.applySoftwareExpiry === 'function') {
+      Promise.resolve(A.applySoftwareExpiry({
+        username: user,
+        until,
+        userId: (order.acct && order.acct.id) || (order.fulfill && order.fulfill.accountId) || null,
+        orderId: order.orderId,
+      })).catch(() => {});
+    }
+  } catch { /* accounts optional */ }
+}
+
+function customerNotify(order, req, summary) {
+  const f = order && order.fulfill;
+  if (f && f.email) {
+    const link = urlFor(order, req);
+    sendMail(f.email, 'Prihlasovacie údaje k predplatnému', `Dobrý deň ${f.username || ''},\n\nprihlasovacie údaje (a prípadný screenshot) sú vo vašom účte a v súkromnom okne:\n${link}\n\n${summary || ''}\n`).catch(() => {});
+    f.credEmailedAt = new Date().toISOString();
+  }
+  // Telegram to the customer only if they already started the payments/support bot (we have a chat id).
+}
+
+async function attachDelivery(order, { text, photo, extracted, via, autoConfirm } = {}, req) {
+  if (!order) return { error: 'Objednávka sa nenašla.' };
+  const f = ensure(order);
+  if (autoConfirm || via === 'telegram') confirm(order, via || 'telegram');
+  if (!isConfirmed(order)) return { error: 'Objednávka ešte nie je potvrdená.' };
+  const at = new Date().toISOString();
+  f.messages = f.messages || [];
+  const cap = String(text || '').trim();
+  let card = extracted ? { username: extracted.username || '', password: extracted.password || '', until: extracted.until || extracted.expiry || '' } : { username: '', password: '', until: '' };
+  if (cap) {
+    const fromText = soft.parseCredsFromText(cap);
+    if (!card.username) card.username = fromText.username;
+    if (!card.password) card.password = fromText.password;
+    if (!card.until) card.until = fromText.until;
+    f.messages.push({ id: crypto.randomBytes(8).toString('hex'), at, from: 'admin', type: 'text', textEnc: sealCreds(cap) });
+  }
+  if (photo && photo.buf && photo.buf.length) {
+    if (!extracted) {
+      try {
+        const got = await panelOcr.extractFromImage(photo.buf, photo.mime, cap);
+        if (!card.username) card.username = got.username;
+        if (!card.password) card.password = got.password;
+        if (!card.until) card.until = got.until;
+        card.source = got.source;
+        card.ocrError = got.error || '';
+      } catch (e) { card.ocrError = e.message; }
+    }
+    const c = await panelOcr.compress(photo.buf, photo.mime || panelOcr.sniff(photo.buf));
+    f.messages.push({
+      id: crypto.randomBytes(8).toString('hex'), at, from: 'admin', type: 'shot',
+      mime: c.mime, shotEnc: sealCreds(c.buf.toString('base64')),
+      card: { username: card.username || '', until: card.until || '', passEnc: card.password ? sealCreds(card.password) : '' },
+    });
+  } else if (card.username || card.password || card.until) {
+    f.messages.push({
+      id: crypto.randomBytes(8).toString('hex'), at, from: 'admin', type: 'credsCard',
+      card: { username: card.username || '', until: card.until || '', passEnc: card.password ? sealCreds(card.password) : '' },
+    });
+  }
+  if (card.until || card.username || card.password) {
+    f.lines = slotList(order).map((s) => ({ ...s }));
+    const hit = f.lines.find((s) => card.username && s.username.toLowerCase() === String(card.username).toLowerCase()) || f.lines[0];
+    if (hit) {
+      if (card.username) hit.username = card.username;
+      if (card.until) hit.until = card.until;
+      if (card.password) hit.passEnc = sealCreds(card.password);
+    }
+  }
+  f.credSentAt = at;
+  if (card.until) applyExpiry(order, card);
+  customerNotify(order, req, [card.username && ('Username: ' + card.username), card.until && ('Platné do: ' + card.until)].filter(Boolean).join('\n'));
+  notify(`🔑 Údaje odoslané pre ${f.username || order.orderId} (${order.orderId})` + (via ? ' cez ' + via : ''));
+  return { ok: true, card, confirmed: isConfirmed(order) };
+}
+
+function setLineUntil(order, until, username) {
+  const day = soft.parseDate(until) || (String(until || '').slice(0, 10));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return { error: 'Neplatný dátum. Použite napr. 15.11.2026.' };
+  const f = ensure(order);
+  for (const m of f.messages || []) {
+    if (m.card && (!username || !m.card.username || m.card.username.toLowerCase() === String(username).toLowerCase())) m.card.until = day;
+  }
+  applyExpiry(order, { username: username || f.username, until: day });
+  return { ok: true, until: day };
+}
+
 function deliver({ order, text, alsoEmail }, req) {
   const body = clean(text, 4000);
   if (!body) return { error: 'Napíšte prihlasovacie údaje.' };
@@ -405,6 +576,14 @@ function deliver({ order, text, alsoEmail }, req) {
   try { enc = sealCreds(body); } catch (e) { return { error: e.message || 'Chýba šifrovací kľúč (DATA_ENC_KEY).' }; }
   order.fulfill.messages = order.fulfill.messages || [];
   order.fulfill.messages.push({ id: crypto.randomBytes(8).toString('hex'), at: new Date().toISOString(), from: 'admin', type: 'creds', credEnc: enc });
+  const parsed = soft.parseCredsFromText(body);
+  if (parsed.username || parsed.password || parsed.until) {
+    order.fulfill.messages.push({
+      id: crypto.randomBytes(8).toString('hex'), at: new Date().toISOString(), from: 'admin', type: 'credsCard',
+      card: { username: parsed.username || '', until: parsed.until || '', passEnc: parsed.password ? sealCreds(parsed.password) : '' },
+    });
+    if (parsed.until) applyExpiry(order, parsed);
+  }
   order.fulfill.credSentAt = new Date().toISOString();
   if (alsoEmail && order.fulfill.email) {
     const link = urlFor(order, req);
@@ -425,7 +604,9 @@ module.exports = {
   USER_RE, CHECKOUT_USER_RE, EMAIL_RE, validateFulfill, validateCheckout, validateContact, validatePassword,
   isPaid, isConfirmed, confirm, statusLabel, ensure, findByReturn, findByToken,
   applyCheckout, ordersForEmail, linkToVerifiedAccount, accountOrderView, listAccountOrders,
-  mailReady, sealCreds, openCreds, pathFor, urlFor, paidUrl, deliver, adminList, mount, contactMatches,
+  mailReady, sealCreds, openCreds, pathFor, urlFor, paidUrl, deliver, attachDelivery, setLineUntil,
+  slotList, renderMessages, cardHtml, photoBytes, daysPhrase, applyExpiry,
+  adminList, mount, contactMatches,
 };
 
 function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, saveOrders }) {
@@ -435,7 +616,8 @@ function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, s
       const f = o.fulfill || {};
       const st = statusLabel(o).sk;
       const contact = [f.email, f.telegram, f.facebook].filter(Boolean).join(' · ') || '—';
-      return `<tr><td><a href="/admin/objednavky/${esc(o.orderId)}">${esc(o.orderId)}</a></td><td>${esc(o.amountExact || o.amountEur || '—')} €</td><td>${esc(f.username || '—')}</td><td>${esc(contact)}</td><td>${esc(st)}</td></tr>`;
+      const names = (Array.isArray(f.slots) && f.slots.length ? f.slots.map((s)=>s.username) : [f.username]).filter(Boolean).join(', ') || '—';
+      return `<tr><td><a href="/admin/objednavky/${esc(o.orderId)}">${esc(o.orderId)}</a></td><td>${esc(o.amountExact || o.amountEur || '—')} €</td><td>${esc(names)}</td><td>${esc(contact)}</td><td>${esc(st)}</td></tr>`;
     }).join('') || '<tr><td colspan="5">Zatiaľ žiadne objednávky s údajmi.</td></tr>';
     res.send(page('Objednávky a prihlásenie', `<h1>📦 Objednávky a prihlásenie</h1>
 <p class="hint">Meno, kontakt a heslo zadá zákazník ešte pred platbou. Prihlasovacie údaje odošlete až po potvrdení objednávky (automaticky po platbe, alebo ručne tlačidlom Potvrdiť). Údaje sú šifrované a zákazník ich vidí v súkromnom okne alebo vo svojom účte.</p>
@@ -451,16 +633,37 @@ function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, s
     const contact = [f.email, f.telegram, f.facebook].filter(Boolean).join(' · ') || '—';
     const mailOpt = (f.email && (global.__lnkMailer && global.__lnkMailer.ready && global.__lnkMailer.ready())) ? `<label class="ck"><input type="checkbox" name="alsoEmail" value="1"> Poslať aj e-mailom na ${esc(f.email)}</label>` : (f.email ? '<p class="hint">E-mail je vyplnený, ale odosielanie e-mailov nie je nastavené (Admin → Odosielanie e-mailov).</p>' : '<p class="hint">Zákazník e-mail nevyplnil – údaje uvidí v súkromnom okne alebo po prihlásení.</p>');
     const confirmForm = !isConfirmed(o) ? `<form method="post" action="/admin/objednavky/${esc(o.orderId)}/potvrdit">${hid(req)}<p class="hint">Najprv objednávku potvrďte (ručne, ak ju systém ešte automaticky nepotvrdil po platbe). Až potom môžete odoslať prihlasovacie údaje.</p><button>Potvrdiť</button></form>` : '';
-    const sendForm = isConfirmed(o) && f.submittedAt ? `<form method="post" action="/admin/objednavky/${esc(o.orderId)}/udaje">${hid(req)}
-<label>Prihlasovacie údaje pre zákazníka (uložia sa šifrovane)</label>
-<textarea name="text" rows="6" maxlength="4000" required placeholder="Napr. meno a heslo k predplatnému"></textarea>
+    const slots = slotList(o);
+    const typ = soft.intentLabel(slots);
+    const gem = panelOcr.geminiReady() ? 'Gemini OCR je zapnuté (kľúč v Admin → API kľúče).' : 'GEMINI_API_KEY nie je nastavený – snímku môžete nahrať, údaje dopíšte ručne (alebo doplňte kľúč; systém je autonómny na Renderi).';
+    const slotForms = slots.map((s, i) => {
+      const draft = (f.drafts && f.drafts[i]) || {};
+      return `<div class="card" style="margin-top:12px"><h3>Zariadenie ${slots.length>1 ? (i+1)+' · ' : ''}${esc(s.username)}</h3>
+<p class="hint">${s.intent === 'renew' ? 'Predĺženie existujúceho Software účtu' : 'Nový Software účet'} · toto je meno do TV Software, nie na prihlásenie na stránku.</p>
+<form method="post" action="/admin/objednavky/${esc(o.orderId)}/udaje-slot" enctype="multipart/form-data">${hid(req)}
+<input type="hidden" name="slot" value="${i}">
+<label>Software username</label><input name="username" value="${esc(draft.username || s.username)}" maxlength="64" autocomplete="off">
+<label>Heslo / password do Software</label><input name="password" type="password" maxlength="128" autocomplete="new-password" value="">
+<label>Platné do</label><input name="until" type="date" value="${esc((draft.until || s.until || '').slice(0,10))}">
+<label>Screenshot z panela (voliteľné) – systém sa pokúsi vyčítať meno, heslo a dátum</label>
+<input type="file" name="image" accept="image/png,image/jpeg,image/webp">
+<p class="hint">${esc(gem)}</p>
+<button name="act" value="ocr">Načítať z fotky</button>
+<button name="act" value="send">Uložiť a odoslať zákazníkovi</button>
+</form></div>`;
+    }).join('');
+    const sendForm = isConfirmed(o) && f.submittedAt ? `${slotForms}
+<form method="post" action="/admin/objednavky/${esc(o.orderId)}/udaje">${hid(req)}
+<label>Alebo voľný text (pokyny, údaje) – uloží sa šifrovane a uvidí ho zákazník</label>
+<textarea name="text" rows="4" maxlength="4000" placeholder="Napr. inštalácia, meno, heslo, platné do 15.11.2027"></textarea>
 ${mailOpt}
-<button>Odoslať do okna zákazníka</button>
-</form>${f.credSentAt ? `<p class="hint">Naposledy odoslané: ${esc(f.credSentAt)}</p>` : ''}` : (isConfirmed(o) ? '<p class="hint">Pri tejto objednávke ešte chýba meno a kontakt (starší záznam).</p>' : '');
+<button>Odoslať text do okna zákazníka</button>
+</form>${f.credSentAt ? `<p class="hint">Naposledy odoslané: ${esc(f.credSentAt)}</p>` : ''}
+<p class="hint">Hlavný spôsob: odpoveď v Telegrame na notifikáciu objednávky (text a/alebo fotka). Tento formulár je záložný.</p>` : (isConfirmed(o) ? '<p class="hint">Pri tejto objednávke ešte chýba meno a kontakt (starší záznam).</p>' : '');
     res.send(page('Objednávka ' + o.orderId, `<h1>Objednávka ${esc(o.orderId)}</h1>${m}
 <p class="row"><a class="btnl" href="/admin/objednavky">← Zoznam</a></p>
-<div class="card"><p>Suma: <b>${esc(o.amountExact || o.amountEur || '—')} €</b> · Stav: <b>${esc(st.sk)}</b> (${esc(o.status || '')})</p>
-<p>Meno: <b>${esc(f.username || '—')}</b><br>Kontakt: ${esc(contact)}</p>
+<div class="card"><p>Suma: <b>${esc(o.amountExact || o.amountEur || '—')} €</b> · Stav: <b>${esc(st.sk)}</b> (${esc(o.status || '')}) · Typ: ${esc(typ)}</p>
+<p>Software username: <b>${esc(slots.map((s)=>s.username).join(', ') || f.username || '—')}</b><br>Kontakt: ${esc(contact)}</p>
 ${f.submittedAt ? `<p class="hint">Údaje zadané ${esc(f.submittedAt)}. Súkromné okno: <a href="${esc(pathFor(o))}" target="_blank" rel="noopener">${esc(pathFor(o))}</a></p>` : ''}
 ${confirmForm}${sendForm}
 </div>`, 'a adm'));
@@ -479,6 +682,50 @@ ${confirmForm}${sendForm}
     if (r.error) return res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent(r.error));
     saveOrders(orders);
     res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=ok');
+  }));
+  const up = require('multer')({ storage: require('multer').memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 12, fieldSize: 8000 } }).single('image');
+  admin.post('/objednavky/:id/udaje-slot', needAuth, (req, res, next) => up(req, res, (e) => (e ? res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent('Súbor je príliš veľký alebo neplatný (max 2 MB, PNG/JPEG/WebP).')) : next())), csrf, wrap(async (req, res) => {
+    const orders = loadOrders(); const o = orders[req.params.id];
+    if (!o) return res.redirect(303, '/admin/objednavky');
+    const i = Number(req.body && req.body.slot) || 0;
+    const act = String((req.body && req.body.act) || 'send');
+    const username = String((req.body && req.body.username) || '');
+    const password = String((req.body && req.body.password) || '');
+    const until = String((req.body && req.body.until) || '');
+    const file = req.file && req.file.buffer && req.file.buffer.length ? { buf: req.file.buffer, mime: require('./panelOcr').sniff(req.file.buffer) || req.file.mimetype } : null;
+    if (file && file.mime === '') return res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent('Povolené sú len PNG, JPEG, WebP.'));
+    if (act === 'ocr') {
+      let extracted = { username, password, until: soft.parseDate(until) || until };
+      if (file) {
+        const got = await require('./panelOcr').extractFromImage(file.buf, file.mime, '');
+        extracted = {
+          username: got.username || username,
+          password: got.password || password,
+          until: got.until || soft.parseDate(until) || until,
+        };
+        if (got.error && !got.username && !got.password && !got.until) {
+          return res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent(got.error));
+        }
+      }
+      o.fulfill = o.fulfill || {};
+      o.fulfill.drafts = o.fulfill.drafts || {};
+      o.fulfill.drafts[i] = extracted;
+      saveOrders(orders);
+      return res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent('Načítané z fotky – skontrolujte a odošlite.'));
+    }
+    const extracted = { username, password, until: soft.parseDate(until) || until };
+    const r = await attachDelivery(o, { text: '', photo: file, extracted, via: 'admin', autoConfirm: false }, req);
+    if (r.error) return res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=' + encodeURIComponent(r.error));
+    if (o.fulfill && o.fulfill.drafts) delete o.fulfill.drafts[i];
+    saveOrders(orders);
+    res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=ok');
+  }));
+  admin.get('/objednavky/:id/foto/:i', needAuth, wrap(async (req, res) => {
+    const o = loadOrders()[req.params.id];
+    const m = o && o.fulfill && o.fulfill.messages && o.fulfill.messages[Number(req.params.i)];
+    const ph = photoBytes(m);
+    if (!ph) return res.status(404).end();
+    res.type(ph.mime).send(ph.buf);
   }));
 }
 

@@ -73,6 +73,19 @@ function parseDecision(data) {
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   return { action: m[1] === 'c' ? 'confirmed' : 'rejected', ref: m[2] };
 }
+function dateFixKeyboard(ref) {
+  const id = String(ref);
+  const data = `f:d:${id}:${cbSig('fd', id)}`;
+  if (Buffer.byteLength(data) > 64) return undefined;
+  return { inline_keyboard: [[{ text: '✏️ Opraviť dátum', callback_data: data }]] };
+}
+function parseDateFix(data) {
+  const m = String(data || '').match(/^f:d:(.+):([A-Za-z0-9_-]{16})$/);
+  if (!m) return null;
+  const a = Buffer.from(cbSig('fd', m[1])), b = Buffer.from(m[2]);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  return { ref: m[1] };
+}
 
 function ct(order) { try { return '\nKontakt: ' + require('./contact').contactText(order && order.contact); } catch { return ''; } }
 
@@ -96,6 +109,26 @@ async function sendMessage(chatId, text, extra = {}) {
     disable_web_page_preview: true,
     ...extra,
   });
+}
+
+async function downloadFile(fileId) {
+  const inf = await api('getFile', { file_id: fileId });
+  const t = token();
+  const r = await fetch(`${API}/file/bot${t}/${inf.file_path}`, { signal: AbortSignal.timeout(30000) });
+  if (!r.ok) throw new Error('Nepodarilo sa stiahnuť súbor z Telegramu (HTTP ' + r.status + ')');
+  const buf = Buffer.from(await r.arrayBuffer());
+  const ext = String(inf.file_path || '').split('.').pop().toLowerCase();
+  const mime = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+  return { buf, mime, name: require('path').basename(inf.file_path || 'photo.jpg') };
+}
+
+function bestPhotoId(msg) {
+  if (msg && Array.isArray(msg.photo) && msg.photo.length) {
+    const p = msg.photo[msg.photo.length - 1];
+    return p && p.file_id;
+  }
+  if (msg && msg.document && msg.document.file_id && /^image\//i.test(msg.document.mime_type || '')) return msg.document.file_id;
+  return '';
 }
 
 /**
@@ -229,6 +262,28 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
   let offset = 0;
   let polling = false;
   const pendingByMsg = new Map(); // telegram message_id -> orderId
+  const pendingDateFix = new Map(); // chatId -> { orderId, at }
+
+
+  async function notifyFulfillOrder(order, text) {
+    const chat = loadAdminChatId();
+    const body = String(text || '').slice(0, 3900);
+    if (!chat) {
+      if (appendLog) appendLog('TELEGRAM_SKIP no admin chat id');
+      return null;
+    }
+    const msg = await sendMessage(chat, body, { reply_markup: decisionKeyboard(order.orderId) });
+    pendingByMsg.set(msg.message_id, order.orderId);
+    const orders = loadOrders();
+    if (orders[order.orderId]) {
+      orders[order.orderId].telegramMessageId = msg.message_id;
+      orders[order.orderId].telegramChatId = chat;
+      orders[order.orderId].telegramFulfill = true;
+      saveOrders(orders);
+    }
+    if (appendLog) appendLog(`TELEGRAM_FULFILL_NOTIFY ${order.orderId} msg=${msg.message_id}`);
+    return msg;
+  }
 
   async function notifySepaOrder(order) {
     const chat = loadAdminChatId();
@@ -355,6 +410,40 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
     return order;
   }
 
+
+  async function applyFulfillReply(orderId, msg, text) {
+    const orders = loadOrders();
+    const order = orders[orderId];
+    if (!order) return false;
+    if (!(order.fulfill && order.fulfill.submittedAt) && !order.telegramFulfill) return false;
+    if (order.provider === 'bank_sepa_manual' && parseIbanReply(text || '')) return false;
+    if (order.provider === 'revolut_manual') return false;
+    const fulfill = require('./fulfill');
+    let photo = null;
+    const fid = bestPhotoId(msg);
+    if (fid) photo = await downloadFile(fid);
+    if (!String(text || '').trim() && !photo) return false;
+    const r = await fulfill.attachDelivery(order, { text, photo, via: 'telegram', autoConfirm: true }, null);
+    if (r.error) throw new Error(r.error);
+    saveOrders(orders);
+    pendingByMsg.set(msg.message_id, order.orderId);
+    const card = r.card || {};
+    const bits = [
+      `✅ Doručené zákazníkovi · ${order.orderId}`,
+      card.username ? `Software username: ${card.username}` : '',
+      card.password ? 'Heslo: uložené (šifrovane)' : '',
+      card.until ? `Platné do: ${card.until}` : '',
+      card.ocrError ? `Upozornenie: ${card.ocrError}` : '',
+      card.source && String(card.source).startsWith('gemini') ? `Zdroj: ${card.source}` : (photo ? 'Snímka uložená' : ''),
+      'Zákazník to uvidí v /ucet a v súkromnom okne.',
+    ].filter(Boolean).join('\n');
+    const extra = { reply_to_message_id: msg.message_id };
+    if (card.until || card.username) extra.reply_markup = dateFixKeyboard(order.orderId);
+    const ack = await sendMessage(loadAdminChatId(), bits, extra);
+    if (ack && ack.message_id) pendingByMsg.set(ack.message_id, order.orderId);
+    return true;
+  }
+
   async function handleCallback(cq) {
     const admin = String(loadAdminChatId() || '');
     const fromOk = admin && String(cq.from && cq.from.id) === admin && cq.message && String(cq.message.chat.id) === admin;
@@ -362,20 +451,32 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
       if (appendLog) appendLog(`TELEGRAM_CB_DENY from=${cq.from && cq.from.id}`);
       return api('answerCallbackQuery', { callback_query_id: cq.id, text: 'Nepovolené.', show_alert: false }).catch(() => {});
     }
+    const fix = parseDateFix(cq.data);
+    if (fix) {
+      pendingDateFix.set(String(cq.message.chat.id), { orderId: fix.ref, at: Date.now() });
+      await api('answerCallbackQuery', { callback_query_id: cq.id, text: 'Napíšte nový dátum (napr. 15.11.2026).' }).catch(() => {});
+      await sendMessage(cq.message.chat.id, `✏️ Objednávka ${fix.ref}: napíšte správny dátum „platné do“ (napr. 15.11.2026 alebo 2026-11-15).`, cq.message.message_id ? { reply_to_message_id: cq.message.message_id } : {});
+      return;
+    }
     const d = parseDecision(cq.data);
     if (!d) return api('answerCallbackQuery', { callback_query_id: cq.id, text: 'Neplatné tlačidlo.' }).catch(() => {});
     const sl = require('./statusLinks');
+    const fulfill = require('./fulfill');
     const at = new Date().toISOString();
     let rec = sl.forRef(d.ref);
     const orders = loadOrders();
     const o = orders[d.ref];
     if (o) {
-      if (!rec) { sl.ensureOrder(o); rec = sl.forRef(d.ref); }
+      if (!rec) { try { sl.ensureOrder(o); rec = sl.forRef(d.ref); } catch { /* */ } }
       o.adminDecision = d.action; o.adminDecisionAt = at;
+      if (o.fulfill) {
+        if (d.action === 'confirmed') fulfill.confirm(o, 'telegram');
+        if (d.action === 'rejected') { o.rejectedAt = at; o.fulfill.rejectedAt = at; }
+      }
       saveOrders(orders);
     }
-    if (!rec) return api('answerCallbackQuery', { callback_query_id: cq.id, text: `Záznam ${d.ref} sa nenašiel.`, show_alert: true }).catch(() => {});
-    sl.update(d.ref, { decision: d.action, decidedAt: at });
+    if (!rec && !o) return api('answerCallbackQuery', { callback_query_id: cq.id, text: `Záznam ${d.ref} sa nenašiel.`, show_alert: true }).catch(() => {});
+    if (rec) sl.update(d.ref, { decision: d.action, decidedAt: at });
     const label = d.action === 'confirmed' ? '✅ POTVRDENÉ' : '❌ ZAMIETNUTÉ';
     const when = new Date(at).toLocaleString('sk-SK', { timeZone: 'Europe/Zurich', dateStyle: 'short', timeStyle: 'short' });
     const base = String(cq.message.text || cq.message.caption || '').replace(/\n\n(✅ POTVRDENÉ|❌ ZAMIETNUTÉ)[^\n]*$/, '');
@@ -419,28 +520,42 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
       return;
     }
 
-    const text = String(msg.text || '').trim();
-    if (!text) return;
+    const text = String(msg.text || msg.caption || '').trim();
+    const hasPhoto = !!bestPhotoId(msg);
+
+    const pendFix = pendingDateFix.get(chatId);
+    if (pendFix && Date.now() - pendFix.at < 15 * 60e3 && text && !text.startsWith('/')) {
+      const soft = require('./softUser');
+      const fulfill = require('./fulfill');
+      const day = soft.parseDate(text);
+      if (!day) {
+        await sendMessage(chatId, 'Neplatný dátum. Skúste napr. 15.11.2026 alebo 2026-11-15.', msg.message_id ? { reply_to_message_id: msg.message_id } : {});
+        return;
+      }
+      const orders = loadOrders();
+      const o = orders[pendFix.orderId];
+      if (!o) { pendingDateFix.delete(chatId); await sendMessage(chatId, 'Objednávka sa nenašla.'); return; }
+      const r = fulfill.setLineUntil(o, day);
+      if (r.error) { await sendMessage(chatId, r.error, msg.message_id ? { reply_to_message_id: msg.message_id } : {}); return; }
+      saveOrders(orders);
+      pendingDateFix.delete(chatId);
+      await sendMessage(chatId, `✅ Dátum pre ${o.orderId} upravený na ${r.until}. Zákazník ho uvidí vo svojom účte a v Overiť predplatné / pripomienkach.`, msg.message_id ? { reply_to_message_id: msg.message_id } : {});
+      return;
+    }
+
+    if (!text && !hasPhoto) return;
 
     if (/^\/help(?:@\w+)?$/i.test(text)) {
       await sendMessage(
         chatId,
-        'SEPA bot — formát (suma z objednávky):\n\n' +
-          '1) Odpoveď na notifikáciu:\n' +
-          '<IBAN>\n' +
-          '<poznámka>\n' +
-          '[<meno príjemcu — voliteľné>]\n\n' +
-          'Príklad (bez mena):\n' +
-          'HR2926190417610279016\n' +
-          '263929-293629-29272\n\n' +
-          '2) Príkaz:\n' +
-          '/iban <orderId>\n' +
-          '<IBAN>\n' +
-          '<poznámka>\n' +
-          '[<meno príjemcu>]\n\n' +
-          'IBAN sa kontroluje checksumom (mod 97). Poznámka sa zachová presne. Meno príjemcu je voliteľné (bez neho sa skryje EPC QR).\n\n' +
-          'Starší 5-riadkový formát (IBAN / suma / VS / meno / poznámka) a jednoriadkový stále fungujú.\n\n' +
-          'Revolut objednávky: odpovedzte jedným riadkom @revtag (alebo revolut.me odkaz), alebo /revtag <orderId> @revtag'
+        'Odpovedzte na notifikáciu objednávky:\n' +
+          '• text (pokyny, username, heslo, dátum platné do)\n' +
+          '• a/alebo fotka/screenshot z panela (systém vyčíta meno, heslo a dátum)\n' +
+          'Nezávisle potvrďte tlačidlom Potvrdiť / Zamietnuť (odpoveď nepotvrdenú objednávku automaticky potvrdí).\n\n' +
+          'SEPA — formát (suma z objednávky):\n' +
+          '<IBAN>\n<poznámka>\n[<meno príjemcu — voliteľné>]\n' +
+          'alebo /iban <orderId> …\n\n' +
+          'Revolut: odpovedzte @revtag, alebo /revtag <orderId> @revtag'
       );
       return;
     }
@@ -459,7 +574,7 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
       }
       if (msg.reply_to_message && global.__chatReplyHook && await global.__chatReplyHook(msg)) return;
       if (msg.reply_to_message) {
-        const replyText = msg.reply_to_message.text || '';
+        const replyText = msg.reply_to_message.text || msg.reply_to_message.caption || '';
         let oid =
           pendingByMsg.get(msg.reply_to_message.message_id) ||
           orderIdFromNotifyText(replyText);
@@ -484,6 +599,10 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
         if (oid && parsed) {
           await applyFromRyan(oid, parsed, msg);
           return;
+        }
+        if (oid) {
+          const handled = await applyFulfillReply(oid, msg, text);
+          if (handled) return;
         }
       }
       if (/^\/iban/i.test(text)) {
@@ -588,6 +707,7 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
   }
 
   return {
+    notifyFulfillOrder,
     notifySepaOrder,
     notifyRevolutOrder,
     notifyRevolutPaid,
@@ -603,4 +723,4 @@ function createBot({ loadOrders, saveOrders, appendLog, publicBase }) {
   };
 }
 
-module.exports = { decisionKeyboard, parseDecision, parseRevtag, parseRevtagCommand, createBot, parseIbanCommand, parseIbanReply, token, loadAdminChatId };
+module.exports = { decisionKeyboard, parseDecision, dateFixKeyboard, parseDateFix, parseRevtag, parseRevtagCommand, createBot, parseIbanCommand, parseIbanReply, token, loadAdminChatId, orderIdFromNotifyText };

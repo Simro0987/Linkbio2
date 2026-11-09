@@ -1712,7 +1712,18 @@ async function handleCreateCheckout(req, res) {
       providerLowerEarly === 'gift_smart' ||
       providerLowerEarly === 'giftcard';
 
-    const fv = fulfill.validateCheckout(body);
+    let devices = 1;
+    try {
+      if (body.plan_id) {
+        const pl = await fetchPlan(body.plan_id);
+        if (pl && pl.devices >= 2) devices = 2;
+      }
+      if (devices < 2 && Number.isFinite(amountEur) && global.__lnkbioPlansByAmount) {
+        const meta = await global.__lnkbioPlansByAmount(amountEur);
+        if (meta && meta.devices >= 2) devices = 2;
+      }
+    } catch (e) { appendLog('PLAN_DEVICES_FAIL ' + (e && e.message)); }
+    const fv = fulfill.validateCheckout(body, { devices });
     if (fv.error) return res.status(400).json({ error: fv.error, code: 'FULFILL_REQUIRED' });
     if (!fulfillCtx.getStore()) {
       const newId = `ord_${crypto.randomBytes(8).toString('hex')}`;
@@ -3447,7 +3458,7 @@ async function fetchPlan(id) {
   if (typeof global.__lnkbioPlan === 'function') {
     const j = await global.__lnkbioPlan(Number(k));
     const amount = Number(j && j.amount);
-    const plan = j && j.active && Number.isFinite(amount) && amount > 0 ? { id: Number(k), name: String(j.name || '').slice(0, 80), name_en: String(j.name_en || '').slice(0, 80), amount: Math.round(amount * 100) / 100, currency: 'EUR', period: Number(j.period) || 1 } : null;
+    const plan = j && j.active && Number.isFinite(amount) && amount > 0 ? { id: Number(k), name: String(j.name || '').slice(0, 80), name_en: String(j.name_en || '').slice(0, 80), amount: Math.round(amount * 100) / 100, currency: 'EUR', period: Number(j.period) || 1, devices: Number(j.devices) >= 2 ? 2 : 1 } : null;
     planCache.set(k, { at: Date.now(), plan });
     return plan;
   }
@@ -3462,14 +3473,24 @@ async function fetchPlan(id) {
   if (!r.ok) { planCache.set(k, { at: Date.now(), plan: null }); return null; }
   const j = await r.json();
   const amount = Number(j.amount);
-  const plan = j && j.active && j.currency === 'EUR' && Number.isFinite(amount) && amount > 0 ? { id: Number(k), name: String(j.name || '').slice(0, 80), name_en: String(j.name_en || '').slice(0, 80), amount: Math.round(amount * 100) / 100, currency: 'EUR', period: Number(j.period) || 1 } : null;
+  const plan = j && j.active && j.currency === 'EUR' && Number.isFinite(amount) && amount > 0 ? { id: Number(k), name: String(j.name || '').slice(0, 80), name_en: String(j.name_en || '').slice(0, 80), amount: Math.round(amount * 100) / 100, currency: 'EUR', period: Number(j.period) || 1, devices: Number(j.devices) >= 2 ? 2 : 1 } : null;
   planCache.set(k, { at: Date.now(), plan });
   return plan;
 }
 app.get('/api/plan', async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  try { const p = await fetchPlan(req.query.id); if (!p) return res.status(404).json({ error: 'Plán neexistuje alebo nie je aktívny.' }); res.json(p); }
-  catch { res.status(502).json({ error: 'Cenník je dočasne nedostupný.' }); }
+  try {
+    if (req.query.id) {
+      const p = await fetchPlan(req.query.id);
+      if (!p) return res.status(404).json({ error: 'Plán neexistuje alebo nie je aktívny.' });
+      return res.json(p);
+    }
+    if (req.query.amount && global.__lnkbioPlansByAmount) {
+      const meta = await global.__lnkbioPlansByAmount(req.query.amount);
+      return res.json({ devices: meta.devices || 1, plans: meta.plans || [] });
+    }
+    return res.status(400).json({ error: 'Chýba id alebo amount.' });
+  } catch { res.status(502).json({ error: 'Cenník je dočasne nedostupný.' }); }
 });
 /** Public: only the per-method amount limits (fees are admin-only, never shown to customers). */
 app.get('/api/method-costs', (_req, res) => {
