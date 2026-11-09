@@ -12,7 +12,39 @@ function normBase(u) {
   if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
   let x; try { x = new URL(s); } catch { return null; }
   if (!/^https?:$/.test(x.protocol) || x.username || x.password || !x.hostname) return null;
-  return x.origin + x.pathname.replace(/\/+$/, '').replace(/\/(player_api|panel_api|get)\.php$/i, '').replace(/\/stalker_portal(\/.*)?$/i, '').replace(/\/c$/, '');
+  let path = x.pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '');
+  path = path.replace(/\/(player_api|panel_api|get)\.php$/i, '').replace(/\/stalker_portal(\/.*)?$/i, '').replace(/\/c$/, '');
+  return x.origin + path;
+}
+/** Join a panel base with a path or query. Always strips trailing slashes from the base (keeps http://),
+ *  avoids a double slash, and preserves a path prefix (http://host:8080/sub/ + player_api.php). */
+function joinUrl(base, path = '') {
+  const raw = String(base || '').trim();
+  if (!raw) return String(path || '');
+  const m = /^(https?:\/\/)/i.exec(raw);
+  const head = m ? m[1] : '';
+  const rest = (m ? raw.slice(head.length) : raw).replace(/\/{2,}/g, '/').replace(/\/+$/, '');
+  const root = head + rest;
+  let p = String(path || '');
+  if (!p) return root;
+  if (p.startsWith('?') || p.startsWith('#')) return root + '/' + p;
+  return root + '/' + p.replace(/^\/+/, '');
+}
+function tidyFullUrl(u) {
+  let s = String(u || '').trim();
+  if (!s) return '';
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = 'http://' + s;
+  const h = s.split('#');
+  const q = h[0].split('?');
+  return joinUrl(q[0], '') + (q.length > 1 ? '?' + q.slice(1).join('?') : '') + (h.length > 1 ? '#' + h.slice(1).join('#') : '');
+}
+function tidyReqUrl(url) {
+  const s = String(url || '');
+  try {
+    const x = new URL(s);
+    x.pathname = x.pathname.replace(/\/{2,}/g, '/');
+    return x.toString();
+  } catch { return s; }
 }
 /** parse many date shapes -> ISO string | 'unlimited' | null */
 function parseDate(v) {
@@ -43,6 +75,7 @@ function sameSafeRedirect(from, loc) {
 /** Panel HTTP(S) only – rejectUnauthorized is false so a self-signed panel cert works. Not used for the site itself. */
 function panelRequest(url, opt = {}) {
   return new Promise((ok, bad) => {
+    url = tidyReqUrl(url);
     let x; try { x = new URL(url); } catch { return bad(new Error('neplatná URL')); }
     const lib = x.protocol === 'https:' ? https : http;
     const headers = { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (lnkbio subscription check)', ...(opt.headers || {}) };
@@ -75,6 +108,7 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
   const doFetch = fetchImpl || panelRequest;
   async function getJsonOnce(url, opt = {}, hops = 0) {
     const limit = opt.maxBody || MAX_BODY;
+    url = tidyReqUrl(url);
     const fetchOpt = { method: opt.method || 'GET', headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (lnkbio subscription check)', ...(opt.headers || {}) }, body: opt.body, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT), maxBody: limit };
     const r = await doFetch(url, fetchOpt);
     const loc = r.headers && r.headers.get && r.headers.get('location');
@@ -137,7 +171,7 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
     id: 'xtream', label: 'Xtream Codes API (player_api.php – Xtream UI, XUI.one, 1-stream…)',
     /** verify a line with its own credentials (customer or public check) */
     async checkLine(base, user, pass) {
-      const { status, json } = await getJson(`${base}/player_api.php?${q({ username: user, password: pass })}`);
+      const { status, json } = await getJson(`${joinUrl(base, "player_api.php")}?${q({ username: user, password: pass })}`);
       const ui = json && json.user_info;
       if (status >= 400 || !ui) return status === 401 || status === 403 || (json && json.user_info === undefined && Array.isArray(json)) ? result(false, null) : null;
       if (String(ui.auth) !== '1') return result(false, null, { authFailed: true });
@@ -154,16 +188,16 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
     async adminGet(c, action, extra = {}) {
       if (!c.user || !c.pass) return null;
       const body = q({ username: c.user, password: c.pass, action, ...extra });
-      const post = await getJson(`${c.base}/?${q({ action, ...extra })}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
+      const post = await getJson(joinUrl(c.base, "?" + q({ action, ...extra })), { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
       if (post.json != null) return post.json;
       if (post.status === 404 || post.status === 405 || post.status === 501) return null;
-      const get = await getJson(`${c.base}/?${q({ username: c.user, password: c.pass, action, ...extra })}`);
+      const get = await getJson(joinUrl(c.base, "?" + q({ username: c.user, password: c.pass, action, ...extra })));
       return get.json;
     },
     async apiPhp(c, sub, data) {
       if (!c.user || !c.pass) return null;
       const body = q({ username: c.user, password: c.pass, ...(data ? { data: JSON.stringify(data) } : {}) });
-      const { json } = await getJson(`${c.base}/api.php?action=user&sub=${encodeURIComponent(sub)}`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
+      const { json } = await getJson(joinUrl(c.base, "api.php?action=user&sub=" + encodeURIComponent(sub)), { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body });
       return json;
     },
     async lines(c) {
@@ -208,7 +242,7 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
   const panelApi = {
     id: 'panel_api', label: 'Xtream panel_api.php (reseller zoznam používateľov)',
     async users(c) {
-      const { json } = await getJson(`${c.base}/panel_api.php?${q({ username: c.user, password: c.pass })}`);
+      const { json } = await getJson(`${joinUrl(c.base, "panel_api.php")}?${q({ username: c.user, password: c.pass })}`);
       if (!json || typeof json !== 'object') return null;
       return asList(json);
     },
@@ -222,7 +256,7 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
   };
   const stalker = {
     id: 'stalker', label: 'Stalker / Ministra portal (REST API)',
-    async get(c, login) { return getJson(`${c.base}/stalker_portal/api/accounts/${encodeURIComponent(login)}`, { headers: { authorization: basic(c.user, c.pass) } }); },
+    async get(c, login) { return getJson(joinUrl(c.base, "stalker_portal/api/accounts/" + encodeURIComponent(login)), { headers: { authorization: basic(c.user, c.pass) } }); },
     async detect(c) { const r = await stalker.get(c, '__lnkbio_probe__').catch(() => null); return r && r.json && typeof r.json.status === 'string' && ('results' in r.json || 'error' in r.json) ? { ok: true, note: 'Ministra REST API odpovedá.' } : null; },
     async lookup(c, username) {
       const { json } = await stalker.get(c, username);
@@ -234,7 +268,7 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
   };
   const custom = {
     id: 'custom', label: 'Vlastné API (URL šablóna + JSON pole s dátumom)',
-    url(c, username) { return String(c.tpl).replace(/\{username\}/g, encodeURIComponent(username)).replace(/\{base\}/g, c.base || ''); },
+    url(c, username) { return String(c.tpl).replace(/\{username\}/g, encodeURIComponent(username)).replace(/\{base\}/g, joinUrl(c.base || '', "")); },
     async detect(c) { if (!c.tpl || !c.datePath) return null; if (!/^https?:\/\//i.test(custom.url(c, 'test'))) return null; return { ok: true, note: 'Použije sa vaša šablóna.' }; },
     async lookup(c, username) {
       const { status, json } = await getJson(custom.url(c, username), c.user ? { headers: { authorization: basic(c.user, c.pass) } } : {});
@@ -270,8 +304,8 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
     const CHS = require('./chsync');
     if (!c || !c.base || !c.user || !c.pass) return { items: [], skipped: 0, error: 'nocreds' };
     const opt = { maxBody: 8 * 1024 * 1024 };
-    const cats = await getJson(`${c.base}/player_api.php?${q({ username: c.user, password: c.pass, action: 'get_live_categories' })}`, opt);
-    const streams = await getJson(`${c.base}/player_api.php?${q({ username: c.user, password: c.pass, action: 'get_live_streams' })}`, opt);
+    const cats = await getJson(`${joinUrl(c.base, "player_api.php")}?${q({ username: c.user, password: c.pass, action: 'get_live_categories' })}`, opt);
+    const streams = await getJson(`${joinUrl(c.base, "player_api.php")}?${q({ username: c.user, password: c.pass, action: 'get_live_streams' })}`, opt);
     if (!Array.isArray(streams.json)) return { items: [], skipped: 0, error: 'badlist' };
     return CHS.fromXtream(Array.isArray(cats.json) ? cats.json : [], streams.json);
   }
@@ -280,10 +314,10 @@ function create({ fetchImpl, now = () => Date.now() } = {}) {
     if (!c || !c.base || !c.user || !c.pass) return null;
     const sid = Math.round(Number(streamId));
     if (!Number.isInteger(sid) || sid <= 0) return null;
-    const { status, json } = await getJson(`${c.base}/player_api.php?${q({ username: c.user, password: c.pass, action: 'get_short_epg', stream_id: String(sid), limit: String(limit) })}`);
+    const { status, json } = await getJson(`${joinUrl(c.base, "player_api.php")}?${q({ username: c.user, password: c.pass, action: 'get_short_epg', stream_id: String(sid), limit: String(limit) })}`);
     if (status >= 400 || json == null) return null;
     return json;
   }
   return { detect, lookup, checkOwn, liveCatalog, shortEpg, ADAPTERS, publicView, fromLine, clear: () => cache.clear() };
 }
-module.exports = { create, normBase, parseDate, getPath, UNLIMITED, sameSafeRedirect };
+module.exports = { create, normBase, joinUrl, tidyReqUrl, tidyFullUrl, parseDate, getPath, UNLIMITED, sameSafeRedirect };

@@ -107,7 +107,7 @@ function install(ctx) {
     pcfg = null; panelApi.clear();
   }
   const panelReady = (c) => !!(c && c.base && c.type);
-  const pcConf = (c) => ({ base: c.base, type: c.type, user: c.user || '', pass: c.pass || '', tpl: c.tpl || '', datePath: c.datepath || '' });
+  const pcConf = (c) => ({ base: PANEL.normBase(c.base || c.url) || PANEL.joinUrl(c.base || '', ''), type: c.type, user: c.user || '', pass: c.pass || '', tpl: c.tpl || '', datePath: c.datepath || '' });
   const canLookup = (c) => panelReady(c) && !!(panelApi.ADAPTERS[c.type] && panelApi.ADAPTERS[c.type].lookup);
   const selfCheck = (c) => panelReady(c) && c.type !== 'stalker' && c.type !== 'custom';
   const hasLines = async () => !!(await pool.query('SELECT 1 FROM acc_panel_lines LIMIT 1')).rowCount;
@@ -1011,9 +1011,10 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
   admin.post('/predplatne-server', needAuth, adminCsrf, wrap(async (req, res) => {
     const b = req.body; let url = String(b.url || '').trim();
     if (url && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = 'http://' + url;
-    if (url && !PANEL.normBase(url)) return res.redirect(303, PB + '?m=bad');
+    const saved = url ? PANEL.normBase(url) : null;
+    if (url && !saved) return res.redirect(303, PB + '?m=bad');
     const prev = await panelCfg();
-    await setPanel('url', url || null);
+    await setPanel('url', saved);
     await setPanel('key', null);
     if (b.clear === '1') { await setPanel('user', null); await setPanel('pass', null); }
     else for (const k of ['user', 'pass']) { const v = String(b[k] || ''); if (v) await setPanel(k, v.slice(0, 300)); }
@@ -1060,7 +1061,7 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
   async function saveCatalogUrls(b) {
     if (b.clear_urls === '1') { await setPanel('m3u_url', null); await setPanel('xmltv_url', null); return ''; }
     for (const k of ['m3u_url', 'xmltv_url']) {
-      const v = withHttp(String(b[k] || '').trim());
+      const v = PANEL.tidyFullUrl(String(b[k] || '').trim());
       if (!v) continue;
       const err = catalogUrlOk(v); if (err) return err;
       await setPanel(k, v.slice(0, 600));
@@ -1094,7 +1095,7 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
         out.source = 'm3u';
         const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 75e3);
         try {
-          const got = await EPGFETCH.openPlaylist(c.m3u_url, { signal: ac.signal, maxBytes: 8 * 1024 * 1024 });
+          const got = await EPGFETCH.openPlaylist(PANEL.tidyFullUrl(c.m3u_url) || c.m3u_url, { signal: ac.signal, maxBytes: 8 * 1024 * 1024 });
           const p = await CHS.parseM3u(got.text);
           items = p.items;
           out.skipped = p.skipped;
@@ -1113,7 +1114,7 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
         const r = await ctx.tvchUpsertMeta(items);
         out.added = r.added; out.updated = r.updated;
         if (c.xmltv_url && typeof ctx.epgUpsertSyncSource === 'function') {
-          out.epg = await ctx.epgUpsertSyncSource(c.xmltv_url);
+          out.epg = await ctx.epgUpsertSyncSource(PANEL.tidyFullUrl(c.xmltv_url) || c.xmltv_url);
         }
         if (r.pairs && r.pairs.length && typeof ctx.epgApplyTvg === 'function') {
           out.mapped = await ctx.epgApplyTvg(r.pairs);
