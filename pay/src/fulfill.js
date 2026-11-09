@@ -1,8 +1,11 @@
 'use strict';
 /**
- * After a paid order: customer enters a username (min. 8) and at least one contact
- * (e-mail OR Telegram OR Facebook). A private page (token link) is where Ryan sends
- * encrypted login credentials. Return later via the private link, or username + the same contact.
+ * Before payment the customer enters a username (min. 8) and at least one contact
+ * (e-mail OR Telegram OR Facebook). The order is created with those fields; Ryan is notified.
+ * After payment, a private page (token link) is where credentials are delivered.
+ * Return: private token, or username + the same contact. E-mail alone is not enough —
+ * when mail is configured we send a one-time code / magic link; otherwise username + contact.
+ * Site accounts (/ucet) see matching orders only after the account e-mail is verified.
  */
 const crypto = require('crypto');
 const sealed = require('./sealedStore');
@@ -55,10 +58,56 @@ function validateFulfill(b) {
   return { username, contact: c.contact };
 }
 
+/** New checkout: 8–24 chars, lowercase, compatible with /ucet accounts. */
+const CHECKOUT_USER_RE = /^[a-z0-9][a-z0-9_.-]{7,23}$/;
+function validateCheckout(b) {
+  const username = normUser(b && b.username).toLowerCase();
+  if (!CHECKOUT_USER_RE.test(username)) {
+    return { error: 'Používateľské meno musí mať 8–24 znakov (malé písmená, číslice, . _ -) a začínať písmenom alebo číslicou.' };
+  }
+  const c = validateContact(b || {});
+  if (c.error) return c;
+  return { username, contact: c.contact };
+}
+
+function validatePassword(pw, pw2, username) {
+  const p = String(pw == null ? '' : pw);
+  const u = String(username || '').toLowerCase();
+  if (p.length < 8 || Buffer.byteLength(p) > 72 || (u && p.toLowerCase() === u)) {
+    return { error: 'Heslo musí mať 8–72 znakov a nesmie byť rovnaké ako používateľské meno.' };
+  }
+  if (String(pw2 == null ? '' : pw2) !== p) return { error: 'Heslá sa nezhodujú.' };
+  return { ok: true };
+}
+
 function isPaid(o) {
   if (!o) return false;
   const st = String(o.status || '').toLowerCase();
   return PAID.has(st) || o.chainStatus === 'confirmed' || !!o.paidAt;
+}
+
+/** Auto-confirmed by a detected payment, or confirmed by Ryan in admin. */
+function isConfirmed(o) {
+  if (!o) return false;
+  if (o.confirmedAt || o.adminConfirmed || (o.fulfill && o.fulfill.confirmedAt)) return true;
+  return isPaid(o);
+}
+
+function confirm(order, by) {
+  if (!order) return order;
+  const at = new Date().toISOString();
+  order.confirmedAt = order.confirmedAt || at;
+  order.adminConfirmed = true;
+  order.confirmedBy = by || 'admin';
+  const f = ensure(order);
+  f.confirmedAt = f.confirmedAt || at;
+  return order;
+}
+
+function statusLabel(o) {
+  if (o && o.fulfill && o.fulfill.credSentAt) return { key: 'sent', sk: 'údaje odoslané', en: 'login details sent' };
+  if (isConfirmed(o)) return { key: 'confirmed', sk: 'potvrdená', en: 'confirmed' };
+  return { key: 'pending', sk: 'čaká na platbu', en: 'awaiting payment' };
 }
 
 function ensure(order) {
@@ -86,6 +135,78 @@ function findByReturn(orders, { username, email, telegram, facebook }) {
   if (!hits.length) return { error: 'Nenašli sme objednávku s týmto menom a kontaktom. Skontrolujte údaje, alebo použite súkromný odkaz.' };
   hits.sort((a, b) => String(b.fulfill.submittedAt).localeCompare(String(a.fulfill.submittedAt)));
   return { order: hits[0] };
+}
+
+function applyCheckout(order, v, extra = {}) {
+  if (!order || !v || !v.username || !v.contact) return null;
+  const f = ensure(order);
+  const first = !f.submittedAt;
+  Object.assign(f, {
+    username: v.username,
+    email: v.contact.email || f.email,
+    telegram: v.contact.telegram || f.telegram,
+    facebook: v.contact.facebook || f.facebook,
+    submittedAt: f.submittedAt || new Date().toISOString(),
+    source: f.source || 'checkout',
+    messages: f.messages || [],
+  });
+  if (v.contact.email && !order.email) order.email = v.contact.email;
+  if (extra.acct && extra.acct.id) {
+    if (!order.acct) order.acct = { id: extra.acct.id, u: extra.acct.u || extra.acct.username };
+    f.accountId = extra.acct.id;
+  }
+  if (first) {
+    const who = [f.email, f.telegram, f.facebook].filter(Boolean).join(', ');
+    const amt = extra.amount != null ? extra.amount : (order.amountExact || order.amountEur || '');
+    const method = extra.provider || order.providerAlias || order.provider || order.methodId || '';
+    notify(`🆕 Nová objednávka (pred platbou)\nObjednávka: ${order.orderId}\nUsername: ${f.username}\nKontakt: ${who}\nSuma: ${amt} €\nMetóda: ${method}\nPo zaplatení odošlite prihlásenie: /admin/objednavky/${order.orderId}`);
+  }
+  return f;
+}
+
+function ordersForEmail(orders, email) {
+  const e = normEmail(email);
+  if (!EMAIL_RE.test(e)) return [];
+  return Object.values(orders || {}).filter((o) => o && o.fulfill && o.fulfill.email === e);
+}
+
+function linkToVerifiedAccount(orders, user) {
+  if (!user || !user.email_verified || !user.email) return { list: [], changed: 0 };
+  const list = ordersForEmail(orders, user.email);
+  let changed = 0;
+  for (const o of list) {
+    if (!o.acct || !o.acct.id) { o.acct = { id: user.id, u: user.username }; changed++; }
+    if (o.fulfill) o.fulfill.accountId = user.id;
+  }
+  return { list, changed };
+}
+
+function accountOrderView(order, req) {
+  if (!order) return null;
+  const f = order.fulfill || {};
+  const st = statusLabel(order);
+  const confirmed = isConfirmed(order);
+  return {
+    orderId: order.orderId,
+    amount: order.amountExact || order.amountEur || null,
+    status: st.sk,
+    statusEn: st.en,
+    statusKey: st.key,
+    paid: isPaid(order),
+    confirmed,
+    username: f.username || '',
+    path: pathFor(order),
+    url: urlFor(order, req),
+    createdAt: order.createdAt || f.submittedAt || '',
+    credSent: !!f.credSentAt,
+  };
+}
+
+function listAccountOrders(orders, user, req) {
+  if (!user || !user.id) return [];
+  return Object.values(orders || {}).filter((o) => o && ((o.acct && o.acct.id === user.id) || (o.fulfill && o.fulfill.accountId === user.id)))
+    .sort((a, b) => String(b.createdAt || (b.fulfill && b.fulfill.submittedAt) || '').localeCompare(String(a.createdAt || (a.fulfill && a.fulfill.submittedAt) || '')))
+    .map((o) => accountOrderView(o, req));
 }
 
 function sealCreds(text) { return sealed.seal(SEAL, String(text || '')); }
@@ -136,8 +257,8 @@ button.g{background:#334155}.hint{color:#93a0b8;font-size:.88rem;line-height:1.4
 
 function formHtml(order, err, req) {
   const f = (order && order.fulfill) || {};
-  return pageShell('Údaje k predplatnému', `<div class="card"><h1>Predplatné je zaplatené</h1>
-<p>Zadajte používateľské meno (min. 8 znakov), ktoré chcete používať, a aspoň jeden kontakt – e-mail, Telegram alebo Facebook. Tam vám pošleme prihlasovacie údaje. K tomuto oknu sa viete vrátiť cez súkromný odkaz, alebo zadaním mena a toho istého kontaktu.</p>
+  return pageShell('Údaje k predplatnému', `<div class="card"><h1>Doplňte meno a kontakt</h1>
+<p>Pri tejto staršej objednávke ešte chýba používateľské meno (min. 8 znakov) a aspoň jeden kontakt – e-mail, Telegram alebo Facebook. Sem ti pošleme prihlasovacie údaje. K oknu sa viete vrátiť cez súkromný odkaz, alebo zadaním mena a toho istého kontaktu.</p>
 ${err ? `<div class="err">${esc(err)}</div>` : ''}
 <form method="post" action="${esc(pathFor(order))}">
 <label for="u">Používateľské meno (min. 8 znakov)</label>
@@ -163,8 +284,10 @@ function chatHtml(order, req, flash) {
     }
     return `<div class="msg ${m.from === 'admin' ? 'admin' : ''}">${esc(m.text || '')}</div>`;
   }).join('');
+  const st = statusLabel(order);
   return pageShell('Vaše údaje k predplatnému', `<div class="card"><h1>Okno k objednávke</h1>
 ${flash ? `<div class="ok">${esc(flash)}</div>` : ''}
+<p>Stav: <b>${esc(st.sk)}</b> <span class="hint">/ ${esc(st.en)}</span></p>
 <p>Meno: <b>${esc(f.username)}</b></p>
 <p class="hint">Uložte si tento súkromný odkaz – kedykoľvek sa sem viete vrátiť (funguje aj s menom a kontaktom, ktorý ste zadali):<br><a class="link" href="${esc(urlFor(order, req))}">${esc(urlFor(order, req))}</a></p>
 <div class="msgs">${msgs || '<p class="hint">Zatiaľ tu nie sú prihlasovacie údaje. Akonáhle ich odošleme, uvidíte ich na tomto mieste.</p>'}</div>
@@ -176,17 +299,30 @@ ${flash ? `<div class="ok">${esc(flash)}</div>` : ''}
 </div>`);
 }
 
-function returnHtml(err) {
+function returnHtml(err, flash) {
   return pageShell('Návrat k údajom', `<div class="card"><h1>Vrátiť sa k oknu s údajmi</h1>
-<p>Zadajte to isté používateľské meno a ten istý kontakt ako pri odoslaní po platbe.</p>
+<p>Zadajte to isté používateľské meno a ten istý kontakt, ktorý ste zadali pred platbou.</p>
 ${err ? `<div class="err">${esc(err)}</div>` : ''}
+${flash ? `<div class="ok">${esc(flash)}</div>` : ''}
 <form method="post" action="/objednavka/navrat">
 <label>Používateľské meno</label><input name="username" required minlength="8" maxlength="64" pattern="[A-Za-z0-9._\\-]{8,64}" autocapitalize="none" spellcheck="false">
 <label>E-mail</label><input name="email" type="email" maxlength="254">
 <label>Telegram</label><input name="telegram" maxlength="200" placeholder="@meno" autocapitalize="none">
 <label>Facebook</label><input name="facebook" maxlength="200">
+<p class="hint">Pre Telegram alebo Facebook je meno + tento kontakt povinné (alebo použite súkromný odkaz).</p>
 <button>Otvoriť okno</button>
 </form>
+${mailReady() ? `<hr style="border:0;border-top:1px solid #243044;margin:22px 0">
+<p>Máte e-mail? Pošleme vám jednorazový kód a odkaz – samotný e-mail na otvorenie okna nestačí.</p>
+<form method="post" action="/objednavka/navrat-email">
+<label>E-mail z objednávky</label><input name="email" type="email" required maxlength="254" autocomplete="email">
+<button class="g">Poslať jednorazový odkaz / kód</button>
+</form>
+<form method="post" action="/objednavka/navrat-kod" style="margin-top:12px">
+<label>Už máte kód z e-mailu?</label><input name="email" type="email" required maxlength="254" placeholder="ten istý e-mail">
+<input name="code" inputmode="numeric" maxlength="6" minlength="6" pattern="[0-9]{6}" placeholder="6-miestny kód">
+<button class="g">Overiť kód</button>
+</form>` : '<p class="hint">Odosielanie e-mailov nie je nastavené – návrat je možný menom a kontaktom, alebo súkromným odkazom.</p>'}
 </div>`);
 }
 
@@ -199,20 +335,19 @@ function mount(app, { loadOrders, saveOrders, appendLog = () => {} }) {
   const load = () => loadOrders();
   const save = (o) => saveOrders(o);
 
-  app.get('/objednavka/navrat', (req, res) => { res.set('Cache-Control', 'no-store'); res.type('html').send(returnHtml()); });
-  app.post('/objednavka/navrat', (req, res) => {
-    res.set('Cache-Control', 'no-store');
-    const r = findByReturn(load(), req.body || {});
-    if (r.error) return res.status(400).type('html').send(returnHtml(r.error));
-    res.redirect(303, pathFor(r.order));
-  });
+  app.get('/objednavka/navrat', (req, res) => { res.set('Cache-Control', 'no-store'); res.redirect(302, '/prihlasenie?next=/ucet'); });
+  app.post('/objednavka/navrat', (req, res) => { res.set('Cache-Control', 'no-store'); res.redirect(303, '/prihlasenie?next=/ucet'); });
 
   app.get('/objednavka/:token', (req, res) => {
     res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow' });
     const o = findByToken(load(), req.params.token);
     if (!o) return res.status(404).type('html').send(pageShell('Nenájdené', '<div class="card"><h1>Odkaz je neplatný</h1><p>Skúste <a href="/objednavka/navrat" style="color:#93c5fd">návrat cez meno a kontakt</a>.</p></div>'));
-    if (!isPaid(o)) return res.status(403).type('html').send(pageShell('Čaká sa na platbu', '<div class="card"><h1>Platba ešte nie je potvrdená</h1><p>Toto okno sa otvorí po potvrdení platby.</p></div>'));
     const f = ensure(o);
+    if (!isPaid(o)) {
+      const st = statusLabel(o);
+      const who = f.submittedAt ? `<p>Meno: <b>${esc(f.username || '')}</b></p>` : '';
+      return res.status(403).type('html').send(pageShell('Čaká sa na platbu', `<div class="card"><h1>Platba ešte nie je potvrdená</h1><p>Stav: <b>${esc(st.sk)}</b> <span class="hint">/ ${esc(st.en)}</span></p>${who}<p>Toto okno s prihlasovacími údajmi sa otvorí po potvrdení platby. Uložte si súkromný odkaz, alebo sa prihláste na stránke (Prihlásenie / Moja objednávka).</p><p class="hint"><a class="link" href="${esc(urlFor(o, req))}">${esc(urlFor(o, req))}</a></p><p class="hint"><a class="link" href="/prihlasenie?next=/ucet">Prihlásenie</a></p></div>`));
+    }
     if (!f.submittedAt) return res.type('html').send(formHtml(o, '', req));
     res.type('html').send(chatHtml(o, req));
   });
@@ -264,6 +399,7 @@ function mount(app, { loadOrders, saveOrders, appendLog = () => {} }) {
 function deliver({ order, text, alsoEmail }, req) {
   const body = clean(text, 4000);
   if (!body) return { error: 'Napíšte prihlasovacie údaje.' };
+  if (!isConfirmed(order)) return { error: 'Objednávka ešte nie je potvrdená.' };
   if (!order || !order.fulfill || !order.fulfill.submittedAt) return { error: 'Zákazník ešte neodoslal meno a kontakt.' };
   let enc;
   try { enc = sealCreds(body); } catch (e) { return { error: e.message || 'Chýba šifrovací kľúč (DATA_ENC_KEY).' }; }
@@ -286,8 +422,10 @@ function adminList(orders) {
 }
 
 module.exports = {
-  USER_RE, validateFulfill, validateContact, isPaid, ensure, findByReturn, findByToken,
-  sealCreds, openCreds, pathFor, urlFor, paidUrl, deliver, adminList, mount, contactMatches,
+  USER_RE, CHECKOUT_USER_RE, EMAIL_RE, validateFulfill, validateCheckout, validateContact, validatePassword,
+  isPaid, isConfirmed, confirm, statusLabel, ensure, findByReturn, findByToken,
+  applyCheckout, ordersForEmail, linkToVerifiedAccount, accountOrderView, listAccountOrders,
+  mailReady, sealCreds, openCreds, pathFor, urlFor, paidUrl, deliver, adminList, mount, contactMatches,
 };
 
 function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, saveOrders }) {
@@ -295,12 +433,12 @@ function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, s
     const rows = adminList(loadOrders());
     const tr = rows.map((o) => {
       const f = o.fulfill || {};
-      const st = f.credSentAt ? 'údaje odoslané' : f.submittedAt ? 'čaká na údaje' : isPaid(o) ? 'zaplatené – bez formulára' : (o.status || '');
+      const st = statusLabel(o).sk;
       const contact = [f.email, f.telegram, f.facebook].filter(Boolean).join(' · ') || '—';
       return `<tr><td><a href="/admin/objednavky/${esc(o.orderId)}">${esc(o.orderId)}</a></td><td>${esc(o.amountExact || o.amountEur || '—')} €</td><td>${esc(f.username || '—')}</td><td>${esc(contact)}</td><td>${esc(st)}</td></tr>`;
-    }).join('') || '<tr><td colspan="5">Zatiaľ žiadne zaplatené objednávky.</td></tr>';
+    }).join('') || '<tr><td colspan="5">Zatiaľ žiadne objednávky s údajmi.</td></tr>';
     res.send(page('Objednávky a prihlásenie', `<h1>📦 Objednávky a prihlásenie</h1>
-<p class="hint">Po zaplatení zákazník zadá meno (min. 8 znakov) a aspoň jeden kontakt. Tu mu odošlete prihlasovacie údaje – uložia sa šifrovane a uvidí ich len v súkromnom okne (prípadne e-mailom, ak je vyplnený a odosielanie je nastavené).</p>
+<p class="hint">Meno, kontakt a heslo zadá zákazník ešte pred platbou. Prihlasovacie údaje odošlete až po potvrdení objednávky (automaticky po platbe, alebo ručne tlačidlom Potvrdiť). Údaje sú šifrované a zákazník ich vidí v súkromnom okne alebo vo svojom účte.</p>
 <div class="card" style="overflow:auto"><table class="tbl"><thead><tr><th>Objednávka</th><th>Suma</th><th>Meno</th><th>Kontakt</th><th>Stav</th></tr></thead><tbody>${tr}</tbody></table></div>`, 'a adm'));
   };
   admin.get('/objednavky', needAuth, wrap(async (req, res) => listPage(req, res)));
@@ -308,21 +446,31 @@ function mountAdmin(admin, { needAuth, csrf, wrap, page, hid, esc, loadOrders, s
     const o = loadOrders()[req.params.id];
     if (!o) return res.status(404).send(page('Nenájdené', '<h1>Objednávka sa nenašla</h1><p><a href="/admin/objednavky">← Zoznam</a></p>', 'a adm'));
     const f = o.fulfill || {};
-    const m = req.query.m === 'ok' ? '<div class="msg">Údaje boli odoslané do okna zákazníka.</div>' : (req.query.m && req.query.m !== 'ok' ? `<div class="msg err">${esc(req.query.m)}</div>` : '');
+    const st = statusLabel(o);
+    const m = req.query.m === 'ok' ? '<div class="msg">Údaje boli odoslané do okna zákazníka.</div>' : (req.query.m === 'conf' ? '<div class="msg">Objednávka bola potvrdená.</div>' : (req.query.m && req.query.m !== 'ok' && req.query.m !== 'conf' ? `<div class="msg err">${esc(req.query.m)}</div>` : ''));
     const contact = [f.email, f.telegram, f.facebook].filter(Boolean).join(' · ') || '—';
-    const mailOpt = (f.email && (global.__lnkMailer && global.__lnkMailer.ready && global.__lnkMailer.ready())) ? `<label class="ck"><input type="checkbox" name="alsoEmail" value="1"> Poslať aj e-mailom na ${esc(f.email)}</label>` : (f.email ? '<p class="hint">E-mail je vyplnený, ale odosielanie e-mailov nie je nastavené (Admin → Odosielanie e-mailov).</p>' : '<p class="hint">Zákazník e-mail nevyplnil – údaje uvidí v súkromnom okne (odkaz / meno + kontakt).</p>');
-    res.send(page('Objednávka ' + o.orderId, `<h1>Objednávka ${esc(o.orderId)}</h1>${m}
-<p class="row"><a class="btnl" href="/admin/objednavky">← Zoznam</a></p>
-<div class="card"><p>Suma: <b>${esc(o.amountExact || o.amountEur || '—')} €</b> · Stav: ${esc(o.status || '')}</p>
-<p>Meno: <b>${esc(f.username || '—')}</b><br>Kontakt: ${esc(contact)}</p>
-${f.submittedAt ? `<p class="hint">Formulár odoslaný ${esc(f.submittedAt)}. Súkromné okno: <a href="${esc(pathFor(o))}" target="_blank" rel="noopener">${esc(pathFor(o))}</a></p>
-<form method="post" action="/admin/objednavky/${esc(o.orderId)}/udaje">${hid(req)}
+    const mailOpt = (f.email && (global.__lnkMailer && global.__lnkMailer.ready && global.__lnkMailer.ready())) ? `<label class="ck"><input type="checkbox" name="alsoEmail" value="1"> Poslať aj e-mailom na ${esc(f.email)}</label>` : (f.email ? '<p class="hint">E-mail je vyplnený, ale odosielanie e-mailov nie je nastavené (Admin → Odosielanie e-mailov).</p>' : '<p class="hint">Zákazník e-mail nevyplnil – údaje uvidí v súkromnom okne alebo po prihlásení.</p>');
+    const confirmForm = !isConfirmed(o) ? `<form method="post" action="/admin/objednavky/${esc(o.orderId)}/potvrdit">${hid(req)}<p class="hint">Najprv objednávku potvrďte (ručne, ak ju systém ešte automaticky nepotvrdil po platbe). Až potom môžete odoslať prihlasovacie údaje.</p><button>Potvrdiť</button></form>` : '';
+    const sendForm = isConfirmed(o) && f.submittedAt ? `<form method="post" action="/admin/objednavky/${esc(o.orderId)}/udaje">${hid(req)}
 <label>Prihlasovacie údaje pre zákazníka (uložia sa šifrovane)</label>
 <textarea name="text" rows="6" maxlength="4000" required placeholder="Napr. meno a heslo k predplatnému"></textarea>
 ${mailOpt}
 <button>Odoslať do okna zákazníka</button>
-</form>${f.credSentAt ? `<p class="hint">Naposledy odoslané: ${esc(f.credSentAt)}</p>` : ''}` : '<p class="hint">Zákazník ešte nevyplnil meno a kontakt – okno sa otvorí po potvrdení platby.</p>'}
+</form>${f.credSentAt ? `<p class="hint">Naposledy odoslané: ${esc(f.credSentAt)}</p>` : ''}` : (isConfirmed(o) ? '<p class="hint">Pri tejto objednávke ešte chýba meno a kontakt (starší záznam).</p>' : '');
+    res.send(page('Objednávka ' + o.orderId, `<h1>Objednávka ${esc(o.orderId)}</h1>${m}
+<p class="row"><a class="btnl" href="/admin/objednavky">← Zoznam</a></p>
+<div class="card"><p>Suma: <b>${esc(o.amountExact || o.amountEur || '—')} €</b> · Stav: <b>${esc(st.sk)}</b> (${esc(o.status || '')})</p>
+<p>Meno: <b>${esc(f.username || '—')}</b><br>Kontakt: ${esc(contact)}</p>
+${f.submittedAt ? `<p class="hint">Údaje zadané ${esc(f.submittedAt)}. Súkromné okno: <a href="${esc(pathFor(o))}" target="_blank" rel="noopener">${esc(pathFor(o))}</a></p>` : ''}
+${confirmForm}${sendForm}
 </div>`, 'a adm'));
+  }));
+  admin.post('/objednavky/:id/potvrdit', needAuth, csrf, wrap(async (req, res) => {
+    const orders = loadOrders(); const o = orders[req.params.id];
+    if (!o) return res.redirect(303, '/admin/objednavky');
+    confirm(o, (req.adminSession && req.adminSession.email) || 'admin');
+    saveOrders(orders);
+    res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=conf');
   }));
   admin.post('/objednavky/:id/udaje', needAuth, csrf, wrap(async (req, res) => {
     const orders = loadOrders(); const o = orders[req.params.id];
@@ -333,5 +481,6 @@ ${mailOpt}
     res.redirect(303, '/admin/objednavky/' + encodeURIComponent(req.params.id) + '?m=ok');
   }));
 }
+
 
 module.exports.mountAdmin = mountAdmin;

@@ -611,6 +611,16 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
 .pm-item{display:grid;grid-template-columns:1fr auto;gap:.15rem .6rem;text-align:left;padding:.7rem .9rem;border-radius:12px;border:1px solid #243044;background:#121a2b;color:inherit;cursor:pointer;font:inherit}
 .pm-item.on{border-color:#22c55e;box-shadow:0 0 0 2px #22c55e inset}.pm-n{font-weight:600}.pm-t{font-weight:800;text-align:right}.pm-f{grid-column:1/-1;font-size:.75rem;opacity:.7}
 .pm-best{margin-left:.4rem;font-size:.65rem;background:#14532d;color:#bbf7d0;padding:1px 6px;border-radius:999px;vertical-align:middle}
+
+.fulfill-step{margin:1rem 0;padding:1rem;border-radius:16px;border:1px solid #243044;background:#121a2b}
+.fulfill-step h2{margin:0 0 .35rem;font-size:1.15rem}
+.fulfill-step .why{margin:0 0 .85rem;color:#e8eef9;font-weight:600}
+.fulfill-step .why .en{display:block;font-weight:500;color:#93a0b8;font-size:.88em;margin-top:2px}
+.fulfill-step label{display:block;margin:.7rem 0 .25rem;color:#93a0b8;font-size:.9rem}
+.fulfill-step input{width:100%;box-sizing:border-box;background:#0b1220;border:1px solid #334155;border-radius:10px;color:#e8eef9;padding:10px 12px;font:16px/1.4 system-ui}
+.fulfill-step input:focus{outline:2px solid #e50914;border-color:#e50914}
+.fulfill-step .contacts{display:grid;gap:.2rem}
+@media(min-width:560px){.fulfill-step .contacts{grid-template-columns:1fr 1fr 1fr;gap:.6rem}}
 </style>
   <link rel="stylesheet" href="/tv-theme.css?v=20261026" />
 </head>
@@ -619,7 +629,7 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     <nav class="tvtop"><a class="tvlogo" href="/tv"><i>▶</i>TV Software</a><a class="tvback" href="/tv">← Späť na TV Software</a></nav>
     <div class="brand">
       <h1>Platba · SK / CZ</h1>
-      <p>3 kroky: suma → spôsob → platobná stránka. Návod podľa <strong>PC alebo mobilu</strong>.</p>
+      <p>Kroky: suma → spôsob → meno, kontakt a heslo → platobná stránka. Návod podľa <strong>PC alebo mobilu</strong>.</p>
       <div class="tvbar"><span class="live">● LIVE</span><span>▶ Stream</span><span>📺 TV</span><span>⚙ Software</span></div>
     </div>
 
@@ -676,6 +686,31 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
           <div class="guide-steps" id="guideSteps"></div>
         </details>
 
+      </div>
+
+
+      <div id="fulfillStep" class="fulfill-step" hidden>
+        <h2>Vaše údaje k predplatnému</h2>
+        <p class="why">Na tento kontakt ti po potvrdení platby pošleme prihlasovacie údaje. Username si zapamätaj – podľa neho sa vrátiš k objednávke a overíš predplatné.<span class="en">We’ll send your login details to this contact after payment is confirmed. Remember your username – you’ll use it to return to the order and check your subscription.</span></p>
+        <p class="hint">Používateľské meno (8–24 znakov, malé písmená) a aspoň jeden kontakt – e-mail, Telegram alebo Facebook. E-mail nie je povinný. Tieto údaje zadávate ešte pred platbou.<br><span class="en">Username (8–24 characters, lowercase) and at least one contact – e-mail, Telegram or Facebook. E-mail is optional. You enter this before payment.</span></p>
+        <label for="fu">Používateľské meno / <span class="en" style="display:inline;font-weight:400">Username</span></label>
+        <input id="fu" name="username" minlength="8" maxlength="24" pattern="[a-z0-9][a-z0-9._\-]{7,23}" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="8–24 znakov, malé písmená">
+        <p class="hint">Malé písmená, číslice, bodka, podčiarkovník, pomlčka. Bez medzier. Začína písmenom alebo číslicou.</p>
+        <p class="hint"><b>Aspoň jeden kontakt</b> / At least one contact:</p>
+        <div class="contacts">
+          <div><label for="fe">E-mail</label><input id="fe" name="fulfill_email" type="email" maxlength="254" autocomplete="email" placeholder="vas@email.com"></div>
+          <div><label for="ft">Telegram</label><input id="ft" name="telegram" maxlength="200" placeholder="@meno" autocapitalize="none" spellcheck="false"></div>
+          <div><label for="ff">Facebook</label><input id="ff" name="facebook" maxlength="200" placeholder="odkaz alebo meno"></div>
+        </div>
+        <div id="pwFields">
+          <p class="why" style="margin-top:1rem">S týmto heslom sa kedykoľvek vrátiš k objednávke a prihlasovacím údajom.<span class="en">With this password you can return to the order and your login details at any time.</span></p>
+          <label for="fpw">Heslo / <span class="en" style="display:inline;font-weight:400">Password</span></label>
+          <input id="fpw" name="password" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="min. 8 znakov">
+          <label for="fpw2">Heslo znova / <span class="en" style="display:inline;font-weight:400">Repeat password</span></label>
+          <input id="fpw2" name="password2" type="password" minlength="8" maxlength="72" autocomplete="new-password">
+        </div>
+        <p class="hint" id="loggedHint" hidden>Ste prihlásený – objednávka sa priradí k vášmu účtu. Heslo tu zadávať nemusíte.<span class="en" style="display:block">You are signed in – this order will be linked to your account. You don’t need to set a password here.</span></p>
+        <p class="hint" id="fulfillErr" hidden></p>
       </div>
 
       <input type="hidden" name="redirect" value="1" />
@@ -872,6 +907,83 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
       return cc === 'SK' || cc === 'CZ';
     }
 
+    const fuEl = document.getElementById('fu');
+    const feEl = document.getElementById('fe');
+    const ftEl = document.getElementById('ft');
+    const ffEl = document.getElementById('ff');
+    const fpwEl = document.getElementById('fpw');
+    const fpw2El = document.getElementById('fpw2');
+    const pwFields = document.getElementById('pwFields');
+    const loggedHint = document.getElementById('loggedHint');
+    const fulfillStep = document.getElementById('fulfillStep');
+    const fulfillErr = document.getElementById('fulfillErr');
+    let checkoutLogged = false;
+    const USER_RE = /^[a-z0-9][a-z0-9_.-]{7,23}$/;
+    const F_EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/i;
+    const F_TG_RE = /^@[A-Za-z0-9_]{5,32}$/;
+    fetch('/api/ucet-bonus', { credentials: 'same-origin' }).then((r) => r.json()).then((j) => {
+      if (j && j.logged) {
+        checkoutLogged = true;
+        if (pwFields) pwFields.hidden = true;
+        if (loggedHint) loggedHint.hidden = false;
+        if (fuEl && !fuEl.value && j.username && USER_RE.test(String(j.username).toLowerCase())) fuEl.value = String(j.username).toLowerCase();
+        if (fpwEl) { fpwEl.required = false; fpwEl.removeAttribute('minlength'); }
+        if (fpw2El) { fpw2El.required = false; fpw2El.removeAttribute('minlength'); }
+        syncGoButton();
+      }
+    }).catch(() => {});
+    function fulfillValues() {
+      let telegram = (ftEl && ftEl.value || '').trim();
+      if (telegram && !telegram.startsWith('@') && !/^https?:/i.test(telegram)) telegram = '@' + telegram.replace(/^@/, '');
+      const username = (fuEl && fuEl.value || '').trim().replace(/^@/, '').toLowerCase();
+      return {
+        username,
+        email: (feEl && feEl.value || '').trim(),
+        telegram,
+        facebook: (ffEl && ffEl.value || '').trim(),
+        password: (fpwEl && fpwEl.value) || '',
+        password2: (fpw2El && fpw2El.value) || '',
+      };
+    }
+    function fulfillCheck() {
+      const v = fulfillValues();
+      if (!USER_RE.test(v.username)) return { error: 'Používateľské meno musí mať 8–24 znakov (malé písmená, číslice, . _ -) a začínať písmenom alebo číslicou.' };
+      if (v.email && !F_EMAIL_RE.test(v.email)) return { error: 'Zadajte platný e-mail, alebo nechajte pole prázdne a vyplňte Telegram či Facebook.' };
+      if (v.telegram && !F_TG_RE.test(v.telegram)) return { error: 'Zadajte Telegram v tvare @meno (5–32 znakov), alebo vyplňte e-mail či Facebook.' };
+      if (v.facebook && v.facebook.length < 3) return { error: 'Zadajte odkaz na Facebook alebo meno (min. 3 znaky).' };
+      if (!v.email && !v.telegram && !v.facebook) return { error: 'Vyplňte aspoň jeden kontakt: e-mail, Telegram alebo Facebook.' };
+      if (!checkoutLogged) {
+        if (!v.password || v.password.length < 8 || v.password.length > 72 || v.password.toLowerCase() === v.username) {
+          return { error: 'Heslo musí mať 8–72 znakov a nesmie byť rovnaké ako používateľské meno.' };
+        }
+        if (v.password !== v.password2) return { error: 'Heslá sa nezhodujú.' };
+      }
+      return { ok: true, values: v };
+    }
+    function fulfillOk() { return !!fulfillCheck().ok; }
+    function showFulfillErr(msg) {
+      if (!fulfillErr) return;
+      if (!msg) { fulfillErr.hidden = true; fulfillErr.textContent = ''; fulfillErr.className = 'hint'; return; }
+      fulfillErr.hidden = false;
+      fulfillErr.className = 'hint';
+      fulfillErr.style.color = '#fca5a5';
+      fulfillErr.textContent = msg;
+    }
+    function syncFulfillStep() {
+      const selected = providers.find((x) => x.id === providerEl.value);
+      const methodReady = !!selected && isSelectable(selected) && (isDeferredAmountEmail(selected) ? amountOk() || isDeferredAmountEmail(selected) : (isAmountOnly(selected) || isElectrocoinSepa(selected) ? amountOk() : amountOk()));
+      const show = !!selected && isSelectable(selected) && (isDeferredAmountEmail(selected) ? (PLAN_ID || amountOk() || true) && true : (isAmountOnly(selected) || isElectrocoinSepa(selected) ? amountOk() : amountOk()));
+      // Show after package/amount + method are chosen. Gift cards still need a positive amount when no plan.
+      let visible = false;
+      if (selected && isSelectable(selected)) {
+        if (isDeferredAmountEmail(selected)) visible = PLAN_ID || amountOk();
+        else if (isAmountOnly(selected) || isElectrocoinSepa(selected)) visible = amountOk();
+        else visible = amountOk();
+      }
+      if (fulfillStep) fulfillStep.hidden = !visible;
+      return visible;
+    }
+
     function isElectrocoinSepa(p) {
       if (!p) {
         const id = String(providerEl.value || '').toLowerCase();
@@ -917,18 +1029,20 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
         return amountOk(); // SEPA: amount only — no personal details
       }
       if (!countryOk()) return false;
-      return amountOk() && emailOk();
+      return amountOk();
     }
 
     function syncGoButton(p) {
       const selected = p || providers.find((x) => x.id === providerEl.value);
-      // Enable when method selected so Pokračovať can surface amount/country/email alerts
       const canAttempt = !!selected && isSelectable(selected);
       goBtn.disabled = !canAttempt;
-      if (selected && isSelectable(selected) && hasAmountLink(selected)) {
-        goBtn.textContent = 'Zaplatiť →';
+      const shown = syncFulfillStep();
+      if (selected && isSelectable(selected) && hasAmountLink(selected) && fulfillOk()) {
+        goBtn.textContent = 'Pokračovať k platbe →';
+      } else if (selected && isSelectable(selected) && shown && !fulfillOk()) {
+        goBtn.textContent = 'Pokračovať – vyplniť údaje →';
       } else if (selected && isSelectable(selected)) {
-        goBtn.textContent = 'Zaplatiť: ' + displayName(selected).replace(/\s*★.*$/, '') + ' →';
+        goBtn.textContent = 'Pokračovať k platbe: ' + displayName(selected).replace(/\s*★.*$/, '') + ' →';
       } else {
         goBtn.textContent = 'Pokračovať →';
       }
@@ -1073,18 +1187,17 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
     function firstMissingField() {
       const selected = providers.find((x) => x.id === providerEl.value);
       const deferred = isDeferredAmountEmail(selected);
-      if (deferred) return null; // PaysafeCard / G2A: amount, email, country on pay page / product link
-      if (isAmountOnly(selected)) return amountOk() ? null : { field: 'amount', msg: 'Vyplňte sumu' };
-      if (isElectrocoinSepa(selected)) {
+      if (deferred) {
+        if (!PLAN_ID && !amountOk()) return { field: 'amount', msg: 'Najprv vyberte balík alebo zadajte sumu.' };
+      } else if (isAmountOnly(selected) || isElectrocoinSepa(selected)) {
         if (!amountOk()) return { field: 'amount', msg: 'Vyplňte sumu' };
-        return null;
+      } else {
+        if (!amountOk()) return { field: 'amount', msg: 'Vyplňte sumu' };
+        if (!countryOk()) return { field: 'country', msg: 'Vyberte správnu krajinu' };
+        // Provider e-mail is no longer mandatory when the contact step has Telegram/Facebook (or e-mail).
       }
-      if (!amountOk()) return { field: 'amount', msg: 'Vyplňte sumu' };
-      if (!countryOk()) return { field: 'country', msg: 'Vyberte správnu krajinu' };
-      if (!emailOk()) {
-        const email = (emailEl.value || '').trim();
-        return { field: 'email', msg: email ? 'Zadajte platný email' : 'Vyplňte email' };
-      }
+      const fc = fulfillCheck();
+      if (!fc.ok) return { field: 'fulfill', msg: fc.error };
       return null;
     }
 
@@ -1102,7 +1215,9 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
       }
       // Keep green callout fully on screen — do not scroll past it to #go
       requestAnimationFrame(() => {
-        if (selectionCallout && !selectionCallout.hidden && selectionCallout.scrollIntoView) {
+        if (syncFulfillStep() && fulfillStep && !fulfillOk()) {
+          fulfillStep.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (selectionCallout && !selectionCallout.hidden && selectionCallout.scrollIntoView) {
           selectionCallout.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
         // Gentle nudge on Pokračovať without scrolling it over the callout
@@ -1614,6 +1729,19 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
       nudgeAfterSelect();
     });
 
+    function onFulfillInput() {
+      if (fuEl && fuEl.value && fuEl.value !== fuEl.value.toLowerCase()) {
+        const s = fuEl.selectionStart, e = fuEl.selectionEnd;
+        fuEl.value = fuEl.value.toLowerCase();
+        try { fuEl.setSelectionRange(s, e); } catch (e) {}
+      }
+      const c = fulfillCheck();
+      showFulfillErr(c.ok ? '' : (fuEl && fuEl.value ? c.error : ''));
+      if (c.ok && c.values.email && emailEl && !emailEl.value) emailEl.value = c.values.email;
+      syncGoButton();
+    }
+    [fuEl, feEl, ftEl, ffEl, fpwEl, fpw2El].forEach((el) => { if (el) el.addEventListener('input', onFulfillInput); });
+
     emailEl.addEventListener('input', () => {
       if (emailOk()) clearEmailAlert();
       syncGoButton();
@@ -1657,43 +1785,22 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
         amount = Number(selectedP.faceValueEur);
         amountEl.value = String(amount);
       }
-      // Paysafe / G2A / Amazon / Azteco: informational guide only — no order, no PIN/code collection.
-      if (deferred) {
-        if (provider === 'gift_smart' || (selectedP && (selectedP.gateway === 'gift_smart' || selectedP.smartGift))) {
-          if (!Number.isFinite(amount) || amount <= 0) {
-            statusEl.className = 'status error';
-            statusEl.textContent = 'Najprv vyberte balík alebo zadajte sumu.';
-            return;
-          }
-          goBtn.disabled = true;
-          statusEl.textContent = 'Vyberám darčekovú kartu…';
-          try {
-            const rr = await fetch('/api/gift-pick?amount=' + encodeURIComponent(amount));
-            const j = await rr.json();
-            const id = j && j.cards && j.cards[0] && (j.cards[0].aliasId || j.cards[0].id);
-            if (!rr.ok || !id) {
-              statusEl.className = 'status error';
-              statusEl.textContent = 'Pre túto sumu sa nenašla vhodná darčeková karta.';
-              goBtn.disabled = false;
-              return;
-            }
-            window.location.href = '/giftcard/' + encodeURIComponent(id);
-          } catch (err) {
-            statusEl.className = 'status error';
-            statusEl.textContent = 'Nepodarilo sa vybrať kartu. Skúste to znova.';
-            goBtn.disabled = false;
-          }
-          return;
-        }
-        window.location.href = '/giftcard/' + encodeURIComponent(provider);
-        return;
-      }
 
       const missing = firstMissingField();
       if (missing) {
-        showFieldAlert(missing.field, missing.msg);
+        if (missing.field === 'fulfill') {
+          syncFulfillStep();
+          showFulfillErr(missing.msg);
+          if (fulfillStep) fulfillStep.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else {
+          showFieldAlert(missing.field, missing.msg);
+        }
         return;
       }
+      showFulfillErr('');
+      const fv = fulfillCheck().values || fulfillValues();
+      if (fv.email && emailEl && !emailEl.value) emailEl.value = fv.email;
+      email = (emailEl && emailEl.value.trim()) || fv.email || '';
       clearFieldAlerts();
       if (!provider) {
         statusEl.className = 'status error';
@@ -1711,7 +1818,12 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
           body: JSON.stringify({
             amount,
             plan_id: plan ? plan.id : undefined,
-            email: isElectrocoinSepa(selectedP) && !SEPA_GUIDED ? '' : email,
+            email: isElectrocoinSepa(selectedP) && !SEPA_GUIDED ? (fv.email || '') : email,
+            username: fv.username,
+            telegram: fv.telegram,
+            facebook: fv.facebook,
+            password: checkoutLogged ? undefined : fv.password,
+            password2: checkoutLogged ? undefined : fv.password2,
             provider,
             country,
             redirect: false,
@@ -1720,6 +1832,14 @@ body.plan-mode label[for="amount"],body.plan-mode #amount,body.plan-mode .field:
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
+          if (data.code === 'EMAIL_EXISTS' || data.code === 'USER_EXISTS') {
+            const href = data.login || '/prihlasenie?next=/platby';
+            showFulfillErr(data.error || 'Účet už existuje. Prihláste sa a potom dokončite platbu.');
+            statusEl.className = 'status error';
+            statusEl.innerHTML = (data.error || 'Účet už existuje.') + ' <a href="' + href + '" style="color:#93c5fd">Prihlásenie</a>';
+            goBtn.disabled = false;
+            return;
+          }
           throw new Error(data.error || 'Nepodarilo sa vytvoriť platbu. Skúste to znova.');
         }
         if (!data.checkoutUrl) {

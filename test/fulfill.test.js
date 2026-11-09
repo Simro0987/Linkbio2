@@ -72,3 +72,64 @@ t('brand name never appears in public form markup', () => {
   const html = f.pathFor(o);
   assert.ok(!/tokigo/i.test(html));
 });
+
+t('validateCheckout lowercases and limits 8–24', () => {
+  const r = f.validateCheckout({ username: 'MojeMeno1', telegram: '@meno_abc' });
+  assert.ok(!r.error, r.error);
+  assert.strictEqual(r.username, 'mojemeno1');
+  const long = f.validateCheckout({ username: 'a'.repeat(25), email: 'a@b.sk' });
+  assert.ok(long.error);
+  const badStart = f.validateCheckout({ username: '_abcdefgh', email: 'a@b.sk' });
+  assert.ok(badStart.error);
+});
+
+t('validatePassword min 8, confirm, not equal to username', () => {
+  assert.ok(f.validatePassword('short', 'short', 'mojemeno1').error);
+  assert.ok(f.validatePassword('mojemeno1', 'mojemeno1', 'mojemeno1').error);
+  assert.ok(f.validatePassword('tajneheslo', 'ineheslo', 'mojemeno1').error);
+  assert.ok(f.validatePassword('tajneheslo', 'tajneheslo', 'mojemeno1').ok);
+});
+
+t('applyCheckout never stores a password and stamps account id', () => {
+  const v = f.validateCheckout({ username: 'mojemeno1', telegram: '@meno_abc' });
+  const o = { orderId: 'ord_new', status: 'pending', amountEur: 10 };
+  f.applyCheckout(o, v, { amount: 10, provider: 'revolut', acct: { id: 42, u: 'mojemeno1' }, password: 'tajneheslo' });
+  assert.ok(o.fulfill && o.fulfill.submittedAt);
+  assert.strictEqual(o.fulfill.username, 'mojemeno1');
+  assert.strictEqual(o.acct.id, 42);
+  assert.strictEqual(o.fulfill.accountId, 42);
+  const blob = JSON.stringify(o);
+  assert.ok(!/tajneheslo/.test(blob));
+  assert.ok(!o.password && !o.fulfill.password && !o.pw_hash);
+});
+
+t('isConfirmed is paid or admin-confirmed; statusLabel three states', () => {
+  assert.ok(!f.isConfirmed({ status: 'pending' }));
+  assert.ok(f.isConfirmed({ status: 'paid' }));
+  const o = { orderId: 'x', status: 'pending' };
+  f.confirm(o, 'ryan');
+  assert.ok(f.isConfirmed(o));
+  assert.strictEqual(f.statusLabel({ status: 'pending' }).sk, 'čaká na platbu');
+  assert.strictEqual(f.statusLabel(o).sk, 'potvrdená');
+  assert.strictEqual(f.statusLabel({ status: 'paid', fulfill: { credSentAt: '2026-11-09' } }).sk, 'údaje odoslané');
+});
+
+t('deliver refuses unconfirmed orders', () => {
+  process.env.DATA_ENC_KEY = process.env.DATA_ENC_KEY || 'ab'.repeat(32);
+  const o = { orderId: 'ord_u', status: 'pending', fulfill: { submittedAt: '2026-11-09', username: 'mojemeno1', email: 'a@b.sk' } };
+  const r = f.deliver({ order: o, text: 'user: x' });
+  assert.ok(r.error);
+  f.confirm(o);
+  const ok = f.deliver({ order: o, text: 'user: x' });
+  assert.ok(ok.ok, ok.error);
+});
+
+t('listAccountOrders only returns orders for that account id', () => {
+  const orders = {
+    a: { orderId: 'a', acct: { id: 1, u: 'one' }, amountEur: 10, fulfill: { submittedAt: '1', username: 'one' } },
+    b: { orderId: 'b', acct: { id: 2, u: 'two' }, amountEur: 12, fulfill: { submittedAt: '1', username: 'two', email: 'one@x.sk' } },
+    c: { orderId: 'c', fulfill: { accountId: 1, submittedAt: '1', username: 'one' } },
+  };
+  const mine = f.listAccountOrders(orders, { id: 1, username: 'one', email: 'one@x.sk' });
+  assert.deepStrictEqual(mine.map((x) => x.orderId).sort(), ['a', 'c']);
+});

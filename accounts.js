@@ -274,7 +274,7 @@ function install(ctx) {
   setInterval(remindTick, 30 * 60e3).unref();
   setTimeout(remindTick, Number(process.env.ACC_REMIND_FIRST_MS) || 120e3).unref(); // first pass soon after (re)deploy
 
-  global.__lnkAccounts = { fromReq, planByAmount, kick };
+  global.__lnkAccounts = { fromReq, planByAmount, kick, registerFromCheckout: (...a) => registerFromCheckout(...a) };
 
   // ================= public pages =================
   const noStore = (res) => { res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Robots-Tag', 'noindex'); };
@@ -354,9 +354,10 @@ function install(ctx) {
     const en = req.lang === 'en';
     await pub(req, res, tx(en, 'Prihlásenie', 'Log in'), `<h1 class="ph">🔑 ${tx(en, 'Prihlásenie', 'Log in')}</h1>${msg(req)}
 <form method="post" action="/prihlasenie" class="card accf">${csrfField(req, res)}${nx ? `<input type="hidden" name="next" value="${esc(nx)}">` : ''}
-<label for="u">${tx(en, 'Používateľské meno', 'Username')}</label><input id="u" name="username" required maxlength="24" autocomplete="username" autocapitalize="none" spellcheck="false">
+<label for="u">${tx(en, 'E-mail alebo používateľské meno', 'E-mail or username')}</label><input id="u" name="username" required maxlength="200" autocomplete="username" autocapitalize="none" spellcheck="false">
 <label for="p">${tx(en, 'Heslo', 'Password')}</label><input id="p" name="password" type="password" required maxlength="200" autocomplete="current-password">
 <button class="b">${tx(en, 'Prihlásiť sa', 'Log in')}</button></form>
+<p class="hint">${tx(en, 'Po prihlásení uvidíte svoje objednávky, ich stav a okno s prihlasovacími údajmi.', 'After you log in you will see your orders, their status, and the credentials window.')}</p>
 <p class="hint">${tx(en, 'Nemáte účet?', 'No account yet?')} <a href="/registracia">${tx(en, 'Registrácia', 'Sign up')}</a> · <a href="/overit-predplatne">${tx(en, 'Overiť predplatné', 'Check subscription')}</a></p>
 <p class="hint"><a href="/zabudnute-heslo">🔐 ${tx(en, 'Zabudnuté heslo?', 'Forgot password?')}</a></p>`);
   }));
@@ -365,8 +366,10 @@ function install(ctx) {
     if (!csrfOk(req)) return back('csrf');
     const ip = ipKey(req.ip);
     if (L.count('lf:' + ip, 15 * 60e3) >= 10 || L.count('lfg', 15 * 60e3) >= 300) return back('locked');
-    const un = String(req.body.username || '').trim().toLowerCase().slice(0, 24), pw = String(req.body.password || '').slice(0, 200);
-    const u = USER_RE.test(un) ? (await pool.query(`SELECT * FROM acc_users WHERE username=$1`, [un])).rows[0] : null;
+    const un = String(req.body.username || req.body.email || '').trim().toLowerCase().slice(0, 200), pw = String(req.body.password || '').slice(0, 200);
+    let u = null;
+    if (EMAIL_RE.test(un)) u = (await pool.query(`SELECT * FROM acc_users WHERE lower(email)=$1`, [un])).rows[0];
+    else if (USER_RE.test(un)) u = (await pool.query(`SELECT * FROM acc_users WHERE username=$1`, [un])).rows[0];
     const okPw = await bcrypt.compare(pw, u ? u.pw_hash : DUMMY);
     const locked = u && u.locked_until && new Date(u.locked_until) > new Date();
     if (!u || !okPw || locked || u.disabled) {
@@ -398,6 +401,40 @@ ${ref ? `<p class="hint">🤝 ${tx(en, 'Odporučil vás', 'Referred by')}: <b>${
 <p class="hint">${tx(en, 'Už máte účet?', 'Already registered?')} <a href="/prihlasenie">${tx(en, 'Prihlásenie', 'Log in')}</a></p>${await whyHtml(req, true).catch(() => '')}`);
   }));
   async function newRefCode() { const A = 'abcdefghijkmnpqrstuvwxyz23456789'; for (;;) { const c = Array.from(crypto.randomBytes(8), (x) => A[x % 32]).join(''); if (!(await pool.query(`SELECT 1 FROM acc_users WHERE ref_code=$1`, [c])).rowCount) return c; } }
+  async function registerFromCheckout({ username, email, password, req, res }) {
+    const logged = await fromReq(req);
+    if (logged) return { ok: true, user: { id: logged.id, username: logged.username, email: logged.email || '' }, existing: true };
+    const un = String(username || '').trim().toLowerCase();
+    if (RESERVED_USERS.has(un) || !/^[a-z0-9][a-z0-9_.-]{7,23}$/.test(un)) {
+      return { error: 'Používateľské meno musí mať 8–24 znakov (malé písmená, číslice, . _ -) a začínať písmenom alebo číslicou.', code: 'USERNAME' };
+    }
+    const pw = String(password == null ? '' : password);
+    if (pw.length < 8 || Buffer.byteLength(pw) > 72 || pw.toLowerCase() === un) {
+      return { error: MSG.pw[0], code: 'PASSWORD' };
+    }
+    const em = email ? normEmail(email) : '';
+    if (em && !EMAIL_RE.test(em)) return { error: 'Zadajte platný e-mail, alebo nechajte pole prázdne.', code: 'EMAIL' };
+    if (em) {
+      const byEm = (await pool.query(`SELECT id,username,email FROM acc_users WHERE lower(email)=$1`, [em])).rows[0];
+      if (byEm) return { error: 'Účet s týmto e-mailom už existuje. Prihláste sa (e-mail a heslo) a potom dokončite platbu.', code: 'EMAIL_EXISTS', login: '/prihlasenie?next=/platby' };
+    }
+    const byUn = (await pool.query(`SELECT id,username,email FROM acc_users WHERE username=$1`, [un])).rows[0];
+    if (byUn) return { error: 'Toto používateľské meno už má účet. Prihláste sa menom a heslom a potom dokončite platbu.', code: 'USER_EXISTS', login: '/prihlasenie?next=/platby' };
+    const hash = await bcrypt.hash(pw, 12);
+    const ip = ipKey(req && req.ip);
+    const dev = devId(req, res);
+    const ins = await pool.query(
+      `INSERT INTO acc_users (username,pw_hash,email,ref_code,created_ip,dev_hash,last_ip,last_login_at) VALUES ($1,$2,$3,$4,$5,$6,$5,now()) RETURNING id,username,email`,
+      [un, hash, em || null, await newRefCode(), ip, dev]
+    );
+    if (!ins.rowCount) return { error: 'Účet sa nepodarilo vytvoriť.', code: 'FAIL' };
+    const user = ins.rows[0];
+    await startSession(req, res, user.id);
+    req.__acc = { id: user.id, username: user.username, email: user.email, pw_hash: hash };
+    if (em && smtpOn()) sendVerify(req, { id: user.id, username: un, email: em }).catch(() => {});
+    return { ok: true, user: { id: user.id, username: user.username, email: user.email || '' }, created: true };
+  }
+
   app.post('/registracia', wrap(async (req, res) => {
     const back = (m) => res.redirect(303, '/registracia?m=' + m);
     if (!(await accOn())) return back('off');
@@ -494,6 +531,22 @@ ${devs.length ? `<p>${tx(en, 'Druhé zariadenia', 'Second devices')}:</p><ul>${d
     }
     const orders = (await pool.query(`SELECT order_id,months,paid_at FROM acc_orders WHERE user_id=$1 ORDER BY paid_at DESC LIMIT 20`, [u.id])).rows;
     const ord = orders.length ? `<div class="card"><h2>🧾 ${tx(en, 'Zaplatené objednávky', 'Paid orders')}</h2><ul>${orders.map((o) => `<li>${fmtDate(o.paid_at)} · ${esc(moLabel(o.months, en))} · <code>${esc(o.order_id)}</code></li>`).join('')}</ul></div>` : '';
+    let checkoutOrd = '';
+    try {
+      const F = require('./pay/src/fulfill');
+      const all = (global.__payOrders && typeof global.__payOrders.load === 'function') ? global.__payOrders.load() : {};
+      const rows = F.listAccountOrders(all, u, req);
+      const tr = rows.map((r) => {
+        const st = en ? `${esc(r.status)} / ${esc(r.statusEn)}` : esc(r.status);
+        const link = r.confirmed
+          ? `<a href="${esc(r.path)}">${tx(en, 'Okno s údajmi', 'Credentials window')}</a>`
+          : `<span class="hint">${tx(en, 'Dostupné po potvrdení', 'Available after confirmation')}</span>`;
+        return `<tr><td><code>${esc(r.orderId)}</code></td><td>${esc(r.amount != null ? r.amount + ' €' : '—')}</td><td>${st}</td><td>${link}</td></tr>`;
+      }).join('');
+      checkoutOrd = `<div class="card"><h2>📦 ${tx(en, 'Moje objednávky', 'My orders')}</h2>
+${rows.length ? `<div style="overflow:auto"><table class="tbl"><thead><tr><th>${tx(en, 'Objednávka', 'Order')}</th><th>${tx(en, 'Suma', 'Amount')}</th><th>${tx(en, 'Stav', 'Status')}</th><th></th></tr></thead><tbody>${tr}</tbody></table></div>` : `<p class="hint">${tx(en, 'K tomuto účtu zatiaľ nie je priradená žiadna objednávka. Po vyplnení údajov pred platbou sa tu objavia.', 'No orders are linked to this account yet. They appear here after you enter your details at checkout.')}</p>`}
+<p class="hint">${tx(en, 'Súkromný odkaz k objednávke, ktorý ste dostali pri platbe, ostáva v platnosti.', 'The private order link from checkout stays valid.')}</p></div>`;
+    } catch (e) { checkoutOrd = ''; }
     const emailRow = `<p>E-mail: ${u.email ? `<b>${esc(u.email)}</b> ${u.email_verified ? `<span class="accok">✅ ${tx(en, 'overený', 'verified')}</span>` : `<span class="hint">(${tx(en, 'neoverený', 'not verified')})</span>`}` : `<span class="msg err inl">${tx(en, 'chýba – doplňte ho, inak nebude možné obnoviť heslo', 'missing – add it, otherwise password reset is impossible')}</span>`}</p>
 ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/overit-email" class="accout">${csrfField(req, res)}<button class="btnl sm">📧 ${tx(en, 'Poslať overovací odkaz', 'Send verification link')}</button></form>` : ''}
 <details${u.email ? '' : ' open'}><summary>${tx(en, u.email ? 'Zmeniť e-mail' : 'Doplniť e-mail', u.email ? 'Change e-mail' : 'Add e-mail')}</summary><form method="post" action="/ucet/email" class="accf">${csrfField(req, res)}
@@ -506,7 +559,7 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
 <details><summary>${tx(en, 'Zrušiť účet', 'Delete account')}</summary><form method="post" action="/ucet/zrusit" class="accf">${csrfField(req, res)}<p class="hint">${tx(en, 'Účet sa natrvalo zmaže. Predplatné na serveri tým nezaniká.', 'The account is deleted permanently. Your subscription itself stays.')}</p>
 <label for="dp">${tx(en, 'Heslo na potvrdenie', 'Password to confirm')}</label><input id="dp" name="password" type="password" required autocomplete="current-password" maxlength="200"><button class="btnl sm">🗑️ ${tx(en, 'Zrušiť účet', 'Delete account')}</button></form></details>
 <form method="post" action="/odhlasenie" class="accout">${csrfField(req, res)}<button class="btnl sm">🚪 ${tx(en, 'Odhlásiť sa', 'Log out')}</button></form></div>`;
-    await pub(req, res, tx(en, 'Môj účet', 'My account'), `<h1 class="ph">👤 ${esc(u.username)}</h1>${msg(req)}${lic}${aff}${panelBox}${ord}${sec}<script src="/static/acc.js?v=${ACC_V}" defer></script>`);
+    await pub(req, res, tx(en, 'Môj účet', 'My account'), `<h1 class="ph">👤 ${esc(u.username)}</h1>${msg(req)}${lic}${checkoutOrd}${aff}${panelBox}${ord}${sec}<script src="/static/acc.js?v=${ACC_V}" defer></script>`);
   }));
   const needUser = async (req, res) => { const u = await fromReq(req); if (!u) { res.redirect(303, '/prihlasenie'); return null; } if (!csrfOk(req)) { res.redirect(303, '/ucet?m=csrf'); return null; } return u; };
   app.post('/ucet/heslo', wrap(async (req, res) => {
@@ -703,7 +756,7 @@ ${(selfCheck(c) || canLookup(c)) ? `<form method="post" action="/overit-predplat
   ctx.accBonusForReq = async (req) => { const u = await fromReq(req); if (!u) return null; const bi = await bonusInfo(u); if (!bi) return null; return (m) => { const r = bi.reward(+m || 1); return r.device ? tx(req.lang === 'en', '+ druhé zariadenie zadarmo', '+ second device free') : r.bonus ? `+${moLabel(r.bonus, req.lang === 'en')} ${tx(req.lang === 'en', 'zadarmo', 'free')}` : ''; }; };
   // public, non-secret facts for the AI customer assistant (sitekb.js) – no panel URL/credentials
   ctx.accKbInfo = async () => { const c = await panelCfg(); return { on: await accOn(), panel: !!selfCheck(c), panelLinked: panelReady(c), mail: smtpOn(), packages: await packages() }; };
-  ctx.accNavItem = (req) => { const en = req.lang === 'en'; return cookies(req)[C_SESS] ? ['/ucet', '👤', tx(en, 'Môj účet', 'My account')] : ['/prihlasenie', '🔑', tx(en, 'Prihlásenie / Registrácia', 'Log in / Sign up')]; };
+  ctx.accNavItem = (req) => { const en = req.lang === 'en'; return cookies(req)[C_SESS] ? ['/ucet', '👤', tx(en, 'Môj účet', 'My account')] : ['/prihlasenie', '🔑', tx(en, 'Prihlásenie / Moja objednávka', 'Log in / My order')]; };
 
   // ================= admin =================
   const AB = '/admin/zakaznici', PB = '/admin/predplatne-server';

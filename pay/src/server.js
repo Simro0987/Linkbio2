@@ -4,6 +4,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
 const client = require('./client');
 const config = require('./config');
 const btcpay = require('./btcpay');
@@ -147,10 +148,19 @@ function loadOrders() {
   }
 }
 
+const fulfillCtx = new AsyncLocalStorage();
+
 function saveOrders(orders) {
+  try {
+    const ctx = fulfillCtx.getStore();
+    if (ctx && ctx.fv && ctx.orderId && orders) {
+      const o = orders[ctx.orderId] || Object.values(orders).find((x) => x && x.orderId === ctx.orderId);
+      if (o) fulfill.applyCheckout(o, ctx.fv, { amount: o.amountExact || o.amountEur, provider: o.providerAlias || o.provider || o.methodId, acct: ctx.acct });
+    }
+  } catch (e) { appendLog('FULFILL_STAMP_FAIL ' + (e && e.message)); }
   try { if (global.__lnkAccounts) setImmediate(global.__lnkAccounts.kick); } catch { /* accounts optional */ }
   try { for (const o of Object.values(orders || {})) require('./statusLinks').ensureOrder(o); } catch (e) { appendLog('STATUS_TOKEN_FAIL ' + e.message); }
-  try { for (const o of Object.values(orders || {})) if (fulfill.isPaid(o)) fulfill.ensure(o); } catch (e) { appendLog('FULFILL_TOKEN_FAIL ' + e.message); }
+  try { for (const o of Object.values(orders || {})) if (fulfill.isPaid(o) || (o && o.fulfill && o.fulfill.submittedAt)) fulfill.ensure(o); } catch (e) { appendLog('FULFILL_TOKEN_FAIL ' + e.message); }
   if (orderDb.enabled()) { orderDb.save(orders, appendLog); return; } // Neon is the store – no extra in-memory/disk copies
   Object.keys(memoryOrders).forEach((k) => delete memoryOrders[k]);
   Object.assign(memoryOrders, orders);
@@ -1697,28 +1707,83 @@ async function handleCreateCheckout(req, res) {
       providerLowerEarly === 'g2a' ||
       providerLowerEarly === 'g2a_voucher' ||
       providerAlias.startsWith('g2a_') ||
-      providerAlias.startsWith('paysafe');
+      providerAlias.startsWith('paysafe') ||
+      providerAlias === 'gift_smart' ||
+      providerLowerEarly === 'gift_smart' ||
+      providerLowerEarly === 'giftcard';
+
+    const fv = fulfill.validateCheckout(body);
+    if (fv.error) return res.status(400).json({ error: fv.error, code: 'FULFILL_REQUIRED' });
+    if (!fulfillCtx.getStore()) {
+      const newId = `ord_${crypto.randomBytes(8).toString('hex')}`;
+      let acct = null;
+      const A = global.__lnkAccounts;
+      let logged = null;
+      try { logged = A && A.fromReq ? await A.fromReq(req) : null; } catch (e) { appendLog('ACCT_FROMREQ_FAIL ' + (e && e.message)); }
+      if (logged) {
+        acct = { id: logged.id, u: logged.username };
+      } else {
+        const pw = fulfill.validatePassword(body.password, body.password2, fv.username);
+        if (pw.error) return res.status(400).json({ error: pw.error, code: 'PASSWORD' });
+        if (!A || !A.registerFromCheckout) return res.status(503).json({ error: 'Registrácia účtu nie je práve dostupná. Skúste to o chvíľu, alebo použite súkromný odkaz po platbe.', code: 'ACCOUNT' });
+        const reg = await A.registerFromCheckout({
+          username: fv.username,
+          email: fv.contact && fv.contact.email,
+          password: body.password,
+          req,
+          res,
+        });
+        if (reg && reg.error) {
+          const code = reg.code || 'ACCOUNT';
+          const status = (code === 'EMAIL_EXISTS' || code === 'USER_EXISTS') ? 409 : 400;
+          return res.status(status).json({ error: reg.error, code, login: reg.login || '/prihlasenie?next=/platby' });
+        }
+        if (reg && reg.user) acct = { id: reg.user.id, u: reg.user.username };
+      }
+      return fulfillCtx.run({ fv, orderId: newId, acct }, () => handleCreateCheckout(req, res));
+    }
+    const { orderId, acct } = fulfillCtx.getStore();
+    if (fv.contact && fv.contact.email && !email) email = fv.contact.email;
 
     if (deferredAmountEmail) {
-      // PaysafeCard / G2A (Amazon, Azteco): informational guides only. No orders, no PIN/code collection.
-      return res.status(409).json({
-        error: 'Len informačný návod — PIN ani kód kupónu sa nikam neposiela.',
-        code: 'GUIDE_ONLY',
+      let giftId = providerAlias;
+      if (providerAlias === 'gift_smart' || String(body.provider || '') === 'gift_smart') {
+        const picked = giftPick.pick(amountEur);
+        const first = picked && picked.choice && picked.choice.cards && picked.choice.cards[0];
+        giftId = (first && (first.aliasId || first.id)) || '';
+        if (!giftId) return res.status(400).json({ error: 'Pre túto sumu sa nenašla vhodná darčeková karta.' });
+      }
+      const orders = loadOrders();
+      const order = {
+        orderId,
+        amountEur: Number.isFinite(amountEur) && amountEur > 0 ? amountEur : 0,
+        currency: 'EUR',
+        provider: providerAlias,
+        providerAlias,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        email: (fv.contact && fv.contact.email) || '',
         guideOnly: true,
-      });
+      };
+      if (/@(example\.|test\.)/i.test(order.email)) order.test = true;
+      fulfill.applyCheckout(order, fv, { amount: order.amountEur, provider: providerAlias, acct: fulfillCtx.getStore() && fulfillCtx.getStore().acct });
+      orders[orderId] = order;
+      saveOrders(orders);
+      const checkoutUrl = '/giftcard/' + encodeURIComponent(giftId);
+      if (redirect) return res.redirect(302, checkoutUrl);
+      return res.json({ orderId, checkoutUrl, localPayUrl: checkoutUrl, provider: providerAlias, amountEur: order.amountEur, currency: 'EUR', status: order.status, guideOnly: true });
     }
     // Per-amount payment link (admin „Odkazy podľa sumy“): exact enabled match → only a „Zaplatiť“ button, URL stays server-side.
     {
       const link = Number.isFinite(amountEur) && amountEur > 0 ? amountLinks.match(providerAlias, amountEur) : null;
       if (link) {
-        const linkOrderId = `ord_${crypto.randomBytes(8).toString('hex')}`;
         const order = await amountLinks.createOrder({
-          link, orderId: linkOrderId, amountEur, provider,
+          link, orderId, amountEur, provider,
           countryCode: customerPrefill.normalizeCountry(body.country || body.countryCode || process.env.ONRAMP_COUNTRY || 'SK'),
           providerAlias, loadOrders, saveOrders, appendLog,
         });
         if (redirect) return res.redirect(302, order.checkoutUrl);
-        return res.json({ orderId: linkOrderId, checkoutUrl: order.checkoutUrl, localPayUrl: order.checkoutUrl, provider: 'amount_link', amountEur, currency: 'EUR', status: order.status });
+        return res.json({ orderId, checkoutUrl: order.checkoutUrl, localPayUrl: order.checkoutUrl, provider: 'amount_link', amountEur, currency: 'EUR', status: order.status });
       }
     }
     if (false) {
@@ -1748,7 +1813,9 @@ async function handleCreateCheckout(req, res) {
       // Revolut / keyless public gateways: amount only — no email, name or country from the customer.
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) email = '';
     } else if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ error: 'Platný email je povinný' });
+      // Contact may be Telegram / Facebook only — do not invent an e-mail for the provider.
+      if (fv && fv.contact && (fv.contact.telegram || fv.contact.facebook || fv.contact.email)) email = (fv.contact.email || '');
+      else return res.status(400).json({ error: 'Platný email je povinný' });
     }
     const countryCode = customerPrefill.normalizeCountry(
       body.country || body.countryCode || process.env.ONRAMP_COUNTRY || 'SK'
@@ -1766,8 +1833,8 @@ async function handleCreateCheckout(req, res) {
       return res.status(400).json({ error: 'Suma v EUR musí byť kladné číslo' });
     }
 
-    // Never let the client pick/overwrite an order id (IDOR / order overwrite).
-    const orderId = `ord_${crypto.randomBytes(8).toString('hex')}`;
+    // orderId was assigned up-front (fulfill ALS) so every branch stamps the same id.
+    if (!orderId) return res.status(500).json({ error: 'Chýba číslo objednávky.' });
 
     const providerLower = provider.toLowerCase();
 
@@ -3446,24 +3513,29 @@ function tagAccount(handler) {
         if (!months) { const pl = await A.planByAmount(b.amount ?? b.amountEur ?? b.suma).catch(() => null); if (pl) { months = pl.period; planId = pl.id; } }
       }
     } catch (x) { appendLog('ACCT_TAG_FAIL ' + x.message); acct = null; }
-    if (acct) {
+    {
       const json = res.json.bind(res);
       res.json = (b) => {
         try {
-          if (b && b.orderId && res.statusCode < 400) {
+          const ctx = fulfillCtx.getStore();
+          const a = acct || (ctx && ctx.acct);
+          if (a && b && b.orderId && res.statusCode < 400) {
             const all = loadOrders(); const o = all[b.orderId];
-            if (o && !o.acct) { o.acct = acct; o.planMonths = months || null; o.planId = planId; saveOrders(all); }
+            if (o && !o.acct) { o.acct = a; o.planMonths = months || null; o.planId = planId; saveOrders(all); }
           }
         } catch (x) { appendLog('ACCT_TAG_FAIL ' + x.message); }
         return json(b);
       };
-      // form posts answer with a redirect (no orderId in the body) – tag the order this request just created
       const t0 = Date.now() - 1000; const redir = res.redirect.bind(res);
       res.redirect = (...args) => {
         try {
-          const all = loadOrders(); let best = null;
-          for (const [id, o] of Object.entries(all)) { const t = Date.parse(o && o.createdAt); if (o && !o.acct && t >= t0 && (!best || t > best.t)) best = { id, t }; }
-          if (best) { const o = all[best.id]; o.acct = acct; o.planMonths = months || null; o.planId = planId; saveOrders(all); }
+          const ctx = fulfillCtx.getStore();
+          const a = acct || (ctx && ctx.acct);
+          if (a) {
+            const all = loadOrders(); let best = null;
+            for (const [id, o] of Object.entries(all)) { const t = Date.parse(o && o.createdAt); if (o && !o.acct && t >= t0 && (!best || t > best.t)) best = { id, t }; }
+            if (best) { const o = all[best.id]; o.acct = a; o.planMonths = months || null; o.planId = planId; saveOrders(all); }
+          }
         } catch (x) { appendLog('ACCT_TAG_FAIL ' + x.message); }
         return redir(...args);
       };
