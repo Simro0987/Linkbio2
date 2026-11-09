@@ -98,6 +98,7 @@ function install(ctx) {
   }
   const panelReady = (c) => !!(c && c.base && c.type);
   const pcConf = (c) => ({ base: c.base, type: c.type, user: c.user || '', pass: c.pass || '', key: c.key || '', tpl: c.tpl || '', datePath: c.datepath || '' });
+  const canLookup = (c) => panelReady(c) && !!(panelApi.ADAPTERS[c.type] && panelApi.ADAPTERS[c.type].lookup);
   const selfCheck = (c) => panelReady(c) && c.type !== 'stalker' && c.type !== 'custom';
 
   // sessions / csrf
@@ -226,7 +227,7 @@ function install(ctx) {
   }, 30 * 60e3).unref();
 
   // ---------- licence-expiry reminder: ~7 days before the end → e-mail to the customer (if e-mail sending is set up) + Telegram to admin ----------
-  const pubOrigin = () => String(process.env.LNKBIO_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '');
+  const pubOrigin = () => String(process.env.LNKBIO_PUBLIC_URL || process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://lnkbio.onrender.com').replace(/\/$/, '').replace(/^http:\/\//i, 'https://');
   async function remindRun(now = new Date()) {
     const s = await getSettings(); if (s.acc_remind === '0') return { skipped: 'off' };
     const us = (await pool.query(`SELECT id,username,email, ${ACT()} AS eff, remind_for FROM acc_users WHERE NOT disabled AND ${ACT()} > $1 AND ${ACT()} <= $1::timestamptz + interval '7 days'
@@ -427,7 +428,7 @@ ${ref ? `<p class="hint">🤝 ${tx(en, 'Odporučil vás', 'Referred by')}: <b>${
 
   // ---------- account page ----------
   async function qrSvg(text) { try { return await QR.toString(text, { type: 'svg', margin: 1, width: 168, errorCorrectionLevel: 'M' }); } catch { return ''; } }
-  const origin = (req) => String(process.env.LNKBIO_PUBLIC_URL || (req.protocol + '://' + req.get('host'))).replace(/\/$/, '');
+  const origin = (req) => String(process.env.LNKBIO_PUBLIC_URL || process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('https://' + req.get('host'))).replace(/\/$/, '').replace(/^http:\/\//i, 'https://');
   const ACC_V = (() => { try { return sha(require('fs').readFileSync(require('path').join(__dirname, 'static', 'acc.js'))).slice(0, 10); } catch { return '1'; } })();
   app.get('/ucet', wrap(async (req, res) => {
     const u = await fromReq(req); if (!u) return res.redirect(303, '/prihlasenie');
@@ -617,11 +618,17 @@ ${u.email && !u.email_verified && smtpOn() ? `<form method="post" action="/ucet/
   async function checkPage(req, res, r) {
     const en = req.lang === 'en', c = await panelCfg();
     const out = !r ? '' : r.err ? msgOf(r.err, en) : r.found ? `<div class="card"><p class="accst ${r.active ? 'ok' : 'bad'}">${r.active ? `✅ ${tx(en, 'Predplatné aktívne do', 'Subscription active until')} <b>${r.expiry && r.expiry < PANEL.UNLIMITED ? fmtDate(r.expiry) : tx(en, 'bez obmedzenia', 'unlimited')}</b>` : `⛔ ${tx(en, 'Predplatné vypršalo', 'Subscription expired')}${r.expiry ? ' (' + fmtDate(r.expiry) + ')' : ''}`}</p>${!r.active ? `<p><a class="b" href="/platby">🔁 ${tx(en, 'Predĺžiť', 'Renew')}</a></p>` : ''}</div>` : msgOf('panelbad', en);
+    const hint = canLookup(c) && selfCheck(c)
+      ? tx(en, 'Zadajte meno k predplatnému (z aplikácie v TV). Heslo je voliteľné – ak ho zadáte, overenie je presnejšie. Heslo sa nikde neukladá. Všetka komunikácia ide cez HTTPS.', 'Enter your subscription username (from the TV app). Password is optional – if you enter it, the check is more precise. The password is never stored. All traffic uses HTTPS.')
+      : canLookup(c)
+        ? tx(en, 'Zadajte meno k predplatnému. Všetka komunikácia ide cez HTTPS.', 'Enter your subscription username. All traffic uses HTTPS.')
+        : tx(en, 'Zadajte meno a heslo k predplatnému (z aplikácie v TV). Heslo sa nikde neukladá – slúži len na overenie, že predplatné je vaše.', 'Enter your subscription username and password (from the TV app). The password is never stored – it only proves the subscription is yours.');
+    const needPw = selfCheck(c) && !canLookup(c);
     await pub(req, res, tx(en, 'Overiť predplatné', 'Check subscription'), `<h1 class="ph">🔎 ${tx(en, 'Overiť predplatné', 'Check subscription')}</h1>${out}
-${selfCheck(c) ? `<form method="post" action="/overit-predplatne" class="card accf">${csrfField(req, res)}<input type="hidden" name="t" value="${esc(formTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
-<p class="hint">${tx(en, 'Zadajte meno a heslo k predplatnému (z aplikácie v TV). Heslo sa nikde neukladá – slúži len na overenie, že predplatné je vaše.', 'Enter your subscription username and password (from the TV app). The password is never stored – it only proves the subscription is yours.')}</p>
+${(selfCheck(c) || canLookup(c)) ? `<form method="post" action="/overit-predplatne" class="card accf">${csrfField(req, res)}<input type="hidden" name="t" value="${esc(formTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
+<p class="hint">${hint}</p>
 <label for="cu">${tx(en, 'Meno', 'Username')}</label><input id="cu" name="u" required maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false">
-<label for="cp">${tx(en, 'Heslo', 'Password')}</label><input id="cp" name="p" type="password" required maxlength="128" autocomplete="off">
+<label for="cp">${tx(en, 'Heslo', 'Password')}${needPw ? '' : ' (' + tx(en, 'voliteľné', 'optional') + ')'}</label><input id="cp" name="p" type="password"${needPw ? ' required' : ''} maxlength="128" autocomplete="off">
 <button class="b">${tx(en, 'Overiť', 'Check')}</button></form>` : msgOf('paneloff', en)}`);
   }
   app.get('/overit-predplatne', wrap(async (req, res) => checkPage(req, res, null)));
@@ -630,10 +637,14 @@ ${selfCheck(c) ? `<form method="post" action="/overit-predplatne" class="card ac
     if (!csrfOk(req) || req.body.web || !formTokOk(req.body.t, 1500)) return fail('csrf');
     const ip = ipKey(req.ip), pu = String(req.body.u || '').trim(), pp = String(req.body.p || '');
     if (L.hit('ck:' + ip, 5, 10 * 60e3) || L.hit('ckd:' + ip, 30, 86400e3) || L.hit('ckg', 300, 3600e3)) return fail('locked');
-    if (!panelUserOk(pu) || !pp || pp.length > 128) return fail('panelbad');
+    if (!panelUserOk(pu) || (pp && pp.length > 128)) return fail('panelbad');
     if (L.hit('cku:' + pu.toLowerCase(), 5, 3600e3)) return fail('locked');
-    const c = await panelCfg(); if (!selfCheck(c)) return fail('paneloff');
-    const r = await panelApi.checkOwn(pcConf(c), pu, pp, hmac('chk:' + pu.toLowerCase() + '\n' + pp)).catch(() => null);
+    const c = await panelCfg();
+    let r;
+    if (pp && selfCheck(c)) r = await panelApi.checkOwn(pcConf(c), pu, pp, hmac('chk:' + pu.toLowerCase() + '\n' + pp)).catch(() => null);
+    else if (!pp && canLookup(c)) r = await panelApi.lookup(pcConf(c), pu).catch(() => null);
+    else if (!pp && selfCheck(c)) return fail('panelbad');
+    else return fail('paneloff');
     if (!r || r.error) return fail('paneloff');
     return checkPage(req, res, { found: r.found, active: r.active, expiry: r.expiry });
   }));
@@ -830,6 +841,10 @@ ${c.base && /^http:/i.test(c.base) ? '<div class="msg err">⚠️ Server použí
     if (c.type_set) { const a = panelApi.ADAPTERS[c.type_set]; const r = await a.detect(cc).catch(() => null); d = { type: c.type_set, label: a.label, note: r ? r.note : 'ručne zvolený typ neodpovedá', ok: !!r, canLookup: !!a.lookup, tried: [c.type_set] }; }
     else { d = await panelApi.detect(cc); d.ok = !!d.type; }
     if (d.ok) await setPanel('type', d.type);
+    if (d.ok && c.base && /^http:/i.test(c.base) && PANEL.httpsTwin(c.base)) {
+      const httpsUrl = PANEL.httpsTwin(c.url || c.base);
+      if (httpsUrl) { await setPanel('url', httpsUrl); d.note = (d.note ? d.note + ' ' : '') + 'Adresa bola prepnuta z http:// na https://.'; }
+    }
     const out = { at: Date.now(), ok: d.ok, label: d.label, note: d.note, tried: d.tried };
     const tu = String(req.body.u || '').trim();
     if (tu && d.ok) {

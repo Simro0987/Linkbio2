@@ -230,6 +230,18 @@ setInterval(() => { const now = Date.now(); for (const [k, v] of fails) if (v.un
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+// Public HTTP → HTTPS (only when the proxy tells us the client used http). Do not touch
+// bare http on the container port – Render health checks hit /healthz internally.
+app.use((req, res, next) => {
+  const fwd = String(req.get('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase();
+  if (fwd === 'http' && req.method !== 'OPTIONS') {
+    const host = String(req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim();
+    if (host && !/^localhost[:\d]*$/i.test(host) && !/^127\.0\.0\.1/.test(host)) {
+      return res.redirect(301, 'https://' + host + (req.originalUrl || '/'));
+    }
+  }
+  next();
+});
 // 💶 merged payment module (former checkout) – PAY_MODULE=off|shadow|live|on; mounted before compression/helmet,
 // it keeps its own CSP (nonce), body parsers and compression. Only its own paths are handed over (pay/index.js).
 const pay = require('./pay').install(app, {
@@ -256,6 +268,7 @@ app.use(helmet({
 }));
 app.use((req, res, next) => { res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=(), browsing-topics=()'); next(); });
 const CSS_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 's.css'))).digest('hex').slice(0, 10);
+const STAV_V = crypto.createHash('sha1').update(fs.readFileSync(path.join(__dirname, 'static', 'stav.js'))).digest('hex').slice(0, 10);
 app.use('/static', express.static(path.join(__dirname, 'static'), { maxAge: '365d', immutable: true, etag: true, index: false }));
 app.use(express.urlencoded({ extended: false, limit: '20kb' }));
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -272,7 +285,7 @@ const EN = { 'Cenník': 'Pricing', 'Domov': 'Home', 'Kanály': 'Channels', 'Plat
   'Katalóg je zatiaľ prázdny.': 'The catalogue is empty for now.', '💳 Prejsť k platbe': '💳 Go to payment', 'Kontakty zatiaľ nie sú vyplnené.': 'No contacts yet.', 'Skupiny': 'Groups', 'Prehrať video': 'Play video', 'Prehrať': 'Play', 'Zatiaľ žiadne videá.': 'No videos yet.', 'Priame kontakty': 'Direct contacts', 'Telegram skupina': 'Telegram group', 'Facebook skupina': 'Facebook group',
   'Časté otázky': 'Frequently asked questions', 'Zatiaľ žiadne otázky.': 'No questions yet.', 'Hlavné menu': 'Main menu', 'Omrvinky': 'Breadcrumbs', 'Menu': 'Menu',
   'Odkaz neexistuje.': 'This link does not exist.', 'Odkaz neexistuje alebo vypršal.': 'This link does not exist or has expired.', 'Stránka neexistuje.': 'Page not found.',
-  'Aktuálny stav našich služieb. Stránka sa obnovuje automaticky.': 'Current status of our services. This page refreshes automatically.' };
+  'Aktuálny stav našich služieb. Stav sa aktualizuje automaticky.': 'Current status of our services. The status updates automatically.' };
 Object.assign(EN, { 'Kontroluje sa': 'Checking', 'Funguje': 'Up', 'Pomalé': 'Slow', 'Výpadok': 'Down', '● LIVE': '● LIVE', '▶ Stream': '▶ Stream', '📺 TV': '📺 TV', '⚙ Software': '⚙ Software' });
 const UI = require('./uitext'); UI.addDefaults(EN);
 const T = (req, sk) => UI.tx(!!(req && req.lang === 'en'), sk, EN[sk] || '');
@@ -280,6 +293,11 @@ const loc = (req, s, k) => (req && req.lang === 'en' && s[k + '_en']) || s[k];
 const langHref = req => { const u = new URL(req.originalUrl, 'http://x'); u.searchParams.set('lang', req.lang === 'en' ? 'sk' : 'en'); return u.pathname.replace(/^[/\\]+/, '/') + u.search; };
 const langSw = req => `<a class="langsw" href="${esc(langHref(req))}" hreflang="${req.lang === 'en' ? 'sk' : 'en'}">🌐 ${req.lang === 'en' ? 'SK' : 'EN'}</a>`;
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
+app.get('/api/tv/stav.json', wrap(async (req, res) => {
+  const lang = String(req.query.lang || req.lang || 'sk') === 'en' ? 'en' : 'sk';
+  res.setHeader('Cache-Control', 'public, max-age=15');
+  res.json({ ok: true, lang, items: await features.monitorPublic(lang) });
+}));
 // optional: warm another service while a visitor browses lnkbio (fire-and-forget, max once per 5 min); payments now run in-process
 app.use((req, res, next) => { if (req.method === 'GET' && process.env.RENDER && process.env.PEER_URL) require('./keepawake').wake(process.env.PEER_URL + '/health'); next(); });
 app.get('/robots.txt', (req, res) => res.type('text').set('Cache-Control', 'public, max-age=86400').send(`User-agent: *\nDisallow: /admin\nDisallow: /api/\nSitemap: ${pubOrigin(req)}/sitemap.xml\n`));
@@ -1018,11 +1036,11 @@ async function shell(req, res, s, active, title, content, sub = '') {
     .concat(await (async () => { const a = features.accNavItem ? await features.accNavItem(req) : null; return a ? [{ k: 'acc', href: a[0], on: active === 'ucet', icon: a[1], label: a[2] }] : []; })());
   const items = (features.navArrange ? features.navArrange(s, raw) : raw).map(i => `<li><a href="${/^s\d+$/.test(i.k) ? i.href : esc(i.href)}"${i.on ? ' class="on" aria-current="page"' : ''}${i.attrs || ''}><span class="ni">${esc(i.icon)}</span>${esc(req.lang === 'en' && i.label2 ? i.label2 : i.label)}</a>${i.sub || ''}</li>`).join('');
   const chat = s.chat_enabled !== '0';
-  const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${chat ? `<link rel="stylesheet" href="/static/chat.css?v=${CHAT_V}"><script src="/static/chat.js?v=${CHAT_V}" defer></script>` : ''}${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
+  const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${chat ? `<link rel="stylesheet" href="/static/chat.css?v=${CHAT_V}"><script src="/static/chat.js?v=${CHAT_V}" defer></script>` : ''}${active === 'stav' ? `<script src="/static/stav.js?v=${STAV_V}" defer></script>` : ''}${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
   const brand = `<a class="brand" href="/${esc(s.slug)}">${s.img.logo ? `<img src="/img/logo?v=${esc(s.img.logo)}" alt="" width="32" height="32">` : '<span class="bl">▶</span>'}${esc(loc(req, s, 'title'))}</a>`;
   if (!res.getHeader('Cache-Control')) res.setHeader('Cache-Control', /(?:^|;\s*)__Host-acc=/.test(String(req.headers.cookie || '')) ? 'private, no-store' : 'public, max-age=60');
   res.setHeader('Vary', 'Cookie');
-  res.send(`<!doctype html><html lang="${req.lang === 'en' ? 'en' : 'sk'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">${active === 'stav' ? '<meta http-equiv="refresh" content="60">' : ''}<meta name="description" content="${esc(s.meta_desc || loc(req, s, 'bio'))}"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(s.meta_desc || loc(req, s, 'bio'))}"><meta property="og:type" content="website"><meta property="og:site_name" content="${esc(loc(req, s, 'title'))}"><meta property="og:locale" content="${req.lang === 'en' ? 'en_US' : 'sk_SK'}"><meta property="og:url" content="${esc(pubOrigin(req) + req.path)}">${s.img.logo ? `<meta property="og:image" content="${esc(pubOrigin(req))}/img/logo?v=${esc(s.img.logo)}">` : ''}<meta name="twitter:card" content="summary"><link rel="canonical" href="${esc(pubOrigin(req) + req.path)}"><link rel="alternate" hreflang="sk" href="${esc(pubOrigin(req) + req.path)}?lang=sk"><link rel="alternate" hreflang="en" href="${esc(pubOrigin(req) + req.path)}?lang=en"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head>
+  res.send(`<!doctype html><html lang="${req.lang === 'en' ? 'en' : 'sk'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="${esc(s.meta_desc || loc(req, s, 'bio'))}"><meta property="og:title" content="${esc(title)}"><meta property="og:description" content="${esc(s.meta_desc || loc(req, s, 'bio'))}"><meta property="og:type" content="website"><meta property="og:site_name" content="${esc(loc(req, s, 'title'))}"><meta property="og:locale" content="${req.lang === 'en' ? 'en_US' : 'sk_SK'}"><meta property="og:url" content="${esc(pubOrigin(req) + req.path)}">${s.img.logo ? `<meta property="og:image" content="${esc(pubOrigin(req))}/img/logo?v=${esc(s.img.logo)}">` : ''}<meta name="twitter:card" content="summary"><link rel="canonical" href="${esc(pubOrigin(req) + req.path)}"><link rel="alternate" hreflang="sk" href="${esc(pubOrigin(req) + req.path)}?lang=sk"><link rel="alternate" hreflang="en" href="${esc(pubOrigin(req) + req.path)}?lang=en"><title>${esc(title)}</title><link rel="stylesheet" href="/static/s.css?v=${CSS_V}">${extra}</head>
 <body class="site${s.layout === 'tv' ? ' tv' : ''}${s.bg_fx !== '0' && !s.img.bg ? ' fx' : ''}"><input type="checkbox" id="nt" class="nt" aria-hidden="true"><header class="top">${brand}${langSw(req)}<label for="nt" class="burger" aria-label="Menu">☰</label></header>
 <aside class="side"><div class="sb">${brand}${langSw(req)}</div><nav aria-label="${T(req, 'Hlavné menu')}"><ul>${items}</ul></nav></aside><label for="nt" class="scrim" aria-hidden="true"></label>
 <main class="w pub${s.layout === 'tv' ? ' tv' : ''}">${content}${s.footer ? `<p class="f">${esc(s.footer)}</p>` : ''}</main></body></html>`);
@@ -1179,7 +1197,8 @@ app.get('/:slug/o-nas', wrap(async (req, res, next) => {
 app.get('/:slug/stav', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   res.setHeader('X-Robots-Tag', 'noindex');
-  await shell(req, res, s, 'stav', T(req, 'Stav služieb') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Stav služieb')}</h1><p class="lead">${T(req, 'Aktuálny stav našich služieb. Stránka sa obnovuje automaticky.')}</p>${await features.monitorPage(req.lang)}`);
+  res.setHeader('Cache-Control', 'public, max-age=15');
+  await shell(req, res, s, 'stav', T(req, 'Stav služieb') + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${T(req, 'Stav služieb')}</h1><p class="lead">${T(req, 'Aktuálny stav našich služieb. Stav sa aktualizuje automaticky.')}</p><div id="stavbox">${await features.monitorPage(req.lang)}</div>`);
 }));
 features.sectionRoute((...a) => shell(...a), (r) => slugOk(r), T, loc);
 app.use((req, res) => res.status(404).send(page('404', `<h1>404</h1><p class="bio">${T(req, 'Stránka neexistuje.')}</p>`)));
@@ -1187,7 +1206,10 @@ app.use((err, req, res, next) => { console.error(err && err.message); res.status
 
 init().then(initLists).then(() => features.mailerInit && features.mailerInit()).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => features.sectionsInit()).then(() => features.epgInit()).then(() => features.xpubInit()).then(() => features.accountsInit()).then(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
-  // Render free tier: lnkbio sleeps when idle (KEEP_AWAKE default off) so the checkout can stay awake 24/7
-  // within the shared 750 free instance-hours. Visitors wake the checkout on demand (see middleware above).
-  require('./keepawake').start({ selfUrl: process.env.RENDER_EXTERNAL_URL && process.env.RENDER_EXTERNAL_URL + '/healthz', def: 'off', log: console.log });
+  // Payments run in-process now, so this service stays awake by default (shared 750 free hours/month).
+  // In-app pings cannot wake a sleeping instance; cron-job.org should still hit /healthz every 5 min.
+  const self = String(process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.LNKBIO_PUBLIC_URL || '').replace(/\/+$/, '').replace(/^http:\/\//i, 'https://');
+  require('./keepawake').start({ selfUrl: /^https:\/\//i.test(self) ? self + '/healthz' : '', def: 'always', log: console.log });
 }).catch(e => { console.error('init failed', e.message); process.exit(1); });
+process.on('unhandledRejection', (e) => console.error('unhandledRejection', e && e.message || e));
+process.on('uncaughtException', (e) => console.error('uncaughtException', e && e.message || e));

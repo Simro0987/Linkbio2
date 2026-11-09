@@ -279,6 +279,7 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
     const ms = await getMon();
     return `<ul class="stl">${ms.map((m) => { const p = pubItem(m, lang); return `<li><span class="dot ${esc(p.cls)}"></span><span class="sm">${esc(p.msg)}</span><span class="st">${tx(lang === 'en', 'Posledná kontrola', 'Last check')}: ${esc(fmtT(p.at, lang))}</span></li>`; }).join('') || `<li>${tx(lang === 'en', 'Zatiaľ nie sú sledované žiadne služby.', 'No services are monitored yet.')}</li>`}</ul>`;
   };
+  ctx.monitorPublic = async (lang) => (await getMon()).map((m) => { const p = pubItem(m, lang); return { cls: p.cls || '', msg: p.msg, at: p.at ? new Date(p.at).toISOString() : null, atLabel: fmtT(p.at, lang) }; });
 
   const MM = { ok: 'Uložené.', badurl: 'Neplatná URL (len http/https, verejná adresa – súkromné/lokálne IP sú zakázané).', badname: 'Chýba názov.', checked: 'Kontrola dokončená.', needconfirm: 'Zmazanie treba potvrdiť zaškrtnutím.' };
   async function monInput(req) {

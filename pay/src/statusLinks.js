@@ -93,7 +93,7 @@ const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&':
 const fmt = (iso, lang) => { try { return new Date(iso).toLocaleString(lang === 'en' ? 'en-GB' : 'sk-SK', { timeZone: 'Europe/Zurich', dateStyle: 'medium', timeStyle: 'short' }) + ' (CET/CEST)'; } catch { return '—'; } };
 
 function publicBase(req) {
-  return (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+  return String(process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || ('https://' + req.get('host'))).replace(/\/+$/, '').replace(/^http:\/\//i, 'https://');
 }
 function statusPath(token) { return `/status/${token}`; }
 function linkBox(url, lang) {

@@ -70,12 +70,37 @@ t('15-minute cache', async () => {
   clock = 14 * 60e3; await p.lookup(c, 'jan'); assert.strictEqual(f.calls.length, 1);
   clock = 16 * 60e3; await p.lookup(c, 'jan'); assert.strictEqual(f.calls.length, 2);
 });
-t('read-only: refuses stream/playlist content, never follows redirects', async () => {
+t('read-only: refuses stream/playlist content, does not follow off-host redirects', async () => {
   const f = mock([[/panel_api\.php/, () => ({ headers: { 'content-type': 'application/x-mpegurl' }, body: '#EXTM3U' })]]);
   const p = P.create({ fetchImpl: f });
   await assert.rejects(() => p.lookup({ base: 'https://x.example', user: 'a', pass: 'b', type: 'panel_api' }, 'z'));
   assert.ok(f.calls.every((k) => k.opt.redirect === 'manual' && (k.opt.method || 'GET') === 'GET'));
   assert.ok(f.calls.every((k) => !/get\.php|m3u|live\/|movie\//i.test(k.url)));
+});
+t('http panel URL: tries https first and follows same-host http→https redirect', async () => {
+  assert.strictEqual(P.httpsTwin('http://p.example:8080/x'), 'https://p.example:8080/x');
+  assert.ok(P.sameSafeRedirect('http://p.example/a', 'https://p.example/a').startsWith('https://'));
+  assert.strictEqual(P.sameSafeRedirect('https://p.example/a', 'https://evil.example/a'), null);
+  const calls = [];
+  const f = async (url, opt = {}) => {
+    calls.push({ url, opt });
+    if (url.startsWith('http://p.example/')) {
+      return { status: 301, headers: new Map([['location', 'https://p.example/' + url.split('://')[1].split('/').slice(1).join('/')]]), text: async () => '' };
+    }
+    if (url.includes('action=get_lines')) {
+      return { status: 200, headers: new Map([['content-type', 'application/json']]), text: async () => JSON.stringify([{ username: 'jan', exp_date: EXP, enabled: 1 }]) };
+    }
+    if (url.includes('action=get_line')) {
+      return { status: 200, headers: new Map([['content-type', 'application/json']]), text: async () => JSON.stringify({ username: 'jan', exp_date: EXP, enabled: 1 }) };
+    }
+    return { status: 404, headers: new Map(), text: async () => 'no' };
+  };
+  const p = P.create({ fetchImpl: f });
+  const c = { base: 'http://p.example', key: 'K' };
+  const d = await p.detect(c); assert.strictEqual(d.type, 'xui');
+  const r = await p.lookup({ ...c, type: 'xui' }, 'jan'); assert.ok(r.found);
+  assert.ok(calls.some((k) => k.url.startsWith('https://p.example/')));
+  assert.ok(calls.every((k) => k.opt.redirect === 'manual'));
 });
 
 (async () => {

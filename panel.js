@@ -28,9 +28,29 @@ const result = (found, expiry, extra = {}) => {
   return { found: !!found, expiry: exp || null, active: !!found && (!exp || new Date(exp) > new Date()) && extra.enabled !== false, ...extra };
 };
 
+/** Prefer HTTPS when a panel was saved as http:// (common mixed-content / redirect failure). */
+function httpsTwin(u) {
+  try { const x = new URL(u); if (x.protocol === 'http:') { x.protocol = 'https:'; if (x.port === '80') x.port = ''; return x.href; } } catch {}
+  return null;
+}
+function sameSafeRedirect(from, loc) {
+  let next; try { next = new URL(loc, from); } catch { return null; }
+  if (!/^https?:$/.test(next.protocol)) return null;
+  let src; try { src = new URL(from); } catch { return null; }
+  const hostOk = next.hostname === src.hostname;
+  const httpsUp = src.protocol === 'http:' && next.protocol === 'https:' && hostOk;
+  const sameOrigin = next.origin === src.origin;
+  if (!(httpsUp || sameOrigin)) return null;
+  return next.href;
+}
 function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
-  async function getJson(url, opt = {}) {
+  async function getJsonOnce(url, opt = {}, hops = 0) {
     const r = await fetchImpl(url, { method: opt.method || 'GET', headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (lnkbio subscription check)', ...(opt.headers || {}) }, body: opt.body, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT) });
+    const loc = r.headers && r.headers.get && r.headers.get('location');
+    if (hops < 3 && loc && [301, 302, 303, 307, 308].includes(r.status)) {
+      const next = sameSafeRedirect(url, loc);
+      if (next) return getJsonOnce(next, opt, hops + 1);
+    }
     const len = Number(r.headers && r.headers.get && r.headers.get('content-length')) || 0;
     if (len > MAX_BODY) throw new Error('response too large');
     const ct = String((r.headers && r.headers.get && r.headers.get('content-type')) || '');
@@ -38,6 +58,16 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
     const t = await r.text(); if (t.length > MAX_BODY) throw new Error('response too large');
     let j = null; try { j = JSON.parse(t); } catch { j = null; }
     return { status: r.status, json: j };
+  }
+  async function getJson(url, opt = {}) {
+    const https = httpsTwin(url);
+    if (https) {
+      try {
+        const r = await getJsonOnce(https, opt);
+        if (r.status < 500 && (r.json || r.status !== 404)) return r;
+      } catch { /* fall back to the stored http URL */ }
+    }
+    return getJsonOnce(url, opt);
   }
   const q = (o) => new URLSearchParams(o).toString();
   const basic = (u, p) => 'Basic ' + Buffer.from(`${u}:${p}`).toString('base64');
@@ -135,4 +165,4 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
   }
   return { detect, lookup, checkOwn, ADAPTERS, clear: () => cache.clear() };
 }
-module.exports = { create, normBase, parseDate, getPath, UNLIMITED };
+module.exports = { create, normBase, parseDate, getPath, UNLIMITED, httpsTwin, sameSafeRedirect };
