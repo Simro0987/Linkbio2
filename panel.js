@@ -1,4 +1,6 @@
 'use strict';
+const http = require('http');
+const https = require('https');
 // Read-only subscription-panel adapters: only account status / expiry is ever requested or returned.
 // Never requests, returns, logs or proxies streams, playlists or m3u URLs. Credentials are never logged.
 const MAX_BODY = 2 * 1024 * 1024, TIMEOUT = 10000;
@@ -7,9 +9,9 @@ const UNLIMITED = '2099-12-31T00:00:00.000Z';
 function normBase(u) {
   let s = String(u || '').trim(); if (!s) return null;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) && !/^https?:\/\//i.test(s)) return null;
-  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
   let x; try { x = new URL(s); } catch { return null; }
-  if (!/^https?:$/.test(x.protocol) || x.username || x.password) return null;
+  if (!/^https?:$/.test(x.protocol) || x.username || x.password || !x.hostname) return null;
   return x.origin + x.pathname.replace(/\/+$/, '').replace(/\/(player_api|panel_api|get)\.php$/i, '').replace(/\/stalker_portal(\/.*)?$/i, '').replace(/\/c$/, '');
 }
 /** parse many date shapes -> ISO string | 'unlimited' | null */
@@ -28,11 +30,6 @@ const result = (found, expiry, extra = {}) => {
   return { found: !!found, expiry: exp || null, active: !!found && (!exp || new Date(exp) > new Date()) && extra.enabled !== false, ...extra };
 };
 
-/** Prefer HTTPS when a panel was saved as http:// (common mixed-content / redirect failure). */
-function httpsTwin(u) {
-  try { const x = new URL(u); if (x.protocol === 'http:') { x.protocol = 'https:'; if (x.port === '80') x.port = ''; return x.href; } } catch {}
-  return null;
-}
 function sameSafeRedirect(from, loc) {
   let next; try { next = new URL(loc, from); } catch { return null; }
   if (!/^https?:$/.test(next.protocol)) return null;
@@ -43,10 +40,43 @@ function sameSafeRedirect(from, loc) {
   if (!(httpsUp || sameOrigin)) return null;
   return next.href;
 }
-function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
+/** Panel HTTP(S) only – rejectUnauthorized is false so a self-signed panel cert works. Not used for the site itself. */
+function panelRequest(url, opt = {}) {
+  return new Promise((ok, bad) => {
+    let x; try { x = new URL(url); } catch { return bad(new Error('neplatná URL')); }
+    const lib = x.protocol === 'https:' ? https : http;
+    const headers = { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (lnkbio subscription check)', ...(opt.headers || {}) };
+    const req = lib.request(url, {
+      method: opt.method || 'GET',
+      headers,
+      timeout: TIMEOUT,
+      rejectUnauthorized: false,
+    }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => { chunks.push(c); if (chunks.reduce((n, b) => n + b.length, 0) > (opt.maxBody || MAX_BODY) + 1) { req.destroy(new Error('response too large')); } });
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        const headersMap = { get: (k) => { const v = res.headers[String(k || '').toLowerCase()]; return Array.isArray(v) ? v.join(', ') : (v || null); } };
+        ok({ status: res.statusCode, headers: headersMap, text: async () => buf.toString('utf8') });
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('časový limit spojenia')));
+    req.on('error', bad);
+    const sig = opt.signal;
+    if (sig) {
+      if (sig.aborted) { req.destroy(sig.reason || new Error('aborted')); return; }
+      sig.addEventListener('abort', () => req.destroy(sig.reason || new Error('aborted')), { once: true });
+    }
+    if (opt.body) req.write(opt.body);
+    req.end();
+  });
+}
+function create({ fetchImpl, now = () => Date.now() } = {}) {
+  const doFetch = fetchImpl || panelRequest;
   async function getJsonOnce(url, opt = {}, hops = 0) {
     const limit = opt.maxBody || MAX_BODY;
-    const r = await fetchImpl(url, { method: opt.method || 'GET', headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (lnkbio subscription check)', ...(opt.headers || {}) }, body: opt.body, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT) });
+    const fetchOpt = { method: opt.method || 'GET', headers: { accept: 'application/json', 'user-agent': 'Mozilla/5.0 (lnkbio subscription check)', ...(opt.headers || {}) }, body: opt.body, redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT), maxBody: limit };
+    const r = await doFetch(url, fetchOpt);
     const loc = r.headers && r.headers.get && r.headers.get('location');
     if (hops < 3 && loc && [301, 302, 303, 307, 308].includes(r.status)) {
       const next = sameSafeRedirect(url, loc);
@@ -61,13 +91,6 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
     return { status: r.status, json: j };
   }
   async function getJson(url, opt = {}) {
-    const https = httpsTwin(url);
-    if (https) {
-      try {
-        const r = await getJsonOnce(https, opt);
-        if (r.status < 500 && (r.json || r.status !== 404)) return r;
-      } catch { /* fall back to the stored http URL */ }
-    }
     return getJsonOnce(url, opt);
   }
   const q = (o) => new URLSearchParams(o).toString();
@@ -263,4 +286,4 @@ function create({ fetchImpl = globalThis.fetch, now = () => Date.now() } = {}) {
   }
   return { detect, lookup, checkOwn, liveCatalog, shortEpg, ADAPTERS, publicView, fromLine, clear: () => cache.clear() };
 }
-module.exports = { create, normBase, parseDate, getPath, UNLIMITED, httpsTwin, sameSafeRedirect };
+module.exports = { create, normBase, parseDate, getPath, UNLIMITED, sameSafeRedirect };

@@ -15,10 +15,16 @@ function mock(routes) {
 }
 
 t('normBase / parseDate', () => {
-  assert.strictEqual(P.normBase('panel.example.com:8080/player_api.php'), 'https://panel.example.com:8080');
+  assert.strictEqual(P.normBase('panel.example.com:8080/player_api.php'), 'http://panel.example.com:8080');
   assert.strictEqual(P.normBase('http://x.example/stalker_portal/c/'), 'http://x.example');
+  assert.strictEqual(P.normBase('http://1.2.3.4:25500'), 'http://1.2.3.4:25500');
+  assert.strictEqual(P.normBase('http://panel.example.com:8080/'), 'http://panel.example.com:8080');
+  assert.strictEqual(P.normBase('https://panel.example.com:8443/player_api.php'), 'https://panel.example.com:8443');
+  assert.strictEqual(P.normBase('1.2.3.4:25500'), 'http://1.2.3.4:25500');
   assert.strictEqual(P.normBase('https://u:p@x.example'), null);
   assert.strictEqual(P.normBase('ftp://x'), null);
+  assert.strictEqual(P.normBase('javascript:alert(1)'), null);
+  assert.strictEqual(P.normBase(''), null);
   assert.strictEqual(P.parseDate(EXP), '2030-01-01T00:00:00.000Z');
   assert.strictEqual(P.parseDate(String(EXP * 1000)), '2030-01-01T00:00:00.000Z');
   assert.strictEqual(P.parseDate('2030-01-01 10:00:00'), '2030-01-01T10:00:00.000Z');
@@ -109,31 +115,44 @@ t('read-only: refuses stream/playlist content, does not follow off-host redirect
   assert.ok(f.calls.every((k) => k.opt.redirect === 'manual' && (k.opt.method || 'GET') === 'GET'));
   assert.ok(f.calls.every((k) => !/get\.php|m3u|live\/|movie\//i.test(k.url)));
 });
-t('http panel URL: tries https first and follows same-host http→https redirect', async () => {
-  assert.strictEqual(P.httpsTwin('http://p.example:8080/x'), 'https://p.example:8080/x');
+t('http panel URL is used as saved (no https-first); may follow same-host redirect', async () => {
   assert.ok(P.sameSafeRedirect('http://p.example/a', 'https://p.example/a').startsWith('https://'));
   assert.strictEqual(P.sameSafeRedirect('https://p.example/a', 'https://evil.example/a'), null);
   const calls = [];
   const f = async (url, opt = {}) => {
     calls.push({ url, opt });
-    if (url.startsWith('http://p.example/')) {
-      return { status: 301, headers: new Map([['location', 'https://p.example/' + url.split('://')[1].split('/').slice(1).join('/')]]), text: async () => '' };
-    }
-    if (url.includes('action=get_lines')) {
+    if (url.startsWith('https://') && !url.startsWith('https://p.example/')) throw new Error('unexpected https ' + url);
+    if (url.includes('action=get_lines') && url.startsWith('http://p.example:25500/')) {
       return { status: 200, headers: new Map([['content-type', 'application/json']]), text: async () => JSON.stringify([{ username: 'jan', exp_date: EXP, enabled: 1 }]) };
     }
-    if (url.includes('action=get_line')) {
+    if (url.includes('action=get_line') && url.startsWith('http://p.example:25500/')) {
       return { status: 200, headers: new Map([['content-type', 'application/json']]), text: async () => JSON.stringify({ username: 'jan', exp_date: EXP, enabled: 1 }) };
     }
     return { status: 404, headers: new Map(), text: async () => 'no' };
   };
   const p = P.create({ fetchImpl: f });
-  const c = { base: 'http://p.example', user: 'admin', pass: 'secret' };
+  const c = { base: 'http://p.example:25500', user: 'admin', pass: 'secret' };
   const d = await p.detect(c); assert.strictEqual(d.type, 'xui');
   const r = await p.lookup({ ...c, type: 'xui' }, 'jan'); assert.ok(r.found);
-  assert.ok(calls.some((k) => k.url.startsWith('https://p.example/')));
+  assert.ok(calls.length);
+  assert.ok(calls.every((k) => k.url.startsWith('http://p.example:25500/')));
+  assert.ok(!calls.some((k) => k.url.startsWith('https://')));
   assert.ok(calls.every((k) => k.opt.redirect === 'manual'));
-  assert.ok(calls.every((k) => !/api_key=/i.test(k.url)));
+});
+t('https panel URL is used as saved (no scheme change)', async () => {
+  const calls = [];
+  const f = async (url, opt = {}) => {
+    calls.push({ url, opt });
+    if (url.startsWith('http://')) throw new Error('must not downgrade https ' + url);
+    if (url.includes('action=get_lines')) {
+      return { status: 200, headers: new Map([['content-type', 'application/json']]), text: async () => JSON.stringify([{ username: 'jan', exp_date: EXP, enabled: 1 }]) };
+    }
+    return { status: 404, headers: new Map(), text: async () => 'no' };
+  };
+  const p = P.create({ fetchImpl: f });
+  const d = await p.detect({ base: 'https://p.example:8443', user: 'admin', pass: 'secret' });
+  assert.strictEqual(d.type, 'xui');
+  assert.ok(calls.every((k) => k.url.startsWith('https://p.example:8443/')));
 });
 
 (async () => {

@@ -16,4 +16,8 @@ assert.ok(!/API kľúč – len XUI|id="pk"|name="key"/.test(acc), 'predplatné-
 assert.ok(acc.includes('Admin / reseller meno') && acc.includes('Admin heslo'));
 assert.ok(acc.includes('posledný známy dátum'));
 assert.ok(!/zadajte API kľúč XUI/i.test(acc));
+assert.ok(acc.includes('http://ip-alebo-domena:port'));
+assert.ok(acc.includes('HTTP aj HTTPS sú plne podporované'));
+assert.ok(!/Adresa bola prepnuta z http:\/\/ na https/.test(acc));
+assert.ok(!/httpsTwin/.test(acc));
 console.log('ok adminui');

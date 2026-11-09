@@ -17,6 +17,31 @@
     var h = (a.getAttribute('href') || '').replace(/\/$/, '');
     if (h && (path === h || (h !== '/admin' && path.indexOf(h) === 0))) a.classList.add('on');
   });
+  /* Keep in sync with panel.normBase: http/https, IP/domain, custom port; missing scheme → http:// */
+  function normPanelBase(u) {
+    var s = String(u || '').trim();
+    if (!s) return null;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s) && !/^https?:\/\//i.test(s)) return null;
+    if (!/^https?:\/\//i.test(s)) s = 'http://' + s;
+    var x;
+    try { x = new URL(s); } catch (e) { return null; }
+    if (!/^https?:$/.test(x.protocol) || x.username || x.password || !x.hostname) return null;
+    return x.origin + x.pathname.replace(/\/+$/, '');
+  }
+  var pu = q('#pu');
+  if (pu) {
+    function checkPu() {
+      var v = (pu.value || '').trim();
+      if (!v) { pu.setCustomValidity(''); return true; }
+      if (normPanelBase(v)) { pu.setCustomValidity(''); return true; }
+      pu.setCustomValidity('Zadajte http:// alebo https:// adresu (IP alebo doména a voliteľný port).');
+      return false;
+    }
+    pu.addEventListener('input', checkPu);
+    if (pu.form) pu.form.addEventListener('submit', function (e) {
+      if (!checkPu()) { e.preventDefault(); pu.reportValidity(); }
+    });
+  }
   if (!search) return;
   var tiles = qa('.adt').map(function (el) {
     return { href: el.getAttribute('href'), title: (el.querySelector('.tt') || el).textContent, hint: (el.querySelector('.tm') || {}).textContent || '', q: (el.getAttribute('data-q') || el.textContent).toLowerCase(), el: el };

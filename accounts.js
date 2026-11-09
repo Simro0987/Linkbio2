@@ -983,9 +983,9 @@ ${devs.length ? `<div class="card"><h2>2. zariadenia</h2>${devs.map((d) => `<for
     const types = [['', 'Automaticky zistiť (odporúčané)'], ...Object.values(panelApi.ADAPTERS).map((a) => [a.id, a.label])];
     const testBox = t ? `<div class="msg${t.ok ? '' : ' err'}">${t.ok ? `✅ Rozpoznaný adaptér: <b>${esc(t.label)}</b>${t.note ? ' – ' + esc(t.note) : ''}` : `❌ Server sa nepodarilo rozpoznať (skúšané: ${esc((t.tried || []).join(', ') || '–')}). Skontrolujte adresu servera a admin meno a heslo.`}${t.lookup ? `<br>Vyhľadanie „${esc(t.lookup.u)}“: ${t.lookup.error ? esc(t.lookup.error) : t.lookup.found ? `${t.lookup.active ? '✅ aktívne' : '⛔ neaktívne'} – do ${t.lookup.expiry && t.lookup.expiry < PANEL.UNLIMITED ? esc(fmtDate(t.lookup.expiry)) : 'bez obmedzenia'}` : 'používateľ sa nenašiel'}` : ''}</div>` : '';
     res.send(apage('Server predplatného', `<h1>🖥️ Server predplatného</h1>${amsg(req)}${testBox}
-${c.base && /^http:/i.test(c.base) ? '<div class="msg err">⚠️ Server používa nešifrované HTTP – meno a heslo idú sieťou čitateľne. Ak to panel podporuje, použite https://.</div>' : ''}
 <form method="post" action="${PB}" class="card">${hid(req)}<p class="hint">Pripojenie na panel ide výhradne cez adresu servera a admin meno a heslo (uložené šifrovane, AES-256-GCM, DATA_ENC_KEY). Stav a dátum expirácie predplatného sa na verejnej stránke overujú na serveri – zákazník zadá len svoje meno (heslo je voliteľné). Adresa, heslá ani odpovede panela sa do prehliadača neposielajú. Streamy sa nikdy neukladajú. Záložné M3U/XMLTV odkazy sú tiež šifrované. Prázdne pole = ponechať uložené.</p>
-<label for="pu">Adresa servera (admin panel, host:port, http alebo https)</label><input id="pu" name="url" value="${esc(c.url || '')}" maxlength="300" placeholder="https://panel.example.com:8443" autocomplete="off">
+<label for="pu">Adresa servera</label><input id="pu" name="url" value="${esc(c.url || '')}" maxlength="300" placeholder="http://ip-alebo-domena:port" autocomplete="off" inputmode="url" spellcheck="false">
+<p class="hint">HTTP aj HTTPS sú plne podporované, vrátane IP adresy a vlastného portu (napr. <code>http://1.2.3.4:25500</code>). Ak schému nevyplníte, použije sa <code>http://</code>. Použije sa presne zadaná adresa, bez prepínania na HTTPS.</p>
 <label for="pn">Admin / reseller meno ${st('user')}</label><input id="pn" name="user" maxlength="200" autocomplete="off">
 <label for="pp">Admin heslo ${st('pass')}</label><input id="pp" name="pass" type="password" maxlength="200" autocomplete="new-password">
 <label class="chk"><input type="checkbox" name="clear" value="1"> Vymazať uložené meno a heslo</label>
@@ -997,8 +997,8 @@ ${c.base && /^http:/i.test(c.base) ? '<div class="msg err">⚠️ Server použí
 <form method="post" action="${PB}/sync" class="card">${hid(req)}<h2>Synchronizácia</h2><p>Aktívny adaptér: <b>${c.type ? esc((panelApi.ADAPTERS[c.type] || {}).label || c.type) : 'zatiaľ nezistený – spustite test'}</b> · Posledná synchronizácia: ${c.last_sync ? esc(fmtDT(c.last_sync)) : '–'}</p><p class="hint">Automaticky raz denne (po 4:00). Funguje s adaptérom, ktorý vie vyhľadať používateľa cez admin meno a heslo (Xtream UI / XUI.one admin API, panel_api.php, Ministra, vlastné API). Pri čistom player_api.php sa expirácia aktualizuje, keď zákazník overí heslo, alebo podľa účtov v zozname nižšie.</p><p class="row"><button>🔄 Synchronizovať expirácie teraz</button></p></form>
 <form method="post" action="${PB}/katalog" class="card" id="katalog">${hid(req)}<h2>📺 Synchronizovať kanály a program</h2>
 <p class="hint">Primárne sa kanály a kategórie načítajú cez <code>player_api.php?action=get_live_categories</code> a <code>get_live_streams</code> z adresy servera a admin mena/hesla vyššie (adresa panela sa upraví automaticky). Program „Teraz / Potom“ sa ťahá na požiadanie cez <code>get_short_epg&amp;stream_id=…</code> (len pre viditeľné kanály, s krátkou cache). <b>URL streamov a heslá sa nikdy neuložia ani neodošlú do prehliadača</b> – stream_id ostáva len na serveri. M3U a XMLTV sú záloha, ak player_api zlyhá alebo nie je nastavené. Existujúce kanály ostávajú, nové sa doplnia, prázdne logá sa doplnia. Prázdne pole = ponechať uloženú adresu.</p>
-<label for="m3u">Záložný M3U playlist URL ${st('m3u_url')}</label><input id="m3u" name="m3u_url" type="url" maxlength="600" placeholder="https://…/get.php?…&amp;type=m3u_plus" autocomplete="off">
-<label for="xmltv">Záložný XMLTV (celý TV program) URL ${st('xmltv_url')}</label><input id="xmltv" name="xmltv_url" type="url" maxlength="600" placeholder="https://…/xmltv.php?…" autocomplete="off">
+<label for="m3u">Záložný M3U playlist URL ${st('m3u_url')}</label><input id="m3u" name="m3u_url" type="text" inputmode="url" maxlength="600" placeholder="http://ip-alebo-domena:port/get.php?…" autocomplete="off" spellcheck="false">
+<label for="xmltv">Záložný XMLTV (celý TV program) URL ${st('xmltv_url')}</label><input id="xmltv" name="xmltv_url" type="text" inputmode="url" maxlength="600" placeholder="http://ip-alebo-domena:port/xmltv.php" autocomplete="off" spellcheck="false">
 <label class="chk"><input type="checkbox" name="clear_urls" value="1"> Vymazať uložené M3U a XMLTV odkazy</label>
 <p class="row"><button name="save" value="1">💾 Uložiť odkazy</button><button name="sync" value="1">🔄 Synchronizovať kanály a program</button></p>
 ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chRep.at) : (c.last_chsync ? fmtDT(c.last_chsync) : '–'))}${chRep.err ? ' · ⚠ ' + esc(String(chRep.err).slice(0, 200)) : ` · zdroj ${esc(chRep.sourceLabel || chRep.source || '–')} · kanálov ${chRep.channels || 0} (nové ${chRep.added || 0}, doplnené ${chRep.updated || 0})${chRep.mapped != null ? ' · spárované s programom: ' + chRep.mapped : ''}${chRep.epg ? (chRep.epg.ok ? ' · XMLTV uložený' : ' · XMLTV: ' + esc(chRep.epg.err || 'chyba')) : ''}`}</p>` : (c.last_chsync ? `<p class="hint">Posledná synchronizácia: ${esc(fmtDT(c.last_chsync))}</p>` : '')}</form>
@@ -1009,7 +1009,8 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
 <div class="tblw"><table class="tbl"><thead><tr><th>Meno</th><th>Aktualizované</th><th></th></tr></thead><tbody>${lines.map((x) => `<tr><td><code>${esc(x.username)}</code></td><td>${esc(fmtDT(x.updated_at))}</td><td><form method="post" action="${PB}/linky/${x.id}/delete" class="inl">${hid(req)}<button class="sm">🗑️ Odstrániť</button></form></td></tr>`).join('') || '<tr><td colspan="3">Zatiaľ žiadne účty. Bez nich (a keď panel nevie vyhľadať účet podľa mena) musí zákazník zadať aj heslo.</td></tr>'}</tbody></table></div></div>`));
   }));
   admin.post('/predplatne-server', needAuth, adminCsrf, wrap(async (req, res) => {
-    const b = req.body, url = String(b.url || '').trim();
+    const b = req.body; let url = String(b.url || '').trim();
+    if (url && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = 'http://' + url;
     if (url && !PANEL.normBase(url)) return res.redirect(303, PB + '?m=bad');
     const prev = await panelCfg();
     await setPanel('url', url || null);
@@ -1032,10 +1033,6 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
     if (c.type_set) { const a = panelApi.ADAPTERS[c.type_set]; const r = await a.detect(cc).catch(() => null); d = { type: c.type_set, label: a.label, note: r ? r.note : 'ručne zvolený typ neodpovedá', ok: !!r, canLookup: !!a.lookup, tried: [c.type_set] }; }
     else { d = await panelApi.detect(cc); d.ok = !!d.type; }
     if (d.ok) await setPanel('type', d.type);
-    if (d.ok && c.base && /^http:/i.test(c.base) && PANEL.httpsTwin(c.base)) {
-      const httpsUrl = PANEL.httpsTwin(c.url || c.base);
-      if (httpsUrl) { await setPanel('url', httpsUrl); d.note = (d.note ? d.note + ' ' : '') + 'Adresa bola prepnuta z http:// na https://.'; }
-    }
     const out = { at: Date.now(), ok: d.ok, label: d.label, note: d.note, tried: d.tried };
     const tu = String(req.body.u || '').trim();
     if (tu && d.ok) {
@@ -1054,10 +1051,16 @@ ${chRep ? `<p class="hint">Posledná synchronizácia: ${esc(chRep.at ? fmtDT(chR
     try { EPGFETCH.checkUrl(u); } catch (e) { return e.message || 'bad'; }
     return '';
   }
+  function withHttp(u) {
+    const s = String(u || '').trim();
+    if (!s) return '';
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s;
+    return 'http://' + s;
+  }
   async function saveCatalogUrls(b) {
     if (b.clear_urls === '1') { await setPanel('m3u_url', null); await setPanel('xmltv_url', null); return ''; }
     for (const k of ['m3u_url', 'xmltv_url']) {
-      const v = String(b[k] || '').trim();
+      const v = withHttp(String(b[k] || '').trim());
       if (!v) continue;
       const err = catalogUrlOk(v); if (err) return err;
       await setPanel(k, v.slice(0, 600));
