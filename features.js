@@ -227,8 +227,20 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
       }).catch(() => resolve({ ok: false, ms: 0, err: 'blocked' }));
     });
   }
-  let mcache = null;
-  const getMon = async () => mcache || (mcache = (await pool.query(`SELECT id,pos,name,url,channel,show_home,msg_up,msg_slow,msg_down,status,ms,checked_at,hist FROM monitors ORDER BY pos,id`)).rows);
+  let mcache = null, lastMon = [], monFailAt = 0;
+  const getMon = async () => {
+    if (mcache) return mcache;
+    if (Date.now() - monFailAt < 30000) return lastMon;
+    try {
+      const rows = (await pool.query(`SELECT id,pos,name,url,channel,show_home,msg_up,msg_slow,msg_down,status,ms,checked_at,hist FROM monitors ORDER BY pos,id`)).rows;
+      monFailAt = 0;
+      return (mcache = lastMon = rows);
+    } catch (e) {
+      monFailAt = Date.now();
+      console.error('getMon fallback:', e && e.message);
+      return lastMon;
+    }
+  };
   async function checkOne(m) {
     // a monitor of lnkbio itself would keep this free Render service awake forever (shared 750 h/month);
     // if we are running, we are up – answer locally instead of hitting our own public URL.
@@ -238,15 +250,17 @@ ${d.desc ? `<p>${esc(d.desc)}</p>` : ''}<p class="hint"><code>${k}</code> → ${
     const cutoff = Date.now() - 24 * 3600e3;
     const hist = (Array.isArray(m.hist) ? m.hist : []).filter((h) => h[0] > cutoff).slice(-299);
     hist.push([Date.now(), status === 'up' ? 1 : status === 'slow' ? 2 : 0, r.ms]);
-    if (m.status && m.status !== status && (status === 'down' || m.status === 'down') && ctx.notify) ctx.notify('admin', status === 'down' ? `🔴 Monitor: ${m.name} má výpadok (${r.code || r.err || 'chyba'})` : `🟢 Monitor: ${m.name} opäť funguje (${status})`).catch(() => {});
+    const prevStatus = m.status;
+    m.status = status; m.ms = r.ms; m.checked_at = new Date(); m.hist = hist;
+    if (prevStatus && prevStatus !== status && (status === 'down' || prevStatus === 'down') && ctx.notify) ctx.notify('admin', status === 'down' ? `🔴 Monitor: ${m.name} má výpadok (${r.code || r.err || 'chyba'})` : `🟢 Monitor: ${m.name} opäť funguje (${status})`).catch(() => {});
     await pool.query(`UPDATE monitors SET status=$1, ms=$2, checked_at=now(), hist=$3::jsonb WHERE id=$4`, [status, r.ms, JSON.stringify(hist), m.id]);
     return { status, ms: r.ms, err: r.err };
   }
   async function checkAll() {
-    const list = await getMon(); let i = 0;
-    const worker = async () => { while (i < list.length) { const m = list[i++]; try { await checkOne(m); } catch (e) { console.error('monitor', m.id, e.message); } } };
+    const list = await getMon(); let i = 0, dbOk = true;
+    const worker = async () => { while (i < list.length) { const m = list[i++]; try { await checkOne(m); } catch (e) { dbOk = false; console.error('monitor', m.id, e.message); } } };
     await Promise.all([worker(), worker(), worker()]);
-    mcache = null;
+    if (dbOk) mcache = null;
   }
   const STXT = {
     sk: { up: (n) => `✅ ${n} funguje`, slow: (n) => `⚠️ ${n} je pomalé`, down: (n) => `❌ ${n} má výpadok`, '': (n) => `⏳ ${n}: prebieha kontrola` },
