@@ -49,7 +49,7 @@ module.exports = function install(ctx) {
     await shell(req, res, s, 'sec:' + x.slug, titleOf(req, x) + ' – ' + loc(req, s, 'title'), content);
   }));
   app.get('/sekcia-img/:id(\\d+)', wrap(async (req, res) => {
-    const r = await pool.query(`SELECT img_mime,img_data,img_ver FROM site_sections WHERE id=$1 AND img_data IS NOT NULL AND visible`, [Number(req.params.id)]);
+    const r = await pool.query(`SELECT img_mime,img_data,img_ver FROM site_sections WHERE id=$1 AND img_data IS NOT NULL AND visible`, [Number(req.params.id)]).catch(() => ({ rowCount: 0 }));
     if (!r.rowCount) return res.status(404).end();
     const im = r.rows[0];
     res.setHeader('Content-Type', im.img_mime); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");

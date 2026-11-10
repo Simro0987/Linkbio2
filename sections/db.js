@@ -5,12 +5,18 @@ const { KINDS } = require('./types');
 
 module.exports = function db(ctx) {
   const { pool, getSettings, setSettings } = ctx;
-  let cache = null;
+  let cache = null, lastRows = [];
   const COLS = 'id,pos,slug,title,title_en,icon,kind,body,body_en,videos,visible,in_nav,img_ver,updated_at,place,cfg';
   const all = async () => {
-    if (cache && cache.t > Date.now() - 30000) return cache.rows;
-    const r = await pool.query(`SELECT ${COLS},(SELECT COALESCE(json_agg(json_build_object('id',g.id,'alt',g.alt,'ver',g.ver) ORDER BY g.pos,g.id),'[]') FROM site_section_imgs g WHERE g.sec_id=s.id) AS gal FROM site_sections s ORDER BY pos,id`);
-    cache = { t: Date.now(), rows: r.rows }; return r.rows;
+    if (cache && cache.t > Date.now() - 300000) return cache.rows;
+    try {
+      const r = await pool.query(`SELECT ${COLS},(SELECT COALESCE(json_agg(json_build_object('id',g.id,'alt',g.alt,'ver',g.ver) ORDER BY g.pos,g.id),'[]') FROM site_section_imgs g WHERE g.sec_id=s.id) AS gal FROM site_sections s ORDER BY pos,id`);
+      lastRows = r.rows;
+      cache = { t: Date.now(), rows: r.rows }; return r.rows;
+    } catch (e) {
+      console.error('site_sections query failed:', e && e.message);
+      cache = { t: Date.now() - 240000, rows: lastRows }; return lastRows;
+    }
   };
   const drop = () => { cache = null; };
   const pages = async () => (await all()).filter((x) => x.place !== 'home');

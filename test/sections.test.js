@@ -73,4 +73,38 @@ t('every kind has label + icon; one-only kinds are the page-wide built-ins', () 
   for (const [k, v] of Object.entries(ST.KINDS)) assert(v.l && v.i, k);
   assert(ST.KINDS.hero.one && ST.KINDS.chat.one && !ST.KINDS.pricing.one && !ST.KINDS.payments.one && !ST.KINDS.channels.one);
 });
-console.log(`\n${n} tests, ${f} failed`); if (f) process.exit(1);
+
+(async () => {
+  const secDb = require('../sections/db');
+  n++;
+  try {
+    let shouldFail = false;
+    const sample = [{ id: 1, place: 'home', kind: 'hero', visible: true }];
+    const ctx = secDb({
+      pool: {
+        query: async () => {
+          if (shouldFail) throw new Error('Your account or project has exceeded the quota. Upgrade your plan to increase limits.');
+          return { rows: sample };
+        },
+      },
+      getSettings: async () => ({}),
+      setSettings: async () => {},
+    });
+    assert.deepStrictEqual(await ctx.secHome(), sample);
+    ctx.secDrop();
+    shouldFail = true;
+    assert.deepStrictEqual(await ctx.secHome(), sample, 'falls back to last known rows when DB fails');
+    const coldCtx = secDb({
+      pool: { query: async () => { throw new Error('quota exceeded'); } },
+      getSettings: async () => ({}),
+      setSettings: async () => {},
+    });
+    assert.deepStrictEqual(await coldCtx.secHome(), [], 'returns empty array on cold start when DB fails');
+    console.log('  ✓ sections/db falls back gracefully on DB quota/connection errors');
+  } catch (e) {
+    f++;
+    console.log('  ✗ sections/db fallback: ' + e.message);
+  }
+  console.log(`\n${n} tests, ${f} failed`);
+  if (f) process.exit(1);
+})();

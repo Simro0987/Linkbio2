@@ -211,23 +211,32 @@ module.exports = function events(ctx, h) {
     if (!opt.all && cache && Date.now() - cache.t < 120e3) return cache.d;
     const st = await getSettings(), c = cfg(st), now = Date.now(), ds = dayStart(now), end = dayStart(ds + 36 * 3600e3) + 26 * 3600e3; // end of tomorrow (+02:00)
     const kws = kwOf(c), n = Math.max(3, Math.min(12, parseInt(c.ev_n, 10) || 6)), min = Math.max(1, Math.min(200, parseInt(c.ev_min, 10) || 55));
-    const hidden = new Set((await pool.query('SELECT k FROM ev_hide')).rows.map((r) => r.k));
-    const cand = (await scan(c, kws, now + 5 * 60e3, end)).map((x) => Object.assign(x, { hidden: hidden.has(x.k) || hidden.has(x.tk), ok: x.score >= min }));
-    cand.sort((a, b) => b.score - a.score || a.s - b.s);
-    const pins = await pinsList(end + 6 * 86400e3);
-    // dedupe titles (HD/SD/+1 variants, reruns – keep the best airing), max 2 per channel
-    const seen = new Set(pins.map((x) => 't:' + tnorm(x.title))), perCh = new Map(), picked = [];
-    for (const x of cand) {
-      if (!x.ok || x.hidden) continue; if (seen.has(x.tk)) { x.dupe = true; continue; }
-      const pc = perCh.get(x.ch.id) || 0; if (pc >= 2) continue;
-      seen.add(x.tk); perCh.set(x.ch.id, pc + 1); picked.push(x); if (picked.length >= Math.max(0, n - pins.length)) break;
+    try {
+      const hidden = new Set((await pool.query('SELECT k FROM ev_hide')).rows.map((r) => r.k));
+      const cand = (await scan(c, kws, now + 5 * 60e3, end)).map((x) => Object.assign(x, { hidden: hidden.has(x.k) || hidden.has(x.tk), ok: x.score >= min }));
+      cand.sort((a, b) => b.score - a.score || a.s - b.s);
+      const pins = await pinsList(end + 6 * 86400e3);
+      // dedupe titles (HD/SD/+1 variants, reruns – keep the best airing), max 2 per channel
+      const seen = new Set(pins.map((x) => 't:' + tnorm(x.title))), perCh = new Map(), picked = [];
+      for (const x of cand) {
+        if (!x.ok || x.hidden) continue; if (seen.has(x.tk)) { x.dupe = true; continue; }
+        const pc = perCh.get(x.ch.id) || 0; if (pc >= 2) continue;
+        seen.add(x.tk); perCh.set(x.ch.id, pc + 1); picked.push(x); if (picked.length >= Math.max(0, n - pins.length)) break;
+      }
+      const top = picked[0]; if (top) top.best = true;
+      // pinned first; then on-air, then by start time
+      picked.sort((a, b) => (b.s <= now) - (a.s <= now) || a.s - b.s);
+      const d = { list: [...pins, ...picked].slice(0, Math.max(n, pins.length)), pins, cand, kws, c };
+      if (!opt.all) cache = { t: Date.now(), d };
+      return d;
+    } catch (e) {
+      if (!opt.all) {
+        const d = (cache && cache.d) || { list: [], pins: [], cand: [], kws, c };
+        cache = { t: Date.now() - 60e3, d };
+        return d;
+      }
+      throw e;
     }
-    const top = picked[0]; if (top) top.best = true;
-    // pinned first; then on-air, then by start time
-    picked.sort((a, b) => (b.s <= now) - (a.s <= now) || a.s - b.s);
-    const d = { list: [...pins, ...picked].slice(0, Math.max(n, pins.length)), pins, cand, kws, c };
-    if (!opt.all) cache = { t: Date.now(), d };
-    return d;
   }
 
   const until = (ms, en) => { const m = Math.max(1, Math.round((ms - Date.now()) / 60e3)); if (m < 60) return tx(en, 'o ', 'in ') + m + ' min'; const hh = Math.floor(m / 60), mm = m % 60; return tx(en, 'o ', 'in ') + hh + ' h' + (mm ? ' ' + mm + ' min' : ''); };

@@ -316,8 +316,8 @@ module.exports = function install(ctx) {
   const xfl = (f) => (/q/.test(f || '') ? 'q' : /x/.test(f || '') ? 'x' : ''); // external schedule: 'x', predicted channel: 'q'
   const ctLink = (u) => (/^https:\/\/www\.ceskatelevize\.cz\//.test(u || '') ? u : ''); // ČT terms: every ČT programme links back to ČT
   const jsonOut = (res, d, age = 60) => { res.set({ 'Cache-Control': `public, max-age=${age}`, 'X-Content-Type-Options': 'nosniff' }); res.json(d); };
-  app.get('/api/epg/now', wrap(async (req, res) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return jsonOut(res, { t: Math.round(Date.now() / 1000), c: {} }); jsonOut(res, await nowData()); }));
-  app.get('/api/epg/day/:id(\\d+)', wrap(async (req, res) => { const c = cfg(await getSettings()); const d = c.epg_on === '1' ? await dayData(+req.params.id) : null; if (!d) return res.status(404).json({ p: [] }); jsonOut(res, d, 300); }));
+  app.get('/api/epg/now', wrap(async (req, res) => { const c = cfg(await getSettings()); if (c.epg_on !== '1') return jsonOut(res, { t: Math.round(Date.now() / 1000), c: {} }); jsonOut(res, await nowData().catch(() => (nowCache && nowCache.d) || { t: Math.round(Date.now() / 1000), c: {} })); }));
+  app.get('/api/epg/day/:id(\\d+)', wrap(async (req, res) => { const c = cfg(await getSettings()); const d = c.epg_on === '1' ? await dayData(+req.params.id).catch(() => null) : null; if (!d) return res.status(404).json({ p: [] }); jsonOut(res, d, 300); }));
   // assets for the Kanály page (tiles get filled by /static/epg.js)
   // ---------- reminders (.ics) and today's sport ----------
   const icsEsc = (t) => String(t || '').replace(/[\\;,]/g, (m) => '\\' + m).replace(/\r?\n/g, '\\n');
@@ -345,23 +345,27 @@ module.exports = function install(ctx) {
   app.get('/api/epg/sport', wrap(async (req, res) => {
     const c = cfg(await getSettings()); if (c.epg_on !== '1' || c.sport_on !== '1') return jsonOut(res, { l: [], ch: {} });
     if (!sportCache || Date.now() - sportCache.t > 120e3) {
-      const now = Date.now(), de = dayStart(now) + 26 * 3600e3;
-      const vm = (await visibleMapped()).filter((r) => !r.sh && !ADULT.test(r.category)); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
-      const l = [], chs = {}, seen = new Set();
-      if (byEpg.size) {
-        const q = await pool.query(`SELECT epg_id,s,e,title,fl FROM epg_prog WHERE epg_id = ANY($1) AND kind='sport' AND e > now() AND s < $2 AND e - s >= interval '30 minutes' ORDER BY s LIMIT 1500`, [[...byEpg.keys()], new Date(de)]);
-        for (const p of q.rows) {
-          if (C.NOTLIVE.test(p.title) || JUNK.test(p.title)) continue;
-          for (const ch of byEpg.get(p.epg_id).slice(0, 1)) {
-            const k = tnorm(p.title) + '|' + +p.s + '|' + (skcz(ch) ? 1 : 0); if (seen.has(k)) continue; seen.add(k);
-            const live = C.LIVE.test(p.title) || (p.fl || '').includes('l'), big = BIGSPORT.test(p.title) || NATTEAM.test(p.title);
-            l.push([ch.id, Math.round(+p.s / 1000), Math.round(+p.e / 1000), p.title, live ? 1 : 0, big ? 1 : 0]);
-            if (!chs[ch.id]) chs[ch.id] = [ch.name, ctx.tvchLogoSrc ? ctx.tvchLogoSrc(ch) : '/tvlogo/' + ch.id, skcz(ch) ? 1 : 0];
+      try {
+        const now = Date.now(), de = dayStart(now) + 26 * 3600e3;
+        const vm = (await visibleMapped()).filter((r) => !r.sh && !ADULT.test(r.category)); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
+        const l = [], chs = {}, seen = new Set();
+        if (byEpg.size) {
+          const q = await pool.query(`SELECT epg_id,s,e,title,fl FROM epg_prog WHERE epg_id = ANY($1) AND kind='sport' AND e > now() AND s < $2 AND e - s >= interval '30 minutes' ORDER BY s LIMIT 1500`, [[...byEpg.keys()], new Date(de)]);
+          for (const p of q.rows) {
+            if (C.NOTLIVE.test(p.title) || JUNK.test(p.title)) continue;
+            for (const ch of byEpg.get(p.epg_id).slice(0, 1)) {
+              const k = tnorm(p.title) + '|' + +p.s + '|' + (skcz(ch) ? 1 : 0); if (seen.has(k)) continue; seen.add(k);
+              const live = C.LIVE.test(p.title) || (p.fl || '').includes('l'), big = BIGSPORT.test(p.title) || NATTEAM.test(p.title);
+              l.push([ch.id, Math.round(+p.s / 1000), Math.round(+p.e / 1000), p.title, live ? 1 : 0, big ? 1 : 0]);
+              if (!chs[ch.id]) chs[ch.id] = [ch.name, ctx.tvchLogoSrc ? ctx.tvchLogoSrc(ch) : '/tvlogo/' + ch.id, skcz(ch) ? 1 : 0];
+            }
+            if (l.length >= 300) break;
           }
-          if (l.length >= 300) break;
         }
+        sportCache = { t: Date.now(), d: { t: Math.round(Date.now() / 1000), l, ch: chs } };
+      } catch (e) {
+        if (!sportCache) sportCache = { t: Date.now() - 90e3, d: { t: Math.round(Date.now() / 1000), l: [], ch: {} } };
       }
-      sportCache = { t: Date.now(), d: { t: Math.round(Date.now() / 1000), l, ch: chs } };
     }
     jsonOut(res, sportCache.d, 120);
   }));
@@ -422,52 +426,61 @@ module.exports = function install(ctx) {
   const MIN_N = 3;
   async function topItems(opt = {}) {
     if (!opt.all && dnesCache && Date.now() - dnesCache.t < 120e3) return dnesCache.d;
-    const c = cfg(await getSettings()), now = Date.now(), ds = dayStart(now), de = ds + 26 * 3600e3;
-    const wEnd = dayStart(ds + 8 * 86400e3 + 6 * 3600e3) + 2 * 3600e3; // tomorrow … +7 days
-    const kinds = String(c.dnes_kinds).split(',').map((x) => x.trim()).filter(Boolean);
-    const vm = (await visibleMapped()).filter((r) => !ADULT.test(r.category) && !r.sh && (c.dnes_scope === 'all' || skcz(r))); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
-    const hidden = new Map((await pool.query('SELECT k,title FROM dnes_hide')).rows.map((r) => [r.k, r.title]));
-    const cand = [];
-    if (byEpg.size && kinds.length) {
-      const q = await pool.query(`SELECT epg_id,s,e,title,cat,kind,yr,fl,lnk FROM epg_prog WHERE epg_id = ANY($1) AND kind = ANY($2) AND e > $3 AND s < $4 AND s > $5`, [[...byEpg.keys()], kinds, new Date(now + 10 * 60e3), new Date(c.week_on === '1' ? wEnd : de), new Date(now - 40 * 60e3)]);
-      for (const p of q.rows) {
-        const ch = byEpg.get(p.epg_id)[0]; const sc = scoreOf(p, ch, now); if (sc < 34) continue;
-        const k = 'p:' + p.epg_id + '|' + +p.s, tk = 't:' + tnorm(p.title);
-        cand.push({ k, tk, sec: +p.s < de ? 'd' : 'w', s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '', lnk: ctLink(p.lnk), ch, score: sc, hidden: hidden.has(k) || hidden.has(tk) });
+    try {
+      const c = cfg(await getSettings()), now = Date.now(), ds = dayStart(now), de = ds + 26 * 3600e3;
+      const wEnd = dayStart(ds + 8 * 86400e3 + 6 * 3600e3) + 2 * 3600e3; // tomorrow … +7 days
+      const kinds = String(c.dnes_kinds).split(',').map((x) => x.trim()).filter(Boolean);
+      const vm = (await visibleMapped()).filter((r) => !ADULT.test(r.category) && !r.sh && (c.dnes_scope === 'all' || skcz(r))); const byEpg = new Map(); for (const r of vm) { if (!byEpg.has(r.epg)) byEpg.set(r.epg, []); byEpg.get(r.epg).push(r); }
+      const hidden = new Map((await pool.query('SELECT k,title FROM dnes_hide')).rows.map((r) => [r.k, r.title]));
+      const cand = [];
+      if (byEpg.size && kinds.length) {
+        const q = await pool.query(`SELECT epg_id,s,e,title,cat,kind,yr,fl,lnk FROM epg_prog WHERE epg_id = ANY($1) AND kind = ANY($2) AND e > $3 AND s < $4 AND s > $5`, [[...byEpg.keys()], kinds, new Date(now + 10 * 60e3), new Date(c.week_on === '1' ? wEnd : de), new Date(now - 40 * 60e3)]);
+        for (const p of q.rows) {
+          const ch = byEpg.get(p.epg_id)[0]; const sc = scoreOf(p, ch, now); if (sc < 34) continue;
+          const k = 'p:' + p.epg_id + '|' + +p.s, tk = 't:' + tnorm(p.title);
+          cand.push({ k, tk, sec: +p.s < de ? 'd' : 'w', s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: p.cat, yr: p.yr, fl: p.fl || '', lnk: ctLink(p.lnk), ch, score: sc, hidden: hidden.has(k) || hidden.has(tk) });
+        }
       }
-    }
-    const info = await posterInfo(cand);
-    for (const x of cand) { x.boost = topBoost(x, info.get(posterKey(x))); x.score += x.boost; }
-    cand.sort((a, b) => b.score - a.score || a.s - b.s);
-    const all = await channels();
-    const pins = (await pool.query('SELECT id,channel_id,s,e,title,kind FROM dnes_pin WHERE e > now() AND s < $1 ORDER BY s', [new Date(wEnd)])).rows
-      .map((p) => { const ch = all.find((r) => r.id === p.channel_id && r.visible); return ch ? { k: 'pin:' + p.id, pin: p.id, sec: +p.s < de ? 'd' : 'w', s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: '', ch, score: 999 } : null; }).filter(Boolean);
-    // one section: dedupe titles (reruns, +1/HD variants – keep the best airing), skip hidden/used titles, 1 per channel (2 if needed), variety by kind
-    function section(sec, n, used) {
-      const list = cand.filter((x) => x.sec === sec), ps = pins.filter((x) => x.sec === sec).slice(0, n);
-      const seen = new Set(used), perCh = new Map(), first = [], second = [];
-      for (const x of ps) seen.add('t:' + tnorm(x.title));
-      for (const x of list) {
-        if (seen.has(x.tk)) { x.dupe = true; continue; } if (x.hidden) continue; seen.add(x.tk);
-        const k = perCh.get(x.ch.id) || 0; perCh.set(x.ch.id, k + 1); if (k === 0) first.push(x); else if (k === 1) second.push(x);
+      const info = await posterInfo(cand);
+      for (const x of cand) { x.boost = topBoost(x, info.get(posterKey(x))); x.score += x.boost; }
+      cand.sort((a, b) => b.score - a.score || a.s - b.s);
+      const all = await channels();
+      const pins = (await pool.query('SELECT id,channel_id,s,e,title,kind FROM dnes_pin WHERE e > now() AND s < $1 ORDER BY s', [new Date(wEnd)])).rows
+        .map((p) => { const ch = all.find((r) => r.id === p.channel_id && r.visible); return ch ? { k: 'pin:' + p.id, pin: p.id, sec: +p.s < de ? 'd' : 'w', s: +p.s, e: +p.e, title: p.title, kind: p.kind, cat: '', ch, score: 999 } : null; }).filter(Boolean);
+      // one section: dedupe titles (reruns, +1/HD variants – keep the best airing), skip hidden/used titles, 1 per channel (2 if needed), variety by kind
+      function section(sec, n, used) {
+        const list = cand.filter((x) => x.sec === sec), ps = pins.filter((x) => x.sec === sec).slice(0, n);
+        const seen = new Set(used), perCh = new Map(), first = [], second = [];
+        for (const x of ps) seen.add('t:' + tnorm(x.title));
+        for (const x of list) {
+          if (seen.has(x.tk)) { x.dupe = true; continue; } if (x.hidden) continue; seen.add(x.tk);
+          const k = perCh.get(x.ch.id) || 0; perCh.set(x.ch.id, k + 1); if (k === 0) first.push(x); else if (k === 1) second.push(x);
+        }
+        let picked;
+        if (sec === 'w') { // Top týždňa: spread over the days (prefer one per day, max 2 per day; 3 only if the EPG has too few days)
+          const pool2 = first.concat(second); picked = [];
+          for (const cap of [1, 2, 3]) { if (picked.length >= n - ps.length) break; picked = picked.concat(diverse(pool2.filter((x) => !picked.includes(x) && (cap > 1 || first.includes(x))), n - ps.length - picked.length, { cap, pre: ps.concat(picked) })); }
+        } else { picked = diverse(first, n - ps.length); if (picked.length < n - ps.length) picked = picked.concat(diverse(second, n - ps.length - picked.length)); }
+        const items = ps.concat(picked);
+        if (items.length < MIN_N) return { items: [], list, pins: ps };
+        const best = items.slice().sort((a, b) => b.score - a.score || a.s - b.s)[0];
+        const rank = items.slice().sort((a, b) => b.score - a.score || a.s - b.s); rank.forEach((x, i) => { x.rank = i + 1; });
+        const out = [best, ...items.filter((x) => x !== best).sort((a, b) => a.s - b.s)].map((x) => ({ ...x, best: x === best }));
+        return { items: out, list, pins: ps };
       }
-      let picked;
-      if (sec === 'w') { // Top týždňa: spread over the days (prefer one per day, max 2 per day; 3 only if the EPG has too few days)
-        const pool2 = first.concat(second); picked = [];
-        for (const cap of [1, 2, 3]) { if (picked.length >= n - ps.length) break; picked = picked.concat(diverse(pool2.filter((x) => !picked.includes(x) && (cap > 1 || first.includes(x))), n - ps.length - picked.length, { cap, pre: ps.concat(picked) })); }
-      } else { picked = diverse(first, n - ps.length); if (picked.length < n - ps.length) picked = picked.concat(diverse(second, n - ps.length - picked.length)); }
-      const items = ps.concat(picked);
-      if (items.length < MIN_N) return { items: [], list, pins: ps };
-      const best = items.slice().sort((a, b) => b.score - a.score || a.s - b.s)[0];
-      const rank = items.slice().sort((a, b) => b.score - a.score || a.s - b.s); rank.forEach((x, i) => { x.rank = i + 1; });
-      const out = [best, ...items.filter((x) => x !== best).sort((a, b) => a.s - b.s)].map((x) => ({ ...x, best: x === best }));
-      return { items: out, list, pins: ps };
+      const d = section('d', clampN(c.top_n), []);
+      const w = c.week_on === '1' ? section('w', clampN(c.week_n), d.items.map((x) => 't:' + tnorm(x.title))) : { items: [], list: [], pins: [] };
+      const out = opt.all ? { day: d, week: w } : { day: d.items, week: w.items };
+      if (!opt.all) dnesCache = { t: Date.now(), d: out };
+      return out;
+    } catch (e) {
+      if (!opt.all) {
+        const out = (dnesCache && dnesCache.d) || { day: [], week: [] };
+        dnesCache = { t: Date.now() - 60e3, d: out };
+        return out;
+      }
+      throw e;
     }
-    const d = section('d', clampN(c.top_n), []);
-    const w = c.week_on === '1' ? section('w', clampN(c.week_n), d.items.map((x) => 't:' + tnorm(x.title))) : { items: [], list: [], pins: [] };
-    const out = opt.all ? { day: d, week: w } : { day: d.items, week: w.items };
-    if (!opt.all) dnesCache = { t: Date.now(), d: out };
-    return out;
   }
   const posterKey = (x) => tnorm(x.title) + '|' + (x.yr || '');
   async function posterInfo(items) {

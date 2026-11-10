@@ -19,7 +19,7 @@ module.exports = function render(ctx, { videoHtml, SEC_V }) {
     res.setHeader('Cache-Control', req.query.v === c.v ? 'public, max-age=31536000, immutable' : 'public, max-age=60'); res.send(c.css);
   }));
   ctx.app.get('/sekcia-gal/:id(\\d+)', ctx.wrap(async (req, res) => {
-    const r = await ctx.pool.query(`SELECT g.mime,g.data,g.ver FROM site_section_imgs g JOIN site_sections s ON s.id=g.sec_id WHERE g.id=$1 AND s.visible`, [Number(req.params.id)]);
+    const r = await ctx.pool.query(`SELECT g.mime,g.data,g.ver FROM site_section_imgs g JOIN site_sections s ON s.id=g.sec_id WHERE g.id=$1 AND s.visible`, [Number(req.params.id)]).catch(() => ({ rowCount: 0 }));
     if (!r.rowCount) return res.status(404).end();
     const im = r.rows[0];
     res.setHeader('Content-Type', im.mime); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");

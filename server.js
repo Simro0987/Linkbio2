@@ -113,14 +113,22 @@ function decrypt(o, aad = 'linkbio') {
 }
 const encV = (k, v) => { v = String(v); if (!isEncKey(k) || !v) return v; const e = encrypt(Buffer.from(v), 'set:' + k); return `enc:v1:${e.iv}:${e.tag}:${e.ct}`; };
 const decV = (k, v) => { if (typeof v !== 'string' || !v.startsWith('enc:v1:')) return v; const [, , iv, tag, ct] = v.split(':'); try { return decrypt({ iv, tag, ct }, 'set:' + k).toString(); } catch { console.error('decrypt failed', k); return ''; } };
-let cache = null;
+let cache = null, lastSettings = { ...DEFAULTS, img: {} }, settingsFailAt = 0;
 async function getSettings() {
   if (cache) return cache;
-  const r = await pool.query(`SELECT k,v FROM settings`);
-  const s = { ...DEFAULTS }; r.rows.forEach(x => { s[x.k] = decV(x.k, x.v); }); UI.setOverrides(s.ui_texts);
-  const im = await pool.query(`SELECT k,ver FROM images`);
-  s.img = {}; im.rows.forEach(x => { s.img[x.k] = x.ver; });
-  return (cache = s);
+  if (Date.now() - settingsFailAt < 30000) return lastSettings;
+  try {
+    const r = await pool.query(`SELECT k,v FROM settings`);
+    const s = { ...DEFAULTS }; r.rows.forEach(x => { s[x.k] = decV(x.k, x.v); }); UI.setOverrides(s.ui_texts);
+    const im = await pool.query(`SELECT k,ver FROM images`);
+    s.img = {}; im.rows.forEach(x => { s.img[x.k] = x.ver; });
+    settingsFailAt = 0;
+    return (cache = lastSettings = s);
+  } catch (e) {
+    settingsFailAt = Date.now();
+    console.error('getSettings fallback:', e && e.message);
+    return lastSettings;
+  }
 }
 // write several settings atomically and bump the settings version (cache busting for /theme.css)
 async function setSettings(obj) {
@@ -130,11 +138,24 @@ async function setSettings(obj) {
     for (const [k, v] of Object.entries(obj)) await c.query(`INSERT INTO settings (k,v) VALUES ($1,$2) ON CONFLICT (k) DO UPDATE SET v=EXCLUDED.v`, [k, encV(k, v)]);
     await c.query(`UPDATE settings SET v=(COALESCE(NULLIF(v,''),'0')::bigint+1)::text WHERE k='ver'`);
     await c.query('COMMIT');
-  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); cache = null; }
+  } catch (e) { await c.query('ROLLBACK'); throw e; } finally { c.release(); cache = null; settingsFailAt = 0; }
 }
-let bcache = null;
-const getButtons = async () => bcache || (bcache = (await pool.query(`SELECT id,label,url,emoji,pos,enabled,newtab,start_at,end_at,brand,section FROM buttons ORDER BY pos, id`)).rows);
-const bq = async (q, a) => { try { return await pool.query(q, a); } finally { bcache = null; } };
+const DEF_BUTTONS = [{ id: 1, label: 'Platby', url: SHORT_PAY, emoji: '💳', pos: 1, enabled: true, newtab: false, start_at: null, end_at: null, brand: 'platby', section: 'home' }];
+let bcache = null, lastButtons = DEF_BUTTONS, buttonsFailAt = 0;
+const getButtons = async () => {
+  if (bcache) return bcache;
+  if (Date.now() - buttonsFailAt < 30000) return lastButtons;
+  try {
+    const rows = (await pool.query(`SELECT id,label,url,emoji,pos,enabled,newtab,start_at,end_at,brand,section FROM buttons ORDER BY pos, id`)).rows;
+    buttonsFailAt = 0;
+    return (bcache = lastButtons = rows);
+  } catch (e) {
+    buttonsFailAt = Date.now();
+    console.error('getButtons fallback:', e && e.message);
+    return lastButtons;
+  }
+};
+const bq = async (q, a) => { try { return await pool.query(q, a); } finally { bcache = null; buttonsFailAt = 0; } };
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"'`=\/]/g, c => '&#' + c.charCodeAt(0) + ';');
 function safeUrl(u) {
@@ -310,7 +331,7 @@ app.get('/favicon.ico', wrap(async (req, res) => { const s = await getSettings()
 
 // images served from Postgres bytea
 app.get('/img/:k(logo|bg)', wrap(async (req, res) => {
-  const r = await pool.query(`SELECT mime,data,ver FROM images WHERE k=$1`, [req.params.k]);
+  const r = await pool.query(`SELECT mime,data,ver FROM images WHERE k=$1`, [req.params.k]).catch(() => ({ rowCount: 0 }));
   if (!r.rowCount) return res.status(404).end();
   const im = r.rows[0];
   res.setHeader('Content-Type', im.mime);
@@ -862,9 +883,39 @@ function listInput(t, o) {
   if (t === 'nav' && !r.url && !r.page) return null;
   return r;
 }
-const lcache = {};
-const getList = async t => lcache[t] || (lcache[t] = (await pool.query(`SELECT * FROM l_${t} ORDER BY pos, id`)).rows);
-const dropList = t => { delete lcache[t]; };
+const DEF_PLAN_FSK = ['Všetky kanály z našej ponuky (všetky regióny a kategórie)', 'HD / Full HD kvalita, kde je dostupná', 'Archív / catch-up pri kanáloch, ktoré ho podporujú', 'TV program (EPG)', 'Funguje vo všetkých podporovaných prehrávačoch a zariadeniach – pozri Návod na inštaláciu prehrávača', 'Podpora cez Telegram', 'Aktivácia po potvrdení platby'];
+const DEF_PLAN_FEN = ['All channels in our offer (all regions and categories)', 'HD / Full HD quality where available', 'Archive / catch-up on channels that support it', 'TV guide (EPG)', 'Works in all supported players and devices – see the Player installation guide', 'Support via Telegram', 'Activation after payment confirmation'];
+const DEF_PLANS_EX = [['1 mesiac', '1 month', '9.99', '1', false, '', '', 1], ['3 mesiace', '3 months', '24.99', '3', false, '', '', 1], ['6 mesiacov', '6 months', '44.99', '6', true, '', '', 1], ['12 mesiacov', '12 months', '79.99', '12', false, '', '', 1], ['12 mesiacov – 2 zariadenia', '12 months – 2 devices', '129.99', '12', false, 'Rodina', 'Family', 2]];
+const DEF_LISTS = {
+  nav: Object.entries(PAGES).map(([k, [n]], i) => ({ id: i + 1, pos: i + 1, label: n, page: k, url: '', visible: true, newtab: false })),
+  plans: DEF_PLANS_EX.map(([n, ne, pr, per, pop, bd, bde, dev], i) => ({
+    id: i + 1, pos: i + 1, name: n, name_en: ne, price: pr, old_price: '', period: per, badge: bd, badge_en: bde, popular: pop,
+    features: [dev > 1 ? '2 zariadenia súčasne' : '1 zariadenie', ...DEF_PLAN_FSK].join('\n'),
+    features_en: [dev > 1 ? '2 devices at the same time' : '1 device', ...DEF_PLAN_FEN].join('\n'),
+    note: '', note_en: '', btn: 'Vybrať platbu', btn_en: 'Choose payment', btn_url: '', active: true,
+  })),
+  faq: [
+    { id: 1, pos: 1, q: 'Ako prebieha inštalácia?', a: 'Po objednávke dostanete návod krok za krokom. Inštalácia na Android TV box alebo Smart TV trvá pár minút.', q_en: '', a_en: '' },
+    { id: 2, pos: 2, q: 'Aké platby prijímate?', a: 'Platbu kartou aj kryptomenami cez zabezpečenú platobnú bránu. Viac na stránke Platby.', q_en: '', a_en: '' },
+    { id: 3, pos: 3, q: 'Poskytujete podporu?', a: 'Áno, ozvite sa nám cez Kontakt – odpovedáme spravidla do 24 hodín.', q_en: '', a_en: '' },
+  ],
+  channels: [],
+};
+const lcache = {}, llast = { ...DEF_LISTS }, lfailAt = {};
+const getList = async t => {
+  if (lcache[t]) return lcache[t];
+  if (Date.now() - (lfailAt[t] || 0) < 30000) return llast[t] || [];
+  try {
+    const rows = (await pool.query(`SELECT * FROM l_${t} ORDER BY pos, id`)).rows;
+    lfailAt[t] = 0;
+    return (lcache[t] = llast[t] = rows);
+  } catch (e) {
+    lfailAt[t] = Date.now();
+    console.error('getList fallback:', t, e && e.message);
+    return llast[t] || [];
+  }
+};
+const dropList = t => { delete lcache[t]; delete lfailAt[t]; };
 async function initLists() {
   const pl = (await pool.query(`SELECT k,v FROM settings WHERE (k LIKE 'soc\\_%' OR k='contact_text') AND v<>'' AND v NOT LIKE 'enc:v1:%'`)).rows;
   for (const r of pl) await pool.query(`UPDATE settings SET v=$2 WHERE k=$1`, [r.k, encV(r.k, r.v)]);
@@ -1062,7 +1113,7 @@ app.get('/s/:code', wrap(async (req, res) => {
   const code = String(req.params.code);
   res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Robots-Tag', 'noindex');
   if (!/^[A-Za-z0-9-]{1,40}$/.test(code)) return res.status(404).send(page('404', '<h1>404</h1><p class="bio">Odkaz neexistuje.</p>'));
-  const r = await pool.query(`SELECT target_url FROM short_links WHERE code=$1 AND active AND (expires_at IS NULL OR expires_at > now())`, [code]);
+  const r = await pool.query(`SELECT target_url FROM short_links WHERE code=$1 AND active AND (expires_at IS NULL OR expires_at > now())`, [code]).catch(() => ({ rowCount: 0 }));
   const u = r.rowCount && safeUrl(r.rows[0].target_url);
   if (!u) return res.status(404).send(page('404', '<h1>404</h1><p class="bio">Odkaz neexistuje alebo vypršal.</p>'));
   res.redirect(302, u);
@@ -1077,9 +1128,9 @@ async function shell(req, res, s, active, title, content, sub = '') {
   const raw = (await getList('nav')).filter(n => n.visible).map(n => {
     const on = !n.url && n.page === active;
     return { k: 'n' + n.id, href: n.url || ('/' + s.slug + PAGES[n.page][1]), on, attrs: n.url ? ' rel="noopener noreferrer nofollow"' + (n.newtab ? ' target="_blank"' : '') : '', icon: n.url ? '🔗' : NAV_ICONS[n.page], label: !n.url && PAGES[n.page] && n.label === PAGES[n.page][0] ? T(req, n.label) : n.label, sub: on && sub ? sub : '' };
-  }).concat(features.sectionsNavItems ? await features.sectionsNavItems(req, s.slug, active) : [])
+  }).concat(features.sectionsNavItems ? await features.sectionsNavItems(req, s.slug, active).catch(() => []) : [])
     .concat(s.stav_nav === '1' ? [{ k: 'stav', href: `/${s.slug}/stav`, on: active === 'stav', icon: '📡', label: T(req, 'Stav služieb') }] : [])
-    .concat(await (async () => { const a = features.accNavItem ? await features.accNavItem(req) : null; return a ? [{ k: 'acc', href: a[0], on: active === 'ucet', icon: a[1], label: a[2] }] : []; })());
+    .concat(await (async () => { const a = features.accNavItem ? await Promise.resolve(features.accNavItem(req)).catch(() => null) : null; return a ? [{ k: 'acc', href: a[0], on: active === 'ucet', icon: a[1], label: a[2] }] : []; })());
   const items = (features.navArrange ? features.navArrange(s, raw) : raw).map(i => `<li><a href="${/^s\d+$/.test(i.k) ? i.href : esc(i.href)}"${i.on ? ' class="on" aria-current="page"' : ''}${i.attrs || ''}><span class="ni">${esc(i.icon)}</span>${esc(req.lang === 'en' && i.label2 ? i.label2 : i.label)}</a>${i.sub || ''}</li>`).join('');
   const chat = s.chat_enabled !== '0';
   const extra = `<link rel="stylesheet" href="/theme.css?v=${esc(s.ver)}">${chat ? `<link rel="stylesheet" href="/static/chat.css?v=${CHAT_V}"><script src="/static/chat.js?v=${CHAT_V}" defer></script>` : ''}${active === 'stav' ? `<script src="/static/stav.js?v=${STAV_V}" defer></script>` : ''}${s.img.logo ? `<link rel="icon" href="/img/logo?v=${esc(s.img.logo)}">` : ''}`;
@@ -1151,7 +1202,7 @@ features.homeBuiltins = { hero: heroHtml, buttons: async () => (await pubBtns('h
 app.get('/:slug', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
   const title = s.meta_title || loc(req, s, 'title');
-  const blocks = features.homeRender ? await features.homeRender(req, s) : null;
+  const blocks = features.homeRender ? await features.homeRender(req, s).catch(() => null) : null;
   if (blocks !== null) return shell(req, res, s, 'home', title, blocks);
   const bs = await pubBtns('home');
   const banner = await features.monitorBanner(req.lang).catch(() => '');
@@ -1178,7 +1229,7 @@ app.get('/:slug/kanaly', wrap(async (req, res, next) => {
     const regs = [...t.entries()].map(([r, m]) => [r, m.size, [...m.values()].reduce((a, x) => a + x.length, 0)]);
     if (regs.length) cat = `<h2 class="ph">${tx(en, 'Katalóg', 'Catalogue')}</h2><div class="tiles">${regs.map(([r, nc, n]) => `<a class="tile" href="${b}/${enc(r)}"><span class="tt">${esc(r)}</span><span class="tm">${nc} ${T(req, 'kategórií')} • ${n} ${T(req, 'položiek')}</span></a>`).join('')}</div>`;
   }
-  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${features.eventsBlock ? await features.eventsBlock(req, s, 'kanaly') : ''}${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${await features.tvchPublic(req)}${features.epgAssets ? await features.epgAssets(req) : ''}${cat}`);
+  return shell(req, res, s, 'channels', title + ' – ' + loc(req, s, 'title'), `<h1 class="ph">${esc(title)}</h1>${features.eventsBlock ? await features.eventsBlock(req, s, 'kanaly') : ''}${intro ? `<div class="prose lead">${para(intro)}</div>` : ''}${list}${features.tvchPublic ? await features.tvchPublic(req).catch(() => '') : ''}${features.epgAssets ? await features.epgAssets(req).catch(() => '') : ''}${cat}`);
 }));
 app.get('/:slug/kanaly-katalog', wrap(async (req, res, next) => {
   const s = await slugOk(req); if (!s) return next();
@@ -1250,12 +1301,39 @@ features.sectionRoute((...a) => shell(...a), (r) => slugOk(r), T, loc);
 app.use((req, res) => res.status(404).send(page('404', `<h1>404</h1><p class="bio">${T(req, 'Stránka neexistuje.')}</p>`)));
 app.use((err, req, res, next) => { console.error(err && err.message); res.status(500).send('Chyba servera'); });
 
-init().then(initLists).then(() => features.mailerInit && features.mailerInit()).then(() => features.initFeatures()).then(() => features.initExtras()).then(() => features.tvchInit()).then(() => features.sectionsInit()).then(() => features.epgInit()).then(() => features.xpubInit()).then(() => features.accountsInit()).then(() => {
+const bootSteps = [
+  ['core', init],
+  ['lists', initLists],
+  ['mailer', () => features.mailerInit && features.mailerInit()],
+  ['features', () => features.initFeatures()],
+  ['extras', () => features.initExtras()],
+  ['tvch', () => features.tvchInit()],
+  ['sections', () => features.sectionsInit()],
+  ['epg', () => features.epgInit()],
+  ['xpub', () => features.xpubInit()],
+  ['accounts', () => features.accountsInit()],
+];
+const doneSteps = new Set();
+async function runBootSteps() {
+  for (const [name, fn] of bootSteps) {
+    if (doneSteps.has(name)) continue;
+    try { await fn(); doneSteps.add(name); }
+    catch (e) { console.error(`init [${name}] failed:`, e && e.message); }
+  }
+  return doneSteps.size === bootSteps.length;
+}
+runBootSteps().finally(() => {
   app.listen(PORT, () => console.log('listening on ' + PORT));
   // Payments run in-process now, so this service stays awake by default (shared 750 free hours/month).
   // In-app pings cannot wake a sleeping instance; cron-job.org should still hit /healthz every 5 min.
   const self = String(process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL || process.env.LNKBIO_PUBLIC_URL || '').replace(/\/+$/, '').replace(/^http:\/\//i, 'https://');
   require('./keepawake').start({ selfUrl: /^https:\/\//i.test(self) ? self + '/healthz' : '', def: 'always', log: console.log });
-}).catch(e => { console.error('init failed', e.message); process.exit(1); });
+  if (doneSteps.size < bootSteps.length) {
+    const retryTimer = setInterval(async () => {
+      if (await runBootSteps()) clearInterval(retryTimer);
+    }, 60e3);
+    retryTimer.unref();
+  }
+});
 process.on('unhandledRejection', (e) => console.error('unhandledRejection', e && e.message || e));
 process.on('uncaughtException', (e) => console.error('uncaughtException', e && e.message || e));
