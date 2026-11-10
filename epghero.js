@@ -465,28 +465,38 @@ module.exports = function hero(ctx, h, E) {
     side = null;
     return wk;
   }
+  let failAt = 0;
   function refresh(force) {
     if (busy) return busy;
     if (force && wk) wk.dirty = force;
-    busy = compute().catch((e) => { console.error('evhero', e.message, process.env.EVH_DEBUG ? e.stack : ''); return wk; }).finally(() => { busy = null; });
+    busy = compute().then((r) => { failAt = 0; return r; }).catch((e) => { failAt = Date.now(); console.error('evhero', e.message, process.env.EVH_DEBUG ? e.stack : ''); return wk; }).finally(() => { busy = null; });
     return busy;
   }
   async function ensure() {
     if (!loaded) { loaded = true; try { const v = await kv.get('evh_week'); if (v && !wk) { wk = JSON.parse(v); E.setOkt(new Set(((wk.okt && wk.okt.events) || []).map((x) => oktNum(x.title)).filter((x) => x != null))); } } catch {} }
     const now = Date.now();
-    if (!wk) { await Promise.race([refresh(), new Promise((r) => setTimeout(r, 9e3).unref())]); return wk; }
+    if (!wk) {
+      if (now - failAt < 60e3) return null;
+      await Promise.race([refresh(), new Promise((r) => setTimeout(r, 9e3).unref())]);
+      return wk;
+    }
     const live = wk.picks.filter((x) => x.e > now).length;
     let N = MAX_DEF; try { N = maxOf(hcfg(await getSettings())); } catch {}
-    if (wk.dirty || wk.rv !== RV || wk.alg !== ALG || now - wk.t > REFRESH || (live < N && now - wk.t > 20 * 60e3) || (wk.fxErr && now - wk.t > 30 * 60e3) || (wk.n || 3) !== N) refresh();
+    if ((wk.dirty || wk.rv !== RV || wk.alg !== ALG || now - wk.t > REFRESH || (live < N && now - wk.t > 20 * 60e3) || (wk.fxErr && now - wk.t > 30 * 60e3) || (wk.n || 3) !== N) && now - failAt >= 60e3) refresh();
     return wk;
   }
   // pins + admin image overrides change rarely – 60 s cache
   async function sideData() {
     if (side && Date.now() - side.t < 60e3) return side;
-    const pins = await E.pinsList(Date.now() + WEEK);
-    const ov = new Map((await pool.query(`SELECT k, extract(epoch from at)::int AS v FROM ev_imgc WHERE k LIKE 'o-%'`)).rows.map((r) => [r.k, r.v]));
-    const dov = new Map((await pool.query('SELECT tk, txt FROM ev_desc')).rows.map((r) => [r.tk, r.txt]));
-    return (side = { t: Date.now(), pins, ov, dov });
+    try {
+      const pins = await E.pinsList(Date.now() + WEEK);
+      const ov = new Map((await pool.query(`SELECT k, extract(epoch from at)::int AS v FROM ev_imgc WHERE k LIKE 'o-%'`)).rows.map((r) => [r.k, r.v]));
+      const dov = new Map((await pool.query('SELECT tk, txt FROM ev_desc')).rows.map((r) => [r.tk, r.txt]));
+      return (side = { t: Date.now(), pins, ov, dov });
+    } catch {
+      const fallback = side || { pins: [], ov: new Map(), dov: new Map() };
+      return (side = { ...fallback, t: Date.now() });
+    }
   }
   // TMDB (official API, https://developer.themoviedb.org): popularity + vote for non-sport candidates. Key only from env
   // (TMDB_API_KEY, v3 key or v4 bearer token), never sent to the browser; results cached in evh_tmdb for 7 days.

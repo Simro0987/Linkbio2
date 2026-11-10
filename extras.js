@@ -82,16 +82,34 @@ module.exports = function install(ctx) {
   }));
 
   // ================= Návody (guides) =================
-  let gcache = null;
-  const getGuides = async () => gcache || (gcache = await (async () => {
-    const g = (await pool.query(`SELECT id,pos,slug,title,title_en,intro,intro_en,visible,platforms,mkey FROM guides ORDER BY pos,id`)).rows;
-    const st = (await pool.query(`SELECT id,guide_id,pos,text,text_en,def_img,img_ver FROM guide_steps ORDER BY pos,id`)).rows;
-    for (const x of g) x.steps = st.filter((y) => y.guide_id === x.id);
-    return g;
-  })());
+  const DEF_GUIDES = SEED.map((g, gi) => ({
+    id: gi + 1, pos: gi + 1, slug: g.slug, mkey: g.key, title: g.title, title_en: g.title,
+    intro: g.intro, intro_en: g.intro_en, visible: true, platforms: g.platforms,
+    steps: (g.steps || []).map(([kind, sk, en], si) => ({ id: (gi + 1) * 100 + si + 1, guide_id: gi + 1, pos: si + 1, text: sk, text_en: en, def_img: `${g.key}-${kind}`, img_ver: null })),
+  }));
+  const DEF_INSTALLS = DEF_GUIDES.flatMap((g) => {
+    const mt = SEED.META && SEED.META[g.mkey];
+    return mt && mt.install ? Object.entries(mt.install).map(([dev, [sk, en, url, badge]]) => ({ guide_id: g.id, dev, text: sk, text_en: en, url: url || '', badge: badge || null })) : [];
+  });
+  let gcache = null, lastGuides = DEF_GUIDES, gFailAt = 0;
+  const getGuides = async () => {
+    if (gcache) return gcache;
+    if (Date.now() - gFailAt < 30000) return lastGuides;
+    try {
+      const g = (await pool.query(`SELECT id,pos,slug,title,title_en,intro,intro_en,visible,platforms,mkey FROM guides ORDER BY pos,id`)).rows;
+      const st = (await pool.query(`SELECT id,guide_id,pos,text,text_en,def_img,img_ver FROM guide_steps ORDER BY pos,id`)).rows;
+      for (const x of g) x.steps = st.filter((y) => y.guide_id === x.id);
+      gFailAt = 0;
+      return (gcache = lastGuides = g.length ? g : DEF_GUIDES);
+    } catch (e) {
+      gFailAt = Date.now();
+      console.error('getGuides fallback:', e && e.message);
+      return lastGuides;
+    }
+  };
   const stepImg = (st) => (st.img_ver ? `/navody-img/${st.id}?v=${esc(st.img_ver)}` : st.def_img && (HAS_WEBP.has(st.def_img) || HAS_SVG.has(st.def_img)) ? `/static/guide/${esc(st.def_img)}.${HAS_WEBP.has(st.def_img) ? 'webp' : 'svg'}` : '');
   app.get('/navody-img/:id(\\d+)', wrap(async (req, res) => {
-    const r = await pool.query(`SELECT img_mime,img_data,img_ver FROM guide_steps WHERE id=$1 AND img_data IS NOT NULL`, [Number(req.params.id)]);
+    const r = await pool.query(`SELECT img_mime,img_data,img_ver FROM guide_steps WHERE id=$1 AND img_data IS NOT NULL`, [Number(req.params.id)]).catch(() => ({ rowCount: 0 }));
     if (!r.rowCount) return res.status(404).end();
     const im = r.rows[0];
     res.setHeader('Content-Type', im.img_mime); res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
@@ -102,8 +120,20 @@ module.exports = function install(ctx) {
   const GFILES = require('fs').readdirSync(require('path').join(__dirname, 'static', 'guide'));
   const HAS_WEBP = new Set(GFILES.filter((f) => f.endsWith('.webp')).map((f) => f.slice(0, -5))), HAS_SVG = new Set(GFILES.filter((f) => f.endsWith('.svg')).map((f) => f.slice(0, -4)));
   const BADGE = { gp: ['/static/badge/gp.png', 'Get it on Google Play', 646, 250, 'bgp'], as: ['/static/badge/as.svg', 'Download on the App Store', 120, 40, 'bas'], amz: ['/static/badge/amz.png', 'Available at Amazon Appstore', 572, 168, 'bamz'], ms: ['/static/badge/ms.svg', 'Get it from Microsoft', 161, 44, 'bms'] };
-  let icache = null;
-  const getInstalls = async () => icache || (icache = (await pool.query(`SELECT guide_id,dev,text,text_en,url,badge FROM guide_installs`)).rows);
+  let icache = null, lastInstalls = DEF_INSTALLS, iFailAt = 0;
+  const getInstalls = async () => {
+    if (icache) return icache;
+    if (Date.now() - iFailAt < 30000) return lastInstalls;
+    try {
+      const rows = (await pool.query(`SELECT guide_id,dev,text,text_en,url,badge FROM guide_installs`)).rows;
+      iFailAt = 0;
+      return (icache = lastInstalls = rows.length ? rows : DEF_INSTALLS);
+    } catch (e) {
+      iFailAt = Date.now();
+      console.error('getInstalls fallback:', e && e.message);
+      return lastInstalls;
+    }
+  };
   const instFor = (inst, g, dev) => inst.find((r) => r.guide_id === g.id && r.dev === dev && r.text);
   const yn = (v, en) => (v === 1 ? `<span class="fy">✅ ${tx(en, 'áno', 'yes')}</span>` : v === 'p' ? `<span class="fp">💎 ${tx(en, 'platené', 'paid')}</span>` : `<span class="fn">— ${tx(en, 'nie', 'no')}</span>`);
   const PRICE = { free: ['Zadarmo', 'Free'], freemium: ['Freemium', 'Freemium'], paid: ['Platené', 'Paid'] };

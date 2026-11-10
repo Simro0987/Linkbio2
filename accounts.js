@@ -104,9 +104,14 @@ function install(ctx) {
   let pcfg = null;
   async function panelCfg() {
     if (pcfg && pcfg.t > Date.now() - 60000) return pcfg.v;
-    const r = await pool.query(`SELECT k,v FROM acc_panel_cfg`); const v = {};
-    for (const x of r.rows) { if (SECRET_K.has(x.k)) { try { v[x.k] = decrypt(JSON.parse(x.v), 'panel:' + x.k).toString(); } catch { v[x.k] = ''; } } else v[x.k] = x.v; }
-    v.base = PANEL.normBase(v.url); pcfg = { t: Date.now(), v }; return v;
+    try {
+      const r = await pool.query(`SELECT k,v FROM acc_panel_cfg`); const v = {};
+      for (const x of r.rows) { if (SECRET_K.has(x.k)) { try { v[x.k] = decrypt(JSON.parse(x.v), 'panel:' + x.k).toString(); } catch { v[x.k] = ''; } } else v[x.k] = x.v; }
+      v.base = PANEL.normBase(v.url); pcfg = { t: Date.now(), v }; return v;
+    } catch (e) {
+      const v = (pcfg && pcfg.v) || { base: null };
+      pcfg = { t: Date.now() - 30000, v }; return v;
+    }
   }
   async function setPanel(k, val) {
     if (val === null || val === undefined) await pool.query(`DELETE FROM acc_panel_cfg WHERE k=$1`, [k]);
@@ -117,9 +122,9 @@ function install(ctx) {
   const pcConf = (c) => ({ base: PANEL.normBase(c.base || c.url) || PANEL.joinUrl(c.base || '', ''), type: c.type, user: c.user || '', pass: c.pass || '', tpl: c.tpl || '', datePath: c.datepath || '' });
   const canLookup = (c) => panelReady(c) && !!(panelApi.ADAPTERS[c.type] && panelApi.ADAPTERS[c.type].lookup);
   const selfCheck = (c) => panelReady(c) && c.type !== 'stalker' && c.type !== 'custom';
-  const hasLines = async () => !!(await pool.query('SELECT 1 FROM acc_panel_lines LIMIT 1')).rowCount;
+  const hasLines = async () => !!(await pool.query('SELECT 1 FROM acc_panel_lines LIMIT 1').catch(() => ({ rowCount: 0 }))).rowCount;
   async function linePass(username) {
-    const r = (await pool.query('SELECT username, pass_enc FROM acc_panel_lines WHERE lower(username)=lower($1)', [username])).rows[0];
+    const r = (await pool.query('SELECT username, pass_enc FROM acc_panel_lines WHERE lower(username)=lower($1)', [username]).catch(() => ({ rows: [] }))).rows[0];
     if (!r) return null;
     try { return decrypt(JSON.parse(r.pass_enc), 'panel-line:' + String(r.username).toLowerCase()).toString(); } catch { return null; }
   }
@@ -526,7 +531,7 @@ function install(ctx) {
     if (!(await accOn())) return pub(req, res, tx(en, 'Registrácia', 'Sign up'), `<h1 class="ph">${tx(en, 'Registrácia', 'Sign up')}</h1>${msgOf('off', en)}`);
     devId(req, res);
     const code = String(req.query.ref || cookies(req)[C_REF] || '').toLowerCase();
-    const ref = REF_RE.test(code) ? (await pool.query(`SELECT username FROM acc_users WHERE ref_code=$1 AND NOT disabled`, [code])).rows[0] : null;
+    const ref = REF_RE.test(code) ? (await pool.query(`SELECT username FROM acc_users WHERE ref_code=$1 AND NOT disabled`, [code]).catch(() => ({ rows: [] }))).rows[0] : null;
     await pub(req, res, tx(en, 'Registrácia', 'Sign up'), `<h1 class="ph">📝 ${tx(en, 'Registrácia', 'Sign up')}</h1>${msg(req)}
 ${ref ? `<p class="hint">🤝 ${tx(en, 'Odporučil vás', 'Referred by')}: <b>${esc(ref.username)}</b></p>` : ''}
 <form method="post" action="/registracia" class="card accf">${csrfField(req, res)}<input type="hidden" name="t" value="${esc(formTok())}"><div class="hp" aria-hidden="true"><label>Web</label><input name="web" tabindex="-1" autocomplete="off"></div>
@@ -594,7 +599,7 @@ ${ref ? `<p class="hint">🤝 ${tx(en, 'Odporučil vás', 'Referred by')}: <b>${
   async function softwareByName(name) {
     const key = String(name || '').trim().toLowerCase();
     if (!key) return null;
-    return (await pool.query(`SELECT display, until_at, user_id, order_id FROM acc_software WHERE username=$1`, [key])).rows[0] || null;
+    return (await pool.query(`SELECT display, until_at, user_id, order_id FROM acc_software WHERE username=$1`, [key]).catch(() => ({ rows: [] }))).rows[0] || null;
   }
   if (global.__lnkAccounts) {
     global.__lnkAccounts.applySoftwareExpiry = applySoftwareExpiry;

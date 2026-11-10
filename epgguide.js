@@ -117,10 +117,14 @@ module.exports = function guide(ctx, h) {
   app.get('/api/epg/guide', wrap(async (req, res) => {
     const c = cfg(await getSettings()); if (!on(c)) return res.status(404).json({ l: [] });
     const gs = enabled(c), g = gs.includes(req.query.g) ? req.query.g : gs.includes(c.guide_def) ? c.guide_def : gs[0], en = req.query.l === 'en';
-    const ds = await days(c), d = ds.includes(+req.query.d) ? +req.query.d : 0;
-    const x = await dayData(c, d), ch = {}; const l = (x.l[g] || []);
-    for (const r of l) ch[r[0]] = x.ch[r[0]];
-    jsonOut(res, { t: Math.round(Date.now() / 1000), g, d, days: ds.map((k) => [k, dayLbl(bounds(k).a + 12 * 3600e3, en)]), n: x.n, l, ch }, 120);
+    try {
+      const ds = await days(c), d = ds.includes(+req.query.d) ? +req.query.d : 0;
+      const x = await dayData(c, d), ch = {}; const l = (x.l[g] || []);
+      for (const r of l) ch[r[0]] = x.ch[r[0]];
+      jsonOut(res, { t: Math.round(Date.now() / 1000), g, d, days: ds.map((k) => [k, dayLbl(bounds(k).a + 12 * 3600e3, en)]), n: x.n, l, ch }, 120);
+    } catch {
+      jsonOut(res, { t: Math.round(Date.now() / 1000), g, d: 0, days: [[0, dayLbl(bounds(0).a + 12 * 3600e3, en)]], n: {}, l: [], ch: {} }, 60);
+    }
   }));
 
   const attrs = (en, c) => {

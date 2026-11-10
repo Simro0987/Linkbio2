@@ -140,8 +140,22 @@ module.exports = function install(ctx) {
   const { app, admin, pool, page, esc, hid, csrf, needAuth, wrap } = ctx;
   const up = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_BYTES, files: 1, fields: 5, fieldSize: 1024 } }).single('file');
   const pending = new Map();
-  let cache = null; const drop = () => { cache = null; brokenCache = null; };
-  const all = async () => cache || (cache = (await pool.query('SELECT id,name,category,logo,ord,visible FROM tv_channels ORDER BY ord,id')).rows);
+  let cache = null, lastAll = [], allFailAt = 0;
+  let brokenCache = null, lastBroken = new Set(), brokenFailAt = 0;
+  const drop = () => { cache = null; allFailAt = 0; brokenCache = null; brokenFailAt = 0; };
+  const all = async () => {
+    if (cache) return cache;
+    if (Date.now() - allFailAt < 30000) return lastAll;
+    try {
+      const rows = (await pool.query('SELECT id,name,category,logo,ord,visible FROM tv_channels ORDER BY ord,id')).rows;
+      allFailAt = 0;
+      return (cache = lastAll = rows);
+    } catch (e) {
+      allFailAt = Date.now();
+      console.error('tvch all fallback:', e && e.message);
+      return lastAll;
+    }
+  };
   const nextOrd = async (c) => (await c.query('SELECT COALESCE(MAX(ord),0)+1 AS n FROM tv_channels')).rows[0].n;
   const groups = (rows) => { const m = new Map(); for (const r of rows) { if (!m.has(r.category)) m.set(r.category, []); m.get(r.category).push(r); } return m; };
   const back = (res, m, a = '') => res.redirect(303, '/admin/kanaly-katalog?m=' + m + (a ? '#' + a : ''));
@@ -187,8 +201,19 @@ module.exports = function install(ctx) {
     })().finally(() => inflight.delete(k));
     inflight.set(k, p); return p;
   }
-  let brokenCache = null;
-  const brokenIds = async () => brokenCache || (brokenCache = new Set((await pool.query('SELECT c.channel_id FROM tv_logo_cache c JOIN tv_channels t ON t.id=c.channel_id AND t.logo=c.src WHERE NOT c.ok')).rows.map((r) => r.channel_id)));
+  const brokenIds = async () => {
+    if (brokenCache) return brokenCache;
+    if (Date.now() - brokenFailAt < 30000) return lastBroken;
+    try {
+      const s = new Set((await pool.query('SELECT c.channel_id FROM tv_logo_cache c JOIN tv_channels t ON t.id=c.channel_id AND t.logo=c.src WHERE NOT c.ok')).rows.map((r) => r.channel_id));
+      brokenFailAt = 0;
+      return (brokenCache = lastBroken = s);
+    } catch (e) {
+      brokenFailAt = Date.now();
+      console.error('tvch brokenIds fallback:', e && e.message);
+      return lastBroken;
+    }
+  };
   // generated badge (TV Software look, color from category) for channels without a working logo
   const xe = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]);
   function badge(name, cat) {
@@ -205,7 +230,7 @@ module.exports = function install(ctx) {
     const ch = (await all()).find((r) => r.id === +req.params.id);
     if (!ch) return res.status(404).end();
     if (!ch.logo) return sendBadge(res, ch);
-    const r = await ensureLogo(ch);
+    const r = await ensureLogo(ch).catch(() => ({ ok: false, png: null }));
     if (!r.ok || !r.png) return sendBadge(res, ch);
     res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" }); res.send(r.png);
   }));
